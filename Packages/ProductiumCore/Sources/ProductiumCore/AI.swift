@@ -34,10 +34,13 @@ public indirect enum JSONValue: Codable, Hashable, Sendable {
     }
 }
 
-/// Which model to use. Haiku is fast and cheap: parsing, short generation, nudges.
-/// Sonnet is for reasoning: decomposing goals, weekly reviews, advice.
+/// Which model to use. Token cost is the main constraint (see claude-server's /v1/guide):
+/// `lite` (Haiku 4.5) is the only model with thinking off, so one-shot extraction stays
+/// small. It does everything frequent: the box, flashcards, short reads. Sonnet only
+/// runs for the two rare jobs that need reasoning: breaking down a big project and
+/// the weekly note.
 public enum AITier: String, Codable, Sendable {
-    case fast = "haiku"
+    case fast = "lite"
     case reason = "sonnet"
 }
 
@@ -94,32 +97,72 @@ public struct AIMessage: Codable, Hashable, Sendable {
     }
 }
 
-public struct AIRequest: Codable, Sendable {
+/// A request to claude-server's Anthropic-compatible `POST /v1/messages`. Structured output goes
+/// through `output_config.format`, which the server runs as one forced tool call (one API turn).
+public struct AIRequest: Encodable, Sendable {
+    public struct Format: Encodable, Sendable { var type = "json_schema"; var schema: JSONValue }
+    public struct OutputConfig: Encodable, Sendable { var format: Format }
+
     public var model: String
+    public var max_tokens: Int
     public var system: String
     public var messages: [AIMessage]
-    public var json_schema: JSONValue?
-    public var effort: String?
-    public var cache_ttl_s: Int?
+    public var output_config: OutputConfig?
+    /// Not sent in the body: identical requests within this many seconds are answered from the server's
+    /// memory without using any tokens (sent as the `x-cache-ttl` header).
+    public var cacheTTL: Int?
+
+    enum CodingKeys: String, CodingKey { case model, max_tokens, system, messages, output_config }
 
     public init(tier: AITier, system: String, messages: [AIMessage], schema: JSONValue? = nil,
-                effort: String? = nil, cacheTTL: Int? = nil) {
+                maxTokens: Int = 600, cacheTTL: Int? = nil) {
         self.model = tier.rawValue
+        self.max_tokens = maxTokens
         self.system = system
         self.messages = messages
-        self.json_schema = schema
-        self.effort = effort
-        self.cache_ttl_s = cacheTTL
+        self.output_config = schema.map { OutputConfig(format: Format(schema: $0)) }
+        self.cacheTTL = cacheTTL
     }
 }
 
-public struct AIResponse: Codable, Sendable {
+/// The Anthropic `message` object, reduced to what the app reads.
+public struct AIResponse: Decodable, Sendable {
+    public struct Block: Decodable, Sendable { public var type: String; public var text: String? }
+    public struct Usage: Codable, Hashable, Sendable {
+        public var input_tokens: Int?
+        public var output_tokens: Int?
+        public var cache_creation_input_tokens: Int?
+        public var cache_read_input_tokens: Int?
+    }
+
     public var id: String?
     public var model: String?
-    public var text: String
-    public var structured: JSONValue?
-    public var duration_ms: Int?
-    public var cached: Bool?
+    public var content: [Block]
+    public var stop_reason: String?
+    public var usage: Usage?
+
+    public init(model: String?, text: String, usage: Usage?) {
+        self.model = model
+        self.content = [Block(type: "text", text: text)]
+        self.usage = usage
+    }
+
+    public var text: String { content.compactMap(\.text).joined() }
+
+    /// Structured output comes back as JSON text. Tolerates a fenced block, just in case.
+    public var structured: JSONValue? {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.hasPrefix("```"), let open = t.firstIndex(of: "\n"), let close = t.range(of: "```", options: .backwards), close.lowerBound > open {
+            t = String(t[t.index(after: open)..<close.lowerBound])
+        }
+        guard let d = t.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(JSONValue.self, from: d)
+    }
+
+    public var tokens: TokenCount {
+        TokenCount(input: usage?.input_tokens ?? 0, output: usage?.output_tokens ?? 0,
+                   cacheRead: usage?.cache_read_input_tokens ?? 0, cacheWrite: usage?.cache_creation_input_tokens ?? 0)
+    }
 }
 
 // MARK: - Structured outputs
@@ -235,21 +278,6 @@ public enum Schemas {
     static func arr(_ of: JSONValue) -> JSONValue { .object(["type": .string("array"), "items": of]) }
     static func strEnum(_ v: [String]) -> JSONValue { .object(["type": .string("string"), "enum": .array(v.map { .string($0) })]) }
 
-    public static let quickAdd: JSONValue = obj([
-        "items": arr(obj(["title": str, "kind": strEnum(TaskKind.allCases.map(\.rawValue)), "subject": str, "due": str,
-                          "estimateMinutes": int, "importance": int, "difficulty": int, "topics": arr(str)],
-                         required: ["title", "kind", "due"])),
-        "commitments": arr(obj(["title": str, "kind": strEnum(CommitmentKind.allCases.map(\.rawValue)),
-                                "weekdays": arr(int), "start": str, "end": str],
-                               required: ["title", "kind", "weekdays", "start", "end"])),
-        "markers": arr(obj(["phrase": str, "activity": str, "category": strEnum(TimeCategory.allCases.map(\.rawValue)),
-                            "phase": strEnum(["start", "end", "point"]), "minutesAgo": int],
-                           required: ["phrase", "activity", "category", "phase"])),
-        "completedTitles": arr(str),
-        "mood": int,
-        "reply": str,
-    ], required: ["items", "commitments", "markers", "completedTitles", "reply"])
-
     public static let decomposition: JSONValue = obj([
         "steps": arr(obj(["title": str, "estimateMinutes": int, "due": str, "kind": strEnum(TaskKind.allCases.map(\.rawValue))],
                          required: ["title", "estimateMinutes", "due", "kind"])),
@@ -273,92 +301,70 @@ public enum Schemas {
 // MARK: - Prompts
 
 public enum Prompts {
+    // System prompts are constants: the server's prompt cache and live sessions key on a
+    // byte-identical system prompt, so anything that varies (dates, topics, names) goes in
+    // the user message. They're also short: on `lite`, prompts under 4k tokens aren't
+    // cached, so every word here is paid for on every request.
+
     static let persona = """
-    You are the planning assistant inside Productium, a calm planning app for high-school students. \
-    Be warm, brief and concrete. Talk like a supportive older student, not a parent or a productivity guru. \
-    Never shame. Never encourage giving up sleep for studying for tests. Sleep is when learning is stored. \
-    Don't give medical or mental-health diagnoses. If someone seems in distress, gently suggest talking to a \
-    trusted adult or a helpline. Keep any free-text reply under 40 words unless asked for more.
+    You are the assistant in Productium, a calm planner for high-school students. Warm, brief, concrete, never \
+    shaming. Sleep is never traded for test prep. No diagnoses; if someone seems in distress, suggest a trusted \
+    adult or a helpline.
     """
 
-    public static func quickAdd(now: Date, timeZone: TimeZone, commitments: [Commitment], openItems: [WorkItem]) -> String {
-        let f = ISO8601DateFormatter(); f.timeZone = timeZone
-        f.formatOptions = [.withInternetDateTime]
-        let weekday = DateFormatter(); weekday.timeZone = timeZone; weekday.dateFormat = "EEEE"
-        let comm = commitments.prefix(15).map { "\($0.title) (\($0.kind.rawValue))" }.joined(separator: ", ")
-        let items = openItems.prefix(20).map { "\($0.title)" }.joined(separator: "; ")
-        return persona + """
+    static func iso(_ d: Date, _ tz: TimeZone) -> String {
+        let f = ISO8601DateFormatter(); f.timeZone = tz; f.formatOptions = [.withInternetDateTime]
+        return f.string(from: d)
+    }
 
-        Turn the student's short message into structured data. Now: \(f.string(from: now)) (\(weekday.string(from: now))), \
-        time zone \(timeZone.identifier).
-        - items: new assignments/tests/deadlines. Resolve relative dates ("friday", "next week") to an ISO date-time \
-          in the local zone. If no time is given use 08:00 for tests/quizzes (in class) and 23:59 for anything submitted. \
-          Estimate minutes realistically for a high schooler if not given. importance 1-5 (finals, applications = 5). \
-          difficulty 1-3. topics = what to study, if mentioned.
-        - commitments: recurring weekly activities ("soccer mon wed 4-6"). weekdays use 1=Sunday..7=Saturday, 24h HH:mm.
-        - markers: check-ins about what they're doing right now ("left home", "at practice", "finished math"). \
-          activity is a short lowercase key; use to_school / from_school / school / study for those.
-        - completedTitles: titles of existing open items they say are done. Open items: \(items.isEmpty ? "none" : items)
-        - mood: 1-5 only if they express how they feel.
-        - reply: one short friendly confirmation of what you understood.
-        Known commitments: \(comm.isEmpty ? "none" : comm).
+    public static func decomposition() -> String {
+        persona + """
+
+        Split a long task into 3-8 steps, each with its own due date between now and the deadline. First step tiny, \
+        due within 2 days. Spread steps evenly. Main draft done with 20%+ of the time left for feedback and revision. \
+        Essays/applications: brainstorm, outline, draft, feedback, revise, proofread/submit. Realistic minutes. \
+        kind: essay|application|project|reading|chore. due: local ISO date-time. rationale: one sentence.
         """
     }
 
-    public static func decomposition(item: WorkItem, now: Date, timeZone: TimeZone) -> String {
-        let f = ISO8601DateFormatter(); f.timeZone = timeZone
-        return persona + """
-
-        Break this long-term task into 3-8 concrete steps with their own due dates, between \(f.string(from: now)) \
-        and the final deadline \(f.string(from: item.due)). Rules, from the research on long projects:
-        - The first step must be tiny and start within 2 days (lowers the barrier to starting).
-        - Spread steps out evenly. Regular brief sessions beat binges.
-        - Finish the main draft at least 20% of the time before the deadline, leaving room for feedback and \
-          revision (people underestimate how long things take).
-        - For essays/applications include: brainstorm, outline, rough draft, get feedback from someone, revise, final proofread/submit.
-        - estimateMinutes per step realistic for a high schooler. kind: use "essay"/"application"/"project"/"reading"/"chore".
-        Give a one-sentence rationale.
-        """
+    public static func decompositionRequest(item: WorkItem, now: Date, timeZone: TimeZone) -> String {
+        "Now \(iso(now, timeZone)). Task: \(item.title) (\(item.kind.rawValue)), due \(iso(item.due, timeZone)), " +
+            "about \(item.estimateMinutes) min total." + (item.notes.map { " Notes: \($0.prefix(300))" } ?? "")
     }
 
     public static func weeklyReview() -> String {
         persona + """
 
-        Write the student's weekly review from the data summary. The planner already handles scheduling. You \
-        suggest at most 3 small, specific adjustments that research supports (sleep regularity, spacing, \
-        retrieval practice, shorter blocks if they abandon long ones, fewer planned minutes if follow-through is low, \
-        phone out of the room). Start with what went well (self-efficacy). If follow-through was low, be self-compassionate: \
-        self-forgiveness reduces future procrastination. "changes" are optional numeric tweaks to their settings and must be \
-        modest (±10 minutes). Never reduce sleep. Headline under 10 words.
+        Write the student's weekly review from the data. Headline under 10 words. wins: 1-2 short sentences on what \
+        went well. suggestions: at most 2 small, specific, research-backed tweaks (sleep regularity, spacing, \
+        self-testing, shorter blocks, planning less if follow-through is low, phone out of the room). Be \
+        self-compassionate about misses. changes: optional ±10 min tweaks to their settings; never reduce sleep.
         """
     }
 
-    public static func coach() -> String {
+    public static func flashcards() -> String {
         persona + """
 
-        Answer the student's question about their schedule, studying, or habits. Use the context below. Prefer one \
-        concrete next action. If they ask whether to stay up late to study for a test, explain that sleep helps the \
-        test more. For deadline-driven writing, a short extension of the evening may be okay once, not repeatedly.
+        Make flashcards for a high-school student. Front: a recall question (not yes/no or multiple choice). \
+        Back: exact answer, 25 words max. Mix definitions, "why" questions and an application problem.
         """
     }
 
-    public static func flashcards(subject: String?, topics: [String], count: Int) -> String {
+    public static func flashcardsRequest(subject: String?, topics: [String], count: Int) -> String {
+        "\(count) cards on: \(topics.joined(separator: "; "))" + (subject.map { " (\($0))" } ?? "")
+    }
+
+    public static func reads() -> String {
         persona + """
 
-        Make \(count) flashcards for a high-school student on: \(topics.joined(separator: "; ")) \
-        \(subject.map { "(\($0))" } ?? ""). Front: a question that needs recall, not recognition (no yes/no, no multiple choice). \
-        Back: a short, exact answer (≤ 25 words). Mix definitions, "why" questions and one or two application problems.
+        Write short reads (120-180 words) a curious high-schooler finishes in two minutes instead of scrolling. \
+        Accurate, vivid, one surprising fact each, no fluff. question: one "why/how" question to think about.
         """
     }
 
-    public static func reads(interests: [String], subjects: [String], count: Int) -> String {
-        persona + """
-
-        Write \(count) short reads (120-220 words each) a curious high-schooler can finish in about two minutes \
-        instead of scrolling. Half connect to their subjects (\(subjects.joined(separator: ", "))), half to their interests \
-        (\(interests.isEmpty ? "science, history, how things work" : interests.joined(separator: ", "))). Accurate, vivid, one \
-        surprising fact each, no fluff. End each with one "why/how" question to think about (question field).
-        """
+    public static func readsRequest(interests: [String], subjects: [String], count: Int) -> String {
+        "\(count) reads. Half on their subjects (\(subjects.isEmpty ? "any" : subjects.joined(separator: ", "))), half on " +
+            "their interests (\(interests.isEmpty ? "science, history, how things work" : interests.joined(separator: ", ")))."
     }
 
     /// Compact context, so prompts stay cheap and on-topic.
@@ -366,13 +372,12 @@ public enum Prompts {
                                taper: ScreenTaper, learned: LearnedModel, calendar cal: Calendar) -> String {
         let df = DateFormatter(); df.calendar = cal; df.timeZone = cal.timeZone; df.dateFormat = "EEE MMM d HH:mm"
         var lines = ["Now: \(df.string(from: now))"]
-        let open = items.filter { !$0.isDone }.sorted { $0.due < $1.due }.prefix(15)
-        lines.append("Open work:")
-        for i in open {
-            lines.append("- \(i.title) [\(i.kind.rawValue), importance \(i.importance)] due \(df.string(from: i.due)), \(i.completedMinutes)/\(i.estimateMinutes) min done")
+        // The weekly note is about how the week went, so only the next few deadlines matter.
+        let open = items.filter { !$0.isDone && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(8)
+        if !open.isEmpty {
+            lines.append("Coming up: " + open.map { "\($0.title) (\(df.string(from: $0.due)), \($0.completedMinutes)/\($0.estimateMinutes)m)" }
+                .joined(separator: "; "))
         }
-        let todays = plan.blocks.filter { cal.isDate($0.start, inSameDayAs: now) && $0.kind != .sleep }
-        lines.append("Today's plan: " + todays.map { "\(df.string(from: $0.start).suffix(5)) \($0.title)" }.joined(separator: ", "))
         if !plan.warnings.isEmpty { lines.append("Planner warnings: " + plan.warnings.map(\.message).joined(separator: " | ")) }
         if let s = summary {
             let mins = s.averageMinutes.filter { $0.value > 0 }.map { "\($0.key.rawValue) \($0.value)m" }.sorted().joined(separator: ", ")

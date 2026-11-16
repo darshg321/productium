@@ -7,7 +7,7 @@ import ProductiumCore
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model
     @State private var page: Page = .welcome
-    @State private var serverURL = ClaudeClient.shared.baseURL?.absoluteString ?? ""
+    @State private var serverURL = ClaudeClient.shared.baseURL?.absoluteString ?? ClaudeClient.defaultURL.absoluteString
     @State private var serverKey = ClaudeClient.shared.apiKey ?? ""
     @State private var serverState: ServerState = .untested
     @State private var permissionsDone = false
@@ -15,7 +15,7 @@ struct OnboardingView: View {
     @State private var showPicker = false
     @State private var selection = FamilyActivitySelection()
 
-    enum ServerState { case untested, testing, ok, failed }
+    enum ServerState { case untested, testing, ok, badKey, failed }
 
     enum Page: Int, CaseIterable {
         case welcome, claude, week, sleep, permissions, scrolling, keepAlive
@@ -27,10 +27,10 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Progress as a ruler: one segment per page, filled up to here.
-            HStack(spacing: 3) {
+            // Progress: one segment per page, filled up to here.
+            HStack(spacing: 4) {
                 ForEach(pages, id: \.self) { p in
-                    Rectangle().fill(p.rawValue <= page.rawValue ? Theme.cobalt : Theme.fog).frame(height: 4)
+                    Capsule().fill(p.rawValue <= page.rawValue ? Color.accentColor : Color(.tertiarySystemFill)).frame(height: 4)
                 }
             }
             .padding(.horizontal, 20).padding(.top, 12)
@@ -46,16 +46,20 @@ struct OnboardingView: View {
             .scrollDismissesKeyboard(.interactively)
 
             HStack {
-                if page != .welcome { TextAction("Back", color: .secondary) { move(-1) } }
+                if page != .welcome {
+                    Button("Back") { move(-1) }.buttonStyle(.bordered).controlSize(.large)
+                }
                 Spacer()
-                Button(page == pages.last ? "Start" : "Continue") { advance() }
-                    .buttonStyle(SlabButtonStyle())
-                    .frame(width: 160)
-                    .disabled(!canContinue)
-                    .opacity(canContinue ? 1 : 0.4)
+                Button { advance() } label: {
+                    Text(page == pages.last ? "Get Started" : "Continue").frame(minWidth: 120)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!canContinue)
             }
             .padding(20)
         }
+        .background(Theme.background)
         .familyActivityPicker(isPresented: $showPicker, selection: $selection)
         .onChange(of: selection) { _, s in ScreenTimeService.shared.selection = s }
     }
@@ -98,7 +102,8 @@ struct OnboardingView: View {
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Tell it everything.\nIt plans the rest.").font(.display(32, .bold))
+            IconTile(symbol: "calendar.badge.clock", color: .blue, size: 72)
+            Text("Tell it everything.\nIt plans the rest.").font(.largeTitle.weight(.bold))
             Text("You type what's due, what happened, and what changed, in any order and as messily as you like. Productium works out when to do things, protects your sleep and free time, and learns your routine so you don't have to log it.")
                 .font(.body).lineSpacing(3)
             Text("Setup takes about two minutes.").foregroundStyle(.secondary)
@@ -107,16 +112,20 @@ struct OnboardingView: View {
 
     private var claude: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Connect Claude").font(.display(28, .bold))
-            Text("Productium runs on your claude-server. Use the address from Tailscale (it starts with https:// and ends in .ts.net) and the API key you made for Productium. Tailscale needs to be on for this phone.")
+            IconTile(symbol: "sparkles", color: .teal, size: 56)
+            Text("Connect Claude").font(.largeTitle.weight(.bold))
+            Text("Productium runs on your claude-server over Tailscale. The address is filled in; add the API key you made for Productium (it starts with cs_). Tailscale needs to be on for this phone.")
                 .lineSpacing(3)
             field("https://your-pi.your-tailnet.ts.net", text: $serverURL, secure: false)
             field("API key (starts with cs_)", text: $serverKey, secure: true)
             HStack(spacing: 16) {
-                TextAction(serverState == .testing ? "Checking…" : "Check connection") { test() }
+                Button(serverState == .testing ? "Checking…" : "Check Connection") { test() }
+                    .buttonStyle(.bordered)
+                    .disabled(serverState == .testing)
                 switch serverState {
-                case .ok: Text("Connected").foregroundStyle(Theme.cobalt)
-                case .failed: Text("No answer. Is Tailscale on, and is the address right?").foregroundStyle(Theme.signal).font(.subheadline)
+                case .ok: Label("Connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                case .badKey: Text("The server is there, but it didn't accept that key.").foregroundStyle(Theme.alert).font(.subheadline)
+                case .failed: Text("No answer. Is Tailscale on, and is the address right?").foregroundStyle(Theme.alert).font(.subheadline)
                 default: EmptyView()
                 }
             }
@@ -125,7 +134,7 @@ struct OnboardingView: View {
 
     private var week: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Your week").font(.display(28, .bold))
+            Text("Your Week").font(.largeTitle.weight(.bold))
             Text("Write your school hours, your activities and anything coming up. A screenshot of your timetable works too. For example: “school mon–fri 8:30 to 3, soccer mon and wed 4–5:30, chem test thursday, college essay due dec 1”.")
                 .lineSpacing(3)
             DumpBox()
@@ -152,11 +161,12 @@ struct OnboardingView: View {
         let wake = WakePlanner.plan(for: monday, commitments: model.state.commitments, events: [], routines: model.state.routines,
                                     prefs: model.state.prefs, calendar: .current, exceptions: model.state.exceptions)
         return VStack(alignment: .leading, spacing: 18) {
-            Text("Sleep").font(.display(28, .bold))
+            IconTile(symbol: "bed.double.fill", color: Theme.sleep, size: 56)
+            Text("Sleep").font(.largeTitle.weight(.bold))
             Text("Teens need 8 to 10 hours. Your bedtime gets worked back from when you have to be up, which comes from your first class and how long it takes you to get there.")
                 .lineSpacing(3)
             Stepper(value: $m.state.prefs.sleepNeedMinutes, in: 480...600, step: 15) {
-                Text("About \(minutesLabel(model.state.prefs.sleepNeedMinutes)) a night").font(.display(18, .semibold))
+                Text("About \(durationLabel(model.state.prefs.sleepNeedMinutes)) a night").font(.headline)
             }
             Text("On a school day that means up at \(wake.wake.hm) and in bed by \(wake.wake.addingTimeInterval(-Double(model.state.prefs.sleepNeedMinutes) * 60).hm).")
                 .foregroundStyle(.secondary)
@@ -165,29 +175,33 @@ struct OnboardingView: View {
 
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Let it see your day").font(.display(28, .bold))
+            Text("Let It See Your Day").font(.largeTitle.weight(.bold))
             Text("Each of these saves you from typing something. iOS will ask about each one in turn.")
                 .lineSpacing(3)
             VStack(alignment: .leading, spacing: 12) {
-                reason("Notifications", "Reply to “how did it go?” from the lock screen.")
-                reason("Health", "Sleep, wake-up time and steps, so a short night means a lighter day.")
-                reason("Calendar", "So it never plans over things already in there.")
-                reason("Location", "Notices when you leave home and get to school, and learns how long it takes. Choose “Always”.")
-                reason("Alarms", "Sets your wake-up alarm for you.")
+                reason("Notifications", "Reply to “how did it go?” from the lock screen.", "bell.badge.fill", .red)
+                reason("Health", "Sleep, wake-up time and steps, so a short night means a lighter day.", "heart.fill", .pink)
+                reason("Calendar", "So it never plans over things already in there.", "calendar", .red)
+                reason("Location", "Notices when you leave home and get to school, and learns how long it takes. Choose “Always”.", "location.fill", .blue)
+                reason("Alarms", "Sets your wake-up alarm for you.", "alarm.fill", .orange)
             }
             if permissionsDone {
-                Text("All set.").foregroundStyle(Theme.cobalt)
+                Label("All set.", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
             } else {
-                Button(workingPermissions ? "Asking…" : "Turn these on") { Task { await askAll() } }
-                    .buttonStyle(SlabButtonStyle())
-                    .disabled(workingPermissions)
+                Button { Task { await askAll() } } label: {
+                    Text(workingPermissions ? "Asking…" : "Turn These On").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(workingPermissions)
             }
         }
     }
 
     @ViewBuilder private var scrolling: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Less scrolling").font(.display(28, .bold))
+            IconTile(symbol: "hourglass", color: Theme.screen, size: 56)
+            Text("Less Scrolling").font(.largeTitle.weight(.bold))
             #if FREE_TIER
             Text("This build can't block apps (that needs a paid Apple developer account), so two small habits do the job.")
                 .lineSpacing(3)
@@ -199,7 +213,8 @@ struct OnboardingView: View {
                 step(4, "Add an If action: If Result is true, add the action Open URLs with productium://gap.")
                 step(5, "Repeat for each app (Shortcuts allows one app per automation).")
             }
-            TextAction("Open Shortcuts") { if let u = URL(string: "shortcuts://") { UIApplication.shared.open(u) } }
+            Button("Open Shortcuts") { if let u = URL(string: "shortcuts://") { UIApplication.shared.open(u) } }
+                .buttonStyle(.bordered)
             Text("Opening one of those apps now shows a short pause with something better to do. “Go back anyway” turns the pause off for 10 minutes.")
                 .font(.subheadline).foregroundStyle(.secondary)
             Text("One screenshot a week").font(.headline).padding(.top, 8)
@@ -209,7 +224,8 @@ struct OnboardingView: View {
             Text("Pick the apps and sites you lose time in. For the first week Productium only measures. After that the daily limit drops about 10% a week, and those apps pause during focus blocks and before bed.")
                 .lineSpacing(3)
             if model.state.integrations.screenTime {
-                TextAction("Choose apps and sites") { selection = ScreenTimeService.shared.selection; showPicker = true }
+                Button("Choose Apps and Sites") { selection = ScreenTimeService.shared.selection; showPicker = true }
+                    .buttonStyle(.bordered)
             } else {
                 Button("Allow Screen Time") {
                     Task {
@@ -217,7 +233,8 @@ struct OnboardingView: View {
                         if model.state.integrations.screenTime { showPicker = true }
                     }
                 }
-                .buttonStyle(SlabButtonStyle())
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
             #endif
         }
@@ -225,7 +242,7 @@ struct OnboardingView: View {
 
     private var keepAlive: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Keep it installed").font(.display(28, .bold))
+            Text("Keep It Installed").font(.largeTitle.weight(.bold))
             Text("A free Apple account signs apps for 7 days. SideStore re-signs them on your phone over Wi-Fi, so you never need a cable again.")
                 .lineSpacing(3)
             VStack(alignment: .leading, spacing: 8) {
@@ -250,19 +267,22 @@ struct OnboardingView: View {
         .textInputAutocapitalization(.never)
         .autocorrectionDisabled()
         .padding(14)
-        .background(Theme.fog.opacity(0.55), in: RoundedRectangle(cornerRadius: Theme.radius))
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private func reason(_ title: String, _ why: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.headline)
-            Text(why).font(.subheadline).foregroundStyle(.secondary)
+    private func reason(_ title: String, _ why: String, _ symbol: String, _ color: Color) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            IconTile(symbol: symbol, color: color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(why).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
     private func step(_ n: Int, _ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text("\(n)").font(.subheadline.weight(.bold).monospacedDigit()).foregroundStyle(Theme.cobalt).frame(width: 16)
+            Text("\(n)").font(.subheadline.weight(.bold).monospacedDigit()).foregroundStyle(Color.accentColor).frame(width: 16)
             Text(text).font(.subheadline).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -272,9 +292,12 @@ struct OnboardingView: View {
         ClaudeClient.shared.apiKey = serverKey.trimmingCharacters(in: .whitespaces)
         serverState = .testing
         Task {
-            let ok = await ClaudeClient.shared.ping()
-            serverState = ok ? .ok : .failed
-            model.serverOnline = ok
+            switch await ClaudeClient.shared.verify() {
+            case .ok: serverState = .ok
+            case .badKey: serverState = .badKey
+            case .unreachable: serverState = .failed
+            }
+            model.serverOnline = serverState != .failed
         }
     }
 

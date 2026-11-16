@@ -20,7 +20,7 @@ blocking): see **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
   focus length, and your commute. If you complete less than planned, it plans less.
 - **One box for everything**: type, or drop screenshots of, anything: deadlines, what you did, how you feel,
   questions, and corrections ("didn't go to school today", "chem test moved to tues", "walk to school is 25 min").
-  Claude (Haiku) turns it into changes, applies them on the phone, and shows what changed, with Undo.
+  Claude (Haiku 4.5, the cheapest model on the server) turns it into changes, applies them on the phone, and shows what changed, with Undo.
   Health, Calendar, location and Screen Time fill in the rest.
 - **Screen time**: a week of measuring, then a limit that tapers about 10% a week. Calm shields with a deliberate
   "15 more minutes", and apps paused during focus blocks and wind-down.
@@ -28,7 +28,10 @@ blocking): see **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
   step", a breathing minute, or a walk instead of a feed.
 - **Review**: a weekly note from Claude, the last seven days drawn as they actually went, and three
   sentences (sleep, work done, scrolling). Design notes: [docs/DESIGN.md](docs/DESIGN.md).
-- **Your data**: on-device JSON, with export to CSV, JSON backup and .ics, plus restore and delete-everything.
+- **Your data**: on-device JSON. Settings → Backup & Restore saves *everything* to one file you keep, and restores
+  it on this or another phone. There's also CSV and .ics export, and delete-everything.
+- **Token meter**: top right on every tab, today's AI tokens against a daily budget, with a breakdown by
+  feature. Over budget, background AI waits until tomorrow; the box always works.
 
 ## Layout
 
@@ -43,7 +46,7 @@ productium/
 │   ├── ScreenTaper.swift        adaptive weekly screen-time limit
 │   ├── Wellbeing.swift, MicroLearning.swift, Insights.swift, Export.swift
 │   └── AI.swift                 server wire format, JSON schemas, prompts, guard rails
-├── App/                         SwiftUI app (Today · Plan · Insights), services, intents
+├── App/                         SwiftUI app (Today · Week · Review · Settings), services, intents
 ├── Extensions/                  DeviceActivity monitor, report, shield UI, shield action, widgets/Live Activity
 ├── Shared/                      App Group config + shield logic shared with extensions
 ├── project.yml                  XcodeGen spec (project generated on CI)
@@ -53,7 +56,8 @@ productium/
 ```
 
 Productium is an AI app and needs **[../claude-server](../claude-server)**, a small API on a Raspberry Pi 5 that
-wraps the Claude Code CLI on your subscription and accepts images. Haiku reads the box and screenshots.
+wraps the Claude Code CLI on your subscription and accepts images (default address: `https://raspberrypi.tail29964a.ts.net`).
+The app uses its Anthropic-compatible `/v1/messages` API. Haiku 4.5 (`lite`) reads the box and screenshots.
 Sonnet breaks down big projects and writes the weekly note. The scheduler itself is deterministic code
 on the phone (see SOURCES §1).
 

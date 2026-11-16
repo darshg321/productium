@@ -57,6 +57,8 @@ struct AppState: Codable {
     var focus: FocusSession?
     var learnedDays: Set<String> = []
     var dismissed: Set<String> = []
+    var chatAt: Date?                      // when the last box exchange happened
+    var usage = UsageLedger()              // AI token meter
 
     var dumpState: DumpState {
         get {
@@ -108,6 +110,8 @@ struct AppState: Codable {
         focus = v(.focus, d.focus)
         learnedDays = v(.learnedDays, d.learnedDays)
         dismissed = v(.dismissed, d.dismissed)
+        chatAt = v(.chatAt, d.chatAt)
+        usage = v(.usage, d.usage)
     }
 
     var backup: Backup {
@@ -144,7 +148,53 @@ struct AppState: Codable {
         exceptions.removeAll { $0.day < now.addingTimeInterval(-60 * 86400) }
         oneOffs.removeAll { $0.end < cutoff }
         if chat.count > 12 { chat.removeFirst(chat.count - 12) }
+        usage.prune(now: now)
     }
+
+    /// Restore from a full backup. Permissions (integrations) belong to this phone, not the
+    /// backup, so they're kept, and a focus session from another time is dropped.
+    mutating func restore(full s: AppState) {
+        let device = integrations
+        self = s
+        integrations = device
+        focus = nil
+        onboarded = true
+    }
+}
+
+/// The whole app in one file: every piece of state plus the few settings kept outside it.
+/// Written by Settings → Backup, read back by Restore (on this phone or another).
+struct FullBackup: Codable {
+    static let formatID = "productium-backup"
+    var format = FullBackup.formatID
+    var version = 2
+    var exportedAt: Date
+    var appVersion: String?
+    var serverURL: String?
+    var nudgeOnShield: Bool?
+    var state: AppState
+
+    static func encoder() -> JSONEncoder {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return e
+    }
+
+    static func decoder() -> JSONDecoder {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }
+}
+
+/// What a backup file holds, shown before it replaces anything.
+struct RestorePreview: Identifiable {
+    let id = UUID()
+    var exportedAt: Date?
+    var summary: String
+    var full: FullBackup?
+    var legacy: Backup?
 }
 
 enum Persistence {

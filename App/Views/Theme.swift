@@ -1,46 +1,55 @@
 import SwiftUI
 import ProductiumCore
 
-/// Productium's visual language. The subject is a student's day measured in time,
-/// so the characteristic element is the day drawn to scale: flat colour bars whose
-/// length *is* their duration. Everything else stays quiet. One family (SF), with
-/// width as the voice: expanded for the few things that matter, regular for the rest.
-///
-/// Palette, five named colours, each meaning one thing:
-///   cobalt   #2340F5  focus work (and the only accent)
-///   daylight #F5A623  free time
-///   night    #1A2350  sleep
-///   fog      #E4E6EB  fixed time: school, travel, routines, meals (dark: #2C2E35)
-///   signal   #E5482D  something actually needs attention
+/// Productium looks like the system, in the way Health and Settings do: grouped
+/// backgrounds, inset cards with a tinted category header and one big number, and
+/// SF Symbols on coloured rounded squares for lists. All colours are system colours,
+/// so dark mode, Increase Contrast and Liquid Glass come for free. Each means one thing:
+///   blue    focus work          orange  free time
+///   indigo  sleep               gray    fixed time (school, travel, routines, meals)
+///   purple  screen time         red     something actually needs attention
 enum Theme {
-    static let cobalt = Color(red: 0x23 / 255, green: 0x40 / 255, blue: 0xF5 / 255)
-    static let daylight = Color(red: 0xF5 / 255, green: 0xA6 / 255, blue: 0x23 / 255)
-    static let night = Color(red: 0x1A / 255, green: 0x23 / 255, blue: 0x50 / 255)
-    static let fog = Color(UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0x2C / 255, green: 0x2E / 255, blue: 0x35 / 255, alpha: 1)
-        : UIColor(red: 0xE4 / 255, green: 0xE6 / 255, blue: 0xEB / 255, alpha: 1) })
-    static let signal = Color(red: 0xE5 / 255, green: 0x48 / 255, blue: 0x2D / 255)
-    static let accent = cobalt
+    static let focus = Color.blue
+    static let free = Color.orange
+    static let sleep = Color.indigo
+    static let fixed = Color(.systemGray3)
+    static let screen = Color.purple
+    static let alert = Color.red
 
-    /// Fields and bars: barely rounded. Shape comes from proportion, not corners.
-    static let radius: CGFloat = 3
+    static let background = Color(.systemGroupedBackground)
+    static let card = Color(.secondarySystemGroupedBackground)
+    static let cardRadius: CGFloat = 16
 
     static func color(for kind: BlockKind) -> Color {
         switch kind {
-        case .work, .review: return cobalt
-        case .free, .gap, .breakTime: return daylight
-        case .sleep, .windDown: return night
-        case .commitment, .event, .meal, .routine: return fog
+        case .work, .review: return focus
+        case .free, .gap, .breakTime: return free
+        case .sleep, .windDown: return sleep
+        case .commitment, .event, .meal, .routine: return fixed
         }
     }
 
     static func color(for c: TimeCategory) -> Color {
         switch c {
-        case .sleep: return night
-        case .study: return cobalt
-        case .free: return daylight
-        case .screen: return signal
-        case .school, .activities, .commute, .routine: return fog
+        case .sleep: return sleep
+        case .study: return focus
+        case .free: return free
+        case .screen: return screen
+        case .school, .activities, .commute, .routine: return fixed
+        }
+    }
+
+    static func color(for kind: TaskKind) -> Color {
+        switch kind {
+        case .test: return .red
+        case .quiz: return .pink
+        case .assignment: return .blue
+        case .project: return .purple
+        case .essay: return .indigo
+        case .application: return .green
+        case .reading: return .brown
+        case .practice: return .teal
+        case .chore, .other: return .gray
         }
     }
 
@@ -48,21 +57,180 @@ enum Theme {
         switch kind {
         case .work: return "pencil.line"
         case .review: return "brain.head.profile"
-        case .breakTime: return "cup.and.saucer"
-        case .free, .gap: return "sun.max"
-        case .commitment: return "building.2"
+        case .breakTime: return "cup.and.saucer.fill"
+        case .free, .gap: return "sun.max.fill"
+        case .commitment: return "building.2.fill"
         case .event: return "calendar"
         case .meal: return "fork.knife"
         case .routine: return "figure.walk"
-        case .windDown, .sleep: return "moon"
+        case .windDown, .sleep: return "moon.fill"
+        }
+    }
+
+    static func color(for f: AIFeature) -> Color {
+        switch f {
+        case .box: return .blue
+        case .flashcards: return .orange
+        case .reads: return .brown
+        case .breakdown: return .purple
+        case .review: return .teal
+        }
+    }
+
+    static func symbol(for f: AIFeature) -> String {
+        switch f {
+        case .box: return "tray.and.arrow.down.fill"
+        case .flashcards: return "rectangle.on.rectangle"
+        case .reads: return "text.book.closed.fill"
+        case .breakdown: return "list.bullet.indent"
+        case .review: return "sparkles"
+        }
+    }
+
+    /// Meter colour: calm until most of the day's budget is gone.
+    static func meter(_ fraction: Double) -> Color {
+        fraction >= 1 ? .red : fraction >= 0.8 ? .orange : .green
+    }
+}
+
+// MARK: - Building blocks
+
+/// The Settings-app icon: a white symbol on a coloured, continuous-corner square.
+struct IconTile: View {
+    let symbol: String
+    let color: Color
+    var size: CGFloat = 29
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.55, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(color.gradient, in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
+/// A Settings-style row label: icon tile, then the title.
+struct SettingsLabel: View {
+    let title: String
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        Label {
+            Text(title)
+        } icon: {
+            IconTile(symbol: symbol, color: color)
         }
     }
 }
 
-extension Font {
-    /// Display voice: SF expanded. Used for at most one or two things per screen.
-    static func display(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
-        .system(size: size, weight: weight).width(.expanded)
+/// A Health-style card on the grouped background.
+struct Card<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) { content }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+    }
+}
+
+/// The tinted category line at the top of a card: symbol and name in colour,
+/// a quiet detail and (optionally) a chevron on the right.
+struct CardHeader: View {
+    let title: String
+    let symbol: String
+    let color: Color
+    var detail: String?
+    var chevron = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Label(title, systemImage: symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(color)
+            Spacer(minLength: 8)
+            if let detail {
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
+            }
+            if chevron {
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+        }
+    }
+}
+
+/// The one big number with its unit beside it, as Health shows a reading.
+struct BigValue: View {
+    let value: String
+    var unit: String?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(value).font(.system(.title, design: .rounded).weight(.semibold)).monospacedDigit()
+            if let unit {
+                Text(unit).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A bold section title between cards ("Schedule", "Highlights").
+struct SectionTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(.title3.weight(.bold))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 8)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// Banner for short confirmations, above the tab bar.
+struct Notice: View {
+    let text: String
+    var body: some View {
+        Label(text, systemImage: "checkmark.circle.fill")
+            .font(.subheadline.weight(.medium))
+            .symbolRenderingMode(.multicolor)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+            .padding(.horizontal, 16)
+    }
+}
+
+/// "1 hr 20 min", the way Health writes durations.
+func durationLabel(_ m: Int) -> String {
+    let h = m / 60, r = m % 60
+    if h == 0 { return "\(r) min" }
+    return r == 0 ? "\(h) hr" : "\(h) hr \(r) min"
+}
+
+/// A duration as Health shows one: big numbers, small units ("7 hr 32 min").
+struct DurationValue: View {
+    let minutes: Int
+    var body: some View {
+        let h = minutes / 60, m = minutes % 60
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if h > 0 { part("\(h)", "hr") }
+            if m > 0 || h == 0 { part("\(m)", "min") }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(durationLabel(minutes))
+    }
+
+    private func part(_ v: String, _ u: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Text(v).font(.system(.title, design: .rounded).weight(.semibold)).monospacedDigit()
+            Text(u).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -79,47 +247,73 @@ extension Date {
     }
 }
 
-/// A plain text button in the accent colour: the default action style.
-struct TextAction: View {
-    let title: String
-    var color: Color = Theme.cobalt
-    let action: () -> Void
-    init(_ title: String, color: Color = Theme.cobalt, action: @escaping () -> Void) {
-        self.title = title
-        self.color = color
-        self.action = action
-    }
+/// A horizontal bar of the day, each block its own width: the app's one chart.
+struct DayStrip: View {
+    let blocks: [PlannedBlock]
+    let start: Date
+    let end: Date
+    var height: CGFloat = 8
+
     var body: some View {
-        Button(action: action) { Text(title).font(.body.weight(.semibold)).foregroundStyle(color) }
-            .buttonStyle(.plain)
-            .contentShape(Rectangle())
+        GeometryReader { g in
+            let span = max(60, end.timeIntervalSince(start))
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color(.tertiarySystemFill))
+                ForEach(blocks.filter { $0.end > start && $0.start < end && $0.kind != .breakTime }) { b in
+                    let x = max(0, b.start.timeIntervalSince(start)) / span
+                    let w = min(b.end, end).timeIntervalSince(max(b.start, start)) / span
+                    Rectangle().fill(Theme.color(for: b.kind))
+                        .frame(width: max(1, g.size.width * w))
+                        .offset(x: g.size.width * x)
+                }
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
     }
 }
 
-/// The one filled button style: a flat cobalt slab, nearly square-cornered.
-struct SlabButtonStyle: ButtonStyle {
-    var color: Color = Theme.cobalt
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 18)
-            .frame(minHeight: 48)
-            .frame(maxWidth: .infinity)
-            .background(color.opacity(configuration.isPressed ? 0.8 : 1), in: RoundedRectangle(cornerRadius: Theme.radius))
+/// Toolbar button for the token meter, top right on every tab.
+struct UsageToolbar: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @State private var showUsage = false
+
+    func body(content: Content) -> some View {
+        content
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showUsage = true } label: { TokenMeter() }
+                        .accessibilityLabel("AI usage today: \(tokensLabel(model.tokensToday)) tokens")
+                }
+            }
+            .sheet(isPresented: $showUsage) { UsageView() }
     }
 }
 
-/// Plain notice line (replaces floating toasts): sits at the bottom, no capsule, no shadow.
-struct Notice: View {
-    let text: String
+extension View {
+    func usageMeter() -> some View { modifier(UsageToolbar()) }
+}
+
+/// A small ring that fills toward today's budget, with today's token count.
+struct TokenMeter: View {
+    @Environment(AppModel.self) private var model
+
     var body: some View {
-        Text(text)
-            .font(.subheadline)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16).padding(.vertical, 12)
-            .background(.bar)
-            .overlay(alignment: .leading) { Rectangle().fill(Theme.cobalt).frame(width: 3) }
+        let f = model.usageFraction
+        HStack(spacing: 5) {
+            ZStack {
+                Circle().stroke(Color(.tertiarySystemFill), lineWidth: 3)
+                Circle().trim(from: 0, to: min(1, max(0.001, f)))
+                    .stroke(Theme.meter(f), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: 16, height: 16)
+            Text(tokensLabel(model.tokensToday))
+                .font(.footnote.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 2)
+        .animation(.easeOut(duration: 0.3), value: f)
     }
 }

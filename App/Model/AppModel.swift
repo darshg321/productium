@@ -19,6 +19,8 @@ final class AppModel {
     @ObservationIgnored private var undoSnapshot: AppState?
     var busy: Set<String> = []
     var serverOnline: Bool?
+    /// The server's own per-key count, refreshed now and then (costs no tokens).
+    var serverUsage: ServerUsage?
     var deepLink: String?
     let cal = Calendar.current
     @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -43,6 +45,9 @@ final class AppModel {
     // MARK: - Lifecycle
 
     func launch() {
+        ClaudeClient.shared.onUsage = { [weak self] feature, model, tokens in
+            self?.recordUsage(feature, model: model, tokens: tokens)
+        }
         NotificationService.register()
         LocationService.shared.onTransition = { [weak self] place, entered in
             Task { @MainActor in self?.handleGeofence(place, entered: entered) }
@@ -76,8 +81,9 @@ final class AppModel {
         replan()
         if full {
             serverOnline = await ClaudeClient.shared.ping()
-            await ensureGapContent()
+            // Flashcards and reads are made when gap mode opens, not on every launch.
             await weeklyReviewIfDue()
+            await refreshServerUsage()
         }
     }
 
@@ -353,17 +359,38 @@ final class AppModel {
         TimelineBuilder.segments(dayInputs(day), calendar: cal, now: Date())
     }
 
-    // MARK: - AI (Haiku fast, Sonnet reasoned)
+    // MARK: - AI usage
+    //
+    // Token budget, in order of what matters: the box (lite, every message) is trimmed hardest;
+    // flashcards and reads are batched and only made when gap mode needs them; Sonnet runs only
+    // for project breakdowns and the weekly note. Background jobs stand down over budget.
+
+    func recordUsage(_ feature: AIFeature, model: String, tokens: TokenCount) {
+        state.usage.record(UsageRecord(at: Date(), feature: feature, model: model, tokens: tokens))
+        save()
+    }
+
+    func aiAllowed(_ feature: AIFeature) -> Bool {
+        ClaudeClient.shared.isConfigured && state.usage.allows(feature, now: Date(), calendar: cal)
+    }
+
+    var tokensToday: Int { state.usage.total(on: Date(), calendar: cal).total }
+    var usageFraction: Double { state.usage.fractionUsed(now: Date(), calendar: cal) }
+
+    func refreshServerUsage() async {
+        guard ClaudeClient.shared.isConfigured else { return }
+        if let u = await ClaudeClient.shared.usage() { serverUsage = u }
+    }
 
     func decompose(_ id: UUID) async {
-        guard let item = state.items.first(where: { $0.id == id }), ClaudeClient.shared.isConfigured,
+        guard let item = state.items.first(where: { $0.id == id }), aiAllowed(.breakdown),
               !state.items.contains(where: { $0.parentId == id }) else { return }
         busy.insert("decompose")
         defer { busy.remove("decompose") }
         guard let d = try? await ClaudeClient.shared.structured(
-            .reason, system: Prompts.decomposition(item: item, now: Date(), timeZone: cal.timeZone),
-            user: "Task: \(item.title) (\(item.kind.rawValue)). Estimated total \(item.estimateMinutes) min. Notes: \(item.notes ?? "none")",
-            schema: Schemas.decomposition, as: Decomposition.self) else { return }
+            .reason, feature: .breakdown, system: Prompts.decomposition(),
+            user: Prompts.decompositionRequest(item: item, now: Date(), timeZone: cal.timeZone),
+            schema: Schemas.decomposition, as: Decomposition.self, maxTokens: 700) else { return }
         for s in d.steps {
             let p = ParsedItem(title: "\(item.title): \(s.title)", kind: s.kind, subject: item.subject, due: s.due,
                                estimateMinutes: s.estimateMinutes, importance: item.importance, difficulty: item.difficulty, topics: nil)
@@ -377,41 +404,44 @@ final class AppModel {
     }
 
     func makeCards(for item: WorkItem) async {
-        guard ClaudeClient.shared.isConfigured, !item.topics.isEmpty else { return }
+        guard aiAllowed(.flashcards), !item.topics.isEmpty else { return }
         guard let batch = try? await ClaudeClient.shared.structured(
-            .fast, system: Prompts.flashcards(subject: item.subject, topics: item.topics, count: 10),
-            user: "Make the cards.", schema: Schemas.cards, as: CardBatch.self, cacheTTL: 86400) else { return }
+            .fast, feature: .flashcards, system: Prompts.flashcards(),
+            user: Prompts.flashcardsRequest(subject: item.subject, topics: item.topics, count: 8),
+            schema: Schemas.cards, as: CardBatch.self, maxTokens: 900, cacheTTL: 86400) else { return }
         state.flashcards += batch.cards.map { Flashcard(itemId: item.id, subject: item.subject, front: $0.front, back: $0.back) }
         save()
     }
 
+    /// Called when gap mode opens. Cards only for tests in the next two weeks that have none yet;
+    /// reads only when fewer than two are left, three at a time.
     func ensureGapContent() async {
-        guard ClaudeClient.shared.isConfigured else { return }
         for t in state.items where t.kind.isMemoryBased && !t.isDone && !t.topics.isEmpty && t.due.timeIntervalSinceNow < 14 * 86400
-            && state.flashcards.filter({ $0.itemId == t.id }).count < 5 {
+            && !state.flashcards.contains(where: { $0.itemId == t.id }) {
             await makeCards(for: t)
         }
-        let unread = state.reads.filter { $0.readAt == nil }.count
-        guard unread < 3 else { return }
-        let subjects = Array(Set(state.items.compactMap(\.subject))).prefix(5)
+        guard aiAllowed(.reads), state.reads.filter({ $0.readAt == nil }).count < 2 else { return }
+        let subjects = Array(Set(state.items.compactMap(\.subject))).sorted().prefix(4)
         guard let batch = try? await ClaudeClient.shared.structured(
-            .fast, system: Prompts.reads(interests: state.prefs.interests, subjects: Array(subjects), count: 4),
-            user: "Write them.", schema: Schemas.reads, as: ReadBatch.self) else { return }
+            .fast, feature: .reads, system: Prompts.reads(),
+            user: Prompts.readsRequest(interests: state.prefs.interests, subjects: Array(subjects), count: 3),
+            schema: Schemas.reads, as: ReadBatch.self, maxTokens: 1100) else { return }
         state.reads += batch.pieces.map { ReadPiece(title: $0.title, body: $0.body, subject: $0.subject, question: $0.question, source: "Claude") }
         save()
     }
 
     func weeklyReviewIfDue(force: Bool = false) async {
-        guard ClaudeClient.shared.isConfigured else { return }
-        if !force, let at = state.reviewAt, Date().timeIntervalSince(at) < 6.5 * 86400 { return }
+        guard aiAllowed(.review) else { return }
+        if let at = state.reviewAt, Date().timeIntervalSince(at) < (force ? 600 : 6.5 * 86400) { return }
         guard force || state.outcomes.count >= 5 else { return }
         busy.insert("review")
         defer { busy.remove("review") }
         let summary = Insights.summarize(dayTotals(last: 7), learned: state.learned)
         let ctx = Prompts.context(now: Date(), items: state.items, plan: state.plan, summary: summary, moods: state.moods,
                                   taper: state.taper, learned: state.learned, calendar: cal)
-        guard let r = try? await ClaudeClient.shared.structured(.reason, system: Prompts.weeklyReview(), user: ctx,
-                                                               schema: Schemas.weeklyReview, as: WeeklyReview.self) else { return }
+        guard let r = try? await ClaudeClient.shared.structured(.reason, feature: .review, system: Prompts.weeklyReview(), user: ctx,
+                                                               schema: Schemas.weeklyReview, as: WeeklyReview.self,
+                                                               maxTokens: 500) else { return }
         state.review = r
         state.reviewAt = Date()
         save()
@@ -433,6 +463,7 @@ final class AppModel {
         var changes: [String]
         var canUndo: Bool
         var failed: Bool
+        var tokens: Int? = nil
     }
 
     /// Anything at all: deadlines, corrections, what happened, how they feel, a question,
@@ -451,22 +482,27 @@ final class AppModel {
                                           todaySegments: segments(on: today),
                                           todayMarkers: state.markers.filter { cal.isDate($0.at, inSameDayAs: now) },
                                           plan: state.plan)
-        let message = "Context:\n\(context)\n\nStudent wrote:\n\(text.isEmpty ? "(screenshots only)" : text)"
-        let history = Array(state.chat.suffix(4))
+        let message = "Context:\n\(context)\n\nStudent:\n\(text.isEmpty ? "(screenshots only)" : text)"
+        // Only the last exchange, and only if it was recent: enough for "no, I meant thursday",
+        // without paying to resend a long conversation on every message.
+        let recent = state.chatAt.map { now.timeIntervalSince($0) < 30 * 60 } ?? false
+        let history = recent ? Array(state.chat.suffix(2)) : []
         do {
             let req = AIRequest(tier: .fast, system: Prompts.dump(),
                                 messages: history + [AIMessage(role: "user", content: message, images: images)],
-                                schema: Schemas.dump)
-            let res = try await ClaudeClient.shared.complete(req)
+                                schema: Schemas.dump, maxTokens: images.isEmpty ? 700 : 1500)
+            let res = try await ClaudeClient.shared.complete(req, feature: .box)
             guard let structured = res.structured, let result = try? structured.decode(DumpResult.self) else { throw AIError.decoding }
             undoSnapshot = state
             let before = Set(state.items.map(\.id))
             var ds = state.dumpState
             let changes = DumpApplier.apply(result, to: &ds, now: now, calendar: cal)
             state.dumpState = ds
-            state.chat += [AIMessage(role: "user", content: text.isEmpty ? "(screenshots)" : text),
+            state.chat += [AIMessage(role: "user", content: text.isEmpty ? "(screenshots)" : String(text.prefix(500))),
                            AIMessage(role: "assistant", content: result.reply)]
-            receipt = Receipt(input: text, reply: result.reply, changes: changes, canUndo: !changes.isEmpty, failed: false)
+            state.chatAt = now
+            receipt = Receipt(input: text, reply: result.reply, changes: changes, canUndo: !changes.isEmpty, failed: false,
+                              tokens: res.tokens.total)
             replan()
             for item in state.items where !before.contains(item.id) { followUp(new: item) }
             return true
@@ -521,7 +557,7 @@ final class AppModel {
             return segments(on: d)
         }.sorted { $0.start < $1.start }
         let files: [(String, Data)] = [
-            ("productium-backup.json", try Exporter.json(state.backup)),
+            ("productium-backup.json", try backupData()),
             ("daily-summary.csv", Data(Exporter.dailyCSV(days).utf8)),
             ("timeline.csv", Data(Exporter.segmentsCSV(segs).utf8)),
             ("tasks.csv", Data(Exporter.itemsCSV(state.items).utf8)),
@@ -537,12 +573,57 @@ final class AppModel {
         }
     }
 
-    func importBackup(from url: URL) throws {
+    /// Everything, in one JSON file the student keeps (Files, iCloud Drive, AirDrop…).
+    func backupData() throws -> Data {
+        Persistence.save(state)
+        let b = FullBackup(exportedAt: Date(), appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                           serverURL: ClaudeClient.shared.baseURL?.absoluteString,
+                           nudgeOnShield: SharedConfig.defaults.bool(forKey: SharedConfig.Key.nudgeOnShield), state: state)
+        return try FullBackup.encoder().encode(b)
+    }
+
+    var backupFilename: String {
+        "Productium Backup \(Date().formatted(.iso8601.year().month().day()))"
+    }
+
+    /// Reads a backup without applying it, so Settings can say what's in it first.
+    /// Takes this version's full backups and the older partial ones.
+    func readBackup(from url: URL) throws -> RestorePreview {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
-        state.restore(try Exporter.decodeBackup(try Data(contentsOf: url)))
+        let data = try Data(contentsOf: url)
+        if let full = try? FullBackup.decoder().decode(FullBackup.self, from: data), full.format == FullBackup.formatID {
+            let s = full.state
+            let summary = "\(s.items.count) tasks, \(s.commitments.count) activities, \(s.outcomes.count) study sessions, "
+                + "\(s.moods.count) mood entries, \(s.flashcards.count) flashcards and all settings."
+            return RestorePreview(exportedAt: full.exportedAt, summary: summary, full: full)
+        }
+        let legacy = try Exporter.decodeBackup(data)
+        return RestorePreview(exportedAt: legacy.exportedAt,
+                              summary: "An older backup: \(legacy.items.count) tasks, \(legacy.commitments.count) activities and settings.",
+                              legacy: legacy)
+    }
+
+    /// Replaces everything with the backup. The current data is kept on the side first
+    /// (state-before-restore.json), so a wrong file is never a disaster.
+    func applyRestore(_ p: RestorePreview) {
+        let enc = FullBackup.encoder()
+        if let data = try? enc.encode(state) {
+            try? data.write(to: Persistence.url.deletingLastPathComponent().appendingPathComponent("state-before-restore.json"), options: .atomic)
+        }
+        if let full = p.full {
+            state.restore(full: full.state)
+            if let u = full.serverURL.flatMap(URL.init(string:)) { ClaudeClient.shared.baseURL = u }
+            if let n = full.nudgeOnShield { SharedConfig.defaults.set(n, forKey: SharedConfig.Key.nudgeOnShield) }
+        } else if let legacy = p.legacy {
+            state.restore(legacy)
+        }
+        undoSnapshot = nil
+        receipt = nil
+        Persistence.save(state)
+        if state.integrations.location { LocationService.shared.monitor(state.places) }
         replan()
-        toast = "Restored."
+        toast = "Restored from backup."
     }
 
     func deleteEverything() {

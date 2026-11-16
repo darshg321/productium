@@ -10,26 +10,32 @@ struct RootView: View {
         Group {
             if model.state.onboarded {
                 TabView(selection: $tab) {
-                    TodayView(showGap: $showGap).tabItem { Label("Today", systemImage: "sun.horizon") }.tag(0)
-                    WeekView().tabItem { Label("Week", systemImage: "calendar") }.tag(1)
-                    ReviewView().tabItem { Label("Review", systemImage: "chart.bar.xaxis") }.tag(2)
+                    TodayView(showGap: $showGap)
+                        .tabItem { Label("Today", systemImage: "sun.max.fill") }.tag(0)
+                    WeekView()
+                        .tabItem { Label("Week", systemImage: "calendar") }.tag(1)
+                    ReviewView()
+                        .tabItem { Label("Review", systemImage: "chart.bar.fill") }.tag(2)
+                    NavigationStack { SettingsView() }
+                        .tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(3)
                 }
-                .tint(Theme.cobalt)
             } else {
                 OnboardingView()
             }
         }
-        .safeAreaInset(edge: .bottom) {
+        .overlay(alignment: .bottom) {
             if let t = model.toast {
                 Notice(text: t)
-                    .padding(.bottom, 52)
+                    .padding(.bottom, 64)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                     .onTapGesture { model.toast = nil }
                     .task(id: t) {
                         try? await Task.sleep(nanoseconds: 4_000_000_000)
-                        model.toast = nil
+                        withAnimation { model.toast = nil }
                     }
             }
         }
+        .animation(.spring(duration: 0.35), value: model.toast)
         .sheet(isPresented: $showGap) { GapView() }
         .fullScreenCover(isPresented: Binding(get: { model.state.focus != nil }, set: { _ in })) { FocusView() }
         .onChange(of: model.deepLink) { _, link in
@@ -37,6 +43,7 @@ struct RootView: View {
             if link.hasPrefix("productium://gap") { showGap = true }
             else if link.hasPrefix("productium://week") { tab = 1 }
             else if link.hasPrefix("productium://review") { tab = 2 }
+            else if link.hasPrefix("productium://settings") { tab = 3 }
             else { tab = 0 }
             model.deepLink = nil
         }

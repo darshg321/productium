@@ -1,9 +1,9 @@
 import SwiftUI
 import ProductiumCore
 
-/// A focus session: the title, the time left, and a single bar that empties as time
-/// passes (the same ruler as Today, one block tall). Distracting apps are shielded
-/// where Screen Time is available.
+/// A focus session, laid out like the Clock app's timer: the title, a ring that empties
+/// as time passes with the time left inside it, and two buttons. Distracting apps are
+/// shielded where Screen Time is available.
 struct FocusView: View {
     @Environment(AppModel.self) private var model
     @State private var confirmStop = false
@@ -13,40 +13,57 @@ struct FocusView: View {
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let total = max(60, f.plannedEnd.timeIntervalSince(f.startedAt))
                 let remaining = f.plannedEnd.timeIntervalSince(ctx.date)
-                HStack(alignment: .bottom, spacing: 24) {
-                    GeometryReader { g in
-                        VStack(spacing: 0) {
-                            Spacer(minLength: 0)
-                            Rectangle().fill(Theme.cobalt)
-                                .frame(height: g.size.height * CGFloat(max(0, min(1, remaining / total))))
-                        }
-                        .background(Theme.fog.opacity(0.5))
-                    }
-                    .frame(width: 10)
-                    VStack(alignment: .leading, spacing: 18) {
-                        Spacer()
-                        Text(f.title).font(.display(28, .bold)).fixedSize(horizontal: false, vertical: true)
+                let fraction = max(0, min(1, remaining / total))
+                VStack(spacing: 28) {
+                    VStack(spacing: 6) {
+                        Label("Focus", systemImage: "pencil.line")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.focus)
+                        Text(f.title).font(.title2.weight(.bold)).multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                         if let hint = model.state.plan.blocks.first(where: { $0.id == f.blockId })?.hint {
-                            Text(hint).font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Text(hint).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         }
-                        Text(remaining > 0 ? clock(remaining) : "+" + clock(-remaining))
-                            .font(.system(size: 64, weight: .semibold).width(.expanded).monospacedDigit())
-                            .foregroundStyle(remaining > 0 ? .primary : Theme.cobalt)
-                        Spacer()
-                        Button(remaining > 0 ? "Finished early" : "Done") { model.endFocus(.done) }
-                            .buttonStyle(SlabButtonStyle())
-                        TextAction("Stop", color: .secondary) { confirmStop = true }
                     }
+                    .padding(.top, 40)
+                    Spacer(minLength: 0)
+                    ZStack {
+                        Circle().stroke(Color(.tertiarySystemFill), lineWidth: 14)
+                        Circle().trim(from: 0, to: fraction)
+                            .stroke(Theme.focus, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .animation(.linear(duration: 1), value: fraction)
+                        VStack(spacing: 4) {
+                            Text(remaining > 0 ? clock(remaining) : "+" + clock(-remaining))
+                                .font(.system(size: 60, weight: .light, design: .rounded).monospacedDigit())
+                                .foregroundStyle(remaining > 0 ? Color.primary : Theme.focus)
+                            Text("ends \(f.plannedEnd.hm)").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: 300)
+                    .padding(.horizontal, 24)
+                    Spacer(minLength: 0)
+                    HStack(spacing: 14) {
+                        Button { confirmStop = true } label: { Text("Stop").frame(maxWidth: .infinity) }
+                            .buttonStyle(.bordered)
+                        Button { model.endFocus(.done) } label: {
+                            Text(remaining > 0 ? "Finished Early" : "Done").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .controlSize(.large)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
                 }
-                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(.systemBackground))
                 .onChange(of: remaining <= 0) { _, ended in
                     if ended { UINotificationFeedbackGenerator().notificationOccurred(.success) }
                 }
             }
             .confirmationDialog("Stop this session?", isPresented: $confirmStop, titleVisibility: .visible) {
-                Button("I got some done") { model.endFocus(.partial) }
-                Button("Couldn't focus") { model.endFocus(.skipped) }
-                Button("Keep going", role: .cancel) {}
+                Button("I Got Some Done") { model.endFocus(.partial) }
+                Button("Couldn't Focus") { model.endFocus(.skipped) }
+                Button("Keep Going", role: .cancel) {}
             } message: {
                 Text("Either way, the plan moves the rest to a better time.")
             }

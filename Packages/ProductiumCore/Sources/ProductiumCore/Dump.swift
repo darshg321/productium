@@ -67,25 +67,20 @@ public enum DumpActionType: String, CaseIterable, Sendable {
 }
 
 extension Schemas {
+    /// Flat on purpose: one action shape with optional fields is far fewer schema tokens than
+    /// one schema per action type. Formats are explained once, in the prompt.
     public static let dump: JSONValue = {
-        let hhmm: JSONValue = .object(["type": .string("string"), "description": .string("24h HH:mm")])
+        let bool: JSONValue = .object(["type": .string("boolean")])
         let action = obj([
             "type": strEnum(DumpActionType.allCases.map(\.rawValue)),
-            "target": .object(["type": .string("string"), "description": .string("name of the existing task/activity this changes")]),
-            "title": str, "kind": str, "subject": str,
-            "due": .object(["type": .string("string"), "description": .string("local ISO date-time")]),
+            "target": str, "title": str, "kind": str, "subject": str, "due": str,
             "estimateMinutes": int, "importance": int, "difficulty": int, "progressMinutes": int, "topics": arr(str),
-            "weekdays": arr(int), "start": hhmm, "end": hhmm,
-            "date": .object(["type": .string("string"), "description": .string("YYYY-MM-DD")]),
-            "cancelled": .object(["type": .string("boolean")]), "wake": hhmm,
-            "activity": str, "category": strEnum(TimeCategory.allCases.map(\.rawValue)),
-            "phase": strEnum(["start", "end"]),
-            "at": .object(["type": .string("string"), "description": .string("local ISO date-time it happened")]),
-            "routine": strEnum(["get_ready", "to_school", "from_school"]), "minutes": int,
-            "mood": int, "energy": int, "note": str,
-            "screenMinutes": int, "distractingMinutes": int,
-            "apps": arr(obj(["name": str, "minutes": int, "distracting": .object(["type": .string("boolean")])], required: ["name", "minutes"])),
-            "sleepNeedMinutes": int, "freeDayWake": hhmm, "maxStudyMinutesSchoolDay": int, "minFreeMinutesSchoolDay": int,
+            "weekdays": arr(int), "start": str, "end": str, "date": str, "cancelled": bool, "wake": str,
+            "activity": str, "category": strEnum(TimeCategory.allCases.map(\.rawValue)), "phase": strEnum(["start", "end"]),
+            "at": str, "routine": strEnum(["get_ready", "to_school", "from_school"]), "minutes": int,
+            "mood": int, "energy": int, "note": str, "screenMinutes": int, "distractingMinutes": int,
+            "apps": arr(obj(["name": str, "minutes": int, "distracting": bool], required: ["name", "minutes"])),
+            "sleepNeedMinutes": int, "freeDayWake": str, "maxStudyMinutesSchoolDay": int, "minFreeMinutesSchoolDay": int,
             "interests": arr(str),
         ], required: ["type"])
         return obj(["actions": arr(action), "reply": str], required: ["actions", "reply"])
@@ -96,80 +91,73 @@ extension Prompts {
     public static func dump() -> String {
         persona + """
 
-        You are the brain behind a planner's single input box. The student dumps anything, messy and \
-        abbreviated, sometimes with screenshots. Turn it into actions, then reply.
-
-        Actions (use as many as needed, none if it's only a question):
-        - add_task: new assignment/test/quiz/project/essay/application/reading/chore. due = local ISO date-time. \
-          If no time: tests/quizzes 08:00, submissions 23:59. Estimate realistic minutes for a high schooler. \
-          importance 1-5 (finals, applications = 5), difficulty 1-3, topics if they say what's on it. \
-          Screenshots of assignment sheets or syllabi → one add_task per deadline.
-        - update_task / complete_task / delete_task: target = the existing task's name. update can change due, \
-          estimateMinutes, title, importance, or add progressMinutes ("did 30 min of the essay").
-        - add_activity / update_activity / delete_activity: recurring weekly things (weekdays 1=Sun..7=Sat, start/end HH:mm). \
-          target = existing activity for update/delete. kind: school|extracurricular|job|family|other.
-        - add_event: one-off busy time (title, date, start, end).
-        - change_day: a one-day change. target = activity name, or "school" for all of school. date = YYYY-MM-DD. \
-          cancelled=true for "didn't go"/"no practice", or new start/end. wake = that day's wake-up time \
-          ("sleeping in till 10 sat" → change_day date + wake 10:00, no target).
-        - log: something that happened, with at = when (default now). phase start/end. activity short lowercase key; \
-          use to_school/from_school/school/study/sleep for those. "woke up at 9" → activity sleep, phase end, at 09:00. \
-          "got out of bed 9:40" → activity in_bed, phase end, at 09:40 (plus a start at wake time if known). \
-          A correction to the assumed day ("didn't go to school today") is change_day, not log.
-        - routine: the usual duration of get_ready / to_school / from_school ("walk to school takes 25 min").
-        - mood: 1-5 (+ energy 1-5) only when they express how they feel. Keep their words in note.
-        - screen_time: from a Screen Time screenshot or a stated number. One action per day shown: date, screenMinutes \
-          (total), distractingMinutes (social, video, games, browsing feeds), apps with minutes + distracting flag. \
-          A week view: one action per visible day if the bars are readable, otherwise a single action dated today \
-          with the daily average.
-        - settings: sleepNeedMinutes, freeDayWake, maxStudyMinutesSchoolDay, minFreeMinutesSchoolDay, interests. \
-          Never set sleep below 450 minutes.
-
-        Use the context to resolve "today", "tmrw", "fri", names, and what the app assumed. Prefer correcting \
-        existing things over creating duplicates. If unsure what they meant, do the most likely thing and say so.
-        reply: one or two short sentences confirming what changed in plain words (no lists), or answering their \
-        question using the context. If they ask whether to stay up studying for a test, sleep wins.
+        You run a planner's single input box. The student writes anything, messy, maybe with screenshots. \
+        Return actions, then a reply. Times are 24h HH:mm, dates YYYY-MM-DD, date-times local ISO. \
+        weekdays 1=Sun..7=Sat. target = name of the existing task/activity being changed.
+        - add_task: title, kind (test|quiz|assignment|project|essay|application|reading|practice|chore|other), subject, due \
+        (no time given: tests 08:00, submissions 23:59), estimateMinutes (realistic), importance 1-5, difficulty 1-3, \
+        topics. One per deadline on an assignment sheet.
+        - update_task (due, estimateMinutes, title, importance, progressMinutes), complete_task, delete_task: target.
+        - add_activity/update_activity/delete_activity: weekly; title, kind (school|extracurricular|job|family|other), \
+        weekdays, start, end.
+        - add_event: one-off busy time: title, date, start, end.
+        - change_day: one day differs. date; target (activity, or "school"); cancelled=true or new start/end; or \
+        wake alone for "sleeping in till 10 sat". "Didn't go to school" is change_day, not log.
+        - log: something that happened: activity (short key: to_school, from_school, school, study, sleep, in_bed…), \
+        phase start/end, at. "Woke at 9" = sleep end 09:00.
+        - routine: usual minutes for get_ready/to_school/from_school.
+        - mood: 1-5, energy 1-5, note in their words. Only if they say how they feel.
+        - screen_time: per day shown: date, screenMinutes, distractingMinutes (social, video, games, feeds), apps. \
+        Unreadable week view: one action for today with the daily average.
+        - settings: sleepNeedMinutes (min 450), freeDayWake, maxStudyMinutesSchoolDay, minFreeMinutesSchoolDay, interests.
+        Use the context for dates and names. Fix existing things rather than duplicate. If unsure, do the likely thing \
+        and say so. reply: 1-2 short plain sentences saying what changed, or answering their question.
         """
     }
 
-    /// Everything the model needs to resolve references and corrections.
+    /// Everything the model needs to resolve references and corrections, as compactly as possible.
     public static func dumpContext(now: Date, calendar cal: Calendar, items: [WorkItem], commitments: [Commitment],
                                    exceptions: [DayException], routines: [Routine], todaySegments: [Segment],
                                    todayMarkers: [TimelineEvent], plan: Plan) -> String {
-        let df = DateFormatter(); df.calendar = cal; df.timeZone = cal.timeZone; df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "EEEE yyyy-MM-dd HH:mm"
-        let hm = DateFormatter(); hm.calendar = cal; hm.timeZone = cal.timeZone; hm.dateFormat = "HH:mm"
-        let day = DateFormatter(); day.calendar = cal; day.timeZone = cal.timeZone; day.dateFormat = "EEE yyyy-MM-dd"
+        func fmt(_ f: String) -> DateFormatter {
+            let d = DateFormatter(); d.calendar = cal; d.timeZone = cal.timeZone; d.locale = Locale(identifier: "en_US_POSIX")
+            d.dateFormat = f
+            return d
+        }
+        let df = fmt("EEE yyyy-MM-dd HH:mm"), hm = fmt("HH:mm"), day = fmt("EEE MM-dd")
         let wd = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-        var l = ["Now: \(df.string(from: now)) (\(cal.timeZone.identifier))"]
-        l.append("Weekly schedule:")
-        for c in commitments {
-            l.append("- \(c.title) [\(c.kind.rawValue)] \(c.weekdays.sorted().map { wd[$0] }.joined(separator: "/")) \(c.start.label)-\(c.end.label)")
+        var l = ["Now: \(df.string(from: now)) \(cal.timeZone.identifier)"]
+        if !commitments.isEmpty {
+            l.append("Weekly: " + commitments.map {
+                "\($0.title) [\($0.kind.rawValue)] \($0.weekdays.sorted().map { wd[$0] }.joined(separator: "/")) \($0.start.label)-\($0.end.label)"
+            }.joined(separator: "; "))
         }
         let upcoming = exceptions.filter { $0.day >= cal.startOfDay(for: now) }
         if !upcoming.isEmpty {
-            l.append("One-day changes already set:")
-            for e in upcoming {
+            l.append("Day changes: " + upcoming.map { e in
                 let what = e.commitmentId.flatMap { id in commitments.first { $0.id == id }?.title } ?? e.kind?.rawValue ?? "day"
-                l.append("- \(day.string(from: e.day)) \(what): " + (e.cancelled ? "cancelled" : [e.start.map { "starts \($0.label)" }, e.end.map { "ends \($0.label)" }, e.wake.map { "wake \($0.label)" }].compactMap { $0 }.joined(separator: ", ")))
-            }
+                let how = e.cancelled ? "cancelled" : [e.start.map { "starts \($0.label)" }, e.end.map { "ends \($0.label)" },
+                                                     e.wake.map { "wake \($0.label)" }].compactMap { $0 }.joined(separator: ", ")
+                return "\(day.string(from: e.day)) \(what) \(how)"
+            }.joined(separator: "; "))
         }
-        l.append("Usual durations: " + routines.map { "\($0.name) \($0.minutes) min" }.joined(separator: ", "))
-        l.append("Today so far as the app understands it:")
-        for s in todaySegments where s.minutes >= 10 {
-            l.append("- \(hm.string(from: s.start))-\(hm.string(from: s.end)) \(s.label)\(s.inferred ? " (assumed)" : "")")
+        l.append("Usual: " + routines.filter(\.enabled).map { "\($0.id) \($0.minutes)m" }.joined(separator: ", "))
+        // Only what's happened so far today: that's what corrections refer to. (* = assumed, not observed.)
+        let past = todaySegments.filter { $0.minutes >= 15 && $0.start <= now }
+        if !past.isEmpty {
+            l.append("Today so far: " + past.map { "\(hm.string(from: $0.start))-\(hm.string(from: $0.end)) \($0.label)\($0.inferred ? "*" : "")" }
+                .joined(separator: ", "))
         }
         if !todayMarkers.isEmpty {
-            l.append("Check-ins today: " + todayMarkers.map { "\(hm.string(from: $0.at)) \($0.activity) \($0.phase.rawValue)" }.joined(separator: ", "))
+            l.append("Check-ins: " + todayMarkers.map { "\(hm.string(from: $0.at)) \($0.activity) \($0.phase.rawValue)" }.joined(separator: ", "))
         }
         if let w = plan.wakePlans.first(where: { $0.wake > now }) {
-            l.append("Next planned wake-up: \(day.string(from: w.wake)) \(hm.string(from: w.wake))")
+            l.append("Next wake: \(day.string(from: w.wake)) \(hm.string(from: w.wake))")
         }
-        let open = items.filter { !$0.isDone && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(30)
-        l.append("Open tasks:")
-        for i in open {
-            l.append("- \(i.title) [\(i.kind.rawValue)] due \(df.string(from: i.due)), \(i.completedMinutes)/\(i.estimateMinutes) min")
-        }
+        let open = items.filter { !$0.isDone && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(20)
+        l.append("Open tasks: " + (open.isEmpty ? "none" : open.map {
+            "\($0.title) [\($0.kind.rawValue)] due \(df.string(from: $0.due)) \($0.completedMinutes)/\($0.estimateMinutes)m"
+        }.joined(separator: "; ")))
         return l.joined(separator: "\n")
     }
 }
