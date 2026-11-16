@@ -10,13 +10,13 @@ import AlarmKit
 
 // MARK: - Wake-up alarms (AlarmKit, iOS 26+)
 
-/// Sets real alarms for the planned wake time, worked back from the first class,
+/// Sets real alarms (iOS 26.1+) for the planned wake time, worked back from the first class,
 /// the learned commute and getting-ready time. On older iOS, a time-sensitive
 /// notification is used instead.
 enum AlarmService {
     static func requestAuthorization() async -> Bool {
         #if canImport(AlarmKit) && ENABLE_ALARMKIT
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.1, *) {
             return (try? await AlarmManager.shared.requestAuthorization()) == .authorized
         }
         #endif
@@ -26,7 +26,7 @@ enum AlarmService {
     static func schedule(_ wakes: [WakePlan]) async {
         let upcoming = wakes.filter { $0.wake > Date() }.prefix(3)
         #if canImport(AlarmKit) && ENABLE_ALARMKIT
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.1, *) {
             await scheduleAlarmKit(Array(upcoming))
             return
         }
@@ -40,15 +40,15 @@ enum AlarmService {
             c.sound = .default
             c.interruptionLevel = .timeSensitive
             let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: w.wake)
-            center.add(UNNotificationRequest(identifier: "wake.\(i)", content: c,
-                                             trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
+            try? await center.add(UNNotificationRequest(identifier: "wake.\(i)", content: c,
+                                                        trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
         }
     }
 
     #if canImport(AlarmKit) && ENABLE_ALARMKIT
     struct WakeMetadata: AlarmMetadata {}
 
-    @available(iOS 26.0, *)
+    @available(iOS 26.1, *)
     private static func scheduleAlarmKit(_ wakes: [WakePlan]) async {
         let ids = (UserDefaults.standard.array(forKey: "alarm.ids") as? [String] ?? []).compactMap(UUID.init(uuidString:))
         for id in ids { try? AlarmManager.shared.cancel(id: id) }
