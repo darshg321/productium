@@ -26,7 +26,8 @@ Comparison and research: [DISTRIBUTION.md](DISTRIBUTION.md).
 4. On Linux: `./scripts/install-on-iphone.sh --free`. It downloads the .ipa and walks you through signing it with
    your Apple ID in **Impactor** (open source, Flatpak) over USB.
 5. Trust your Apple ID on the phone (Settings → General → VPN & Device Management) and turn on Developer Mode.
-6. Every 7 days: sign again, or install **SideStore** once so it refreshes on the phone.
+6. To stop re-signing by hand every 7 days, set up **SideStore** once. It refreshes over Wi-Fi on the phone
+   (steps in [DISTRIBUTION.md](DISTRIBUTION.md#whats-built-in-this-repo); the app's setup also walks you through it).
 
 For scrolling, the free build uses a Shortcuts automation instead of Screen Time (Settings explains it).
 

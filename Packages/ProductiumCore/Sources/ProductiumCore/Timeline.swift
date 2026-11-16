@@ -145,7 +145,7 @@ public enum RoutineLearner {
         observe("to_school", from: leftHome, to: atSchool)
         let leftSchool = first("from_school", .start)
         observe("from_school", from: leftSchool, to: first("from_school", .end, after: leftSchool))
-        let wake = first("wake", .end) ?? healthWake
+        let wake = first("wake", .end) ?? first("sleep", .end) ?? healthWake
         if let wake, let leftHome, leftHome.timeIntervalSince(wake) < 3 * 3600 {
             observe("get_ready", from: wake, to: leftHome)
         }
@@ -185,10 +185,13 @@ public struct DayInputs: Sendable {
     public var nextHealth: HealthDay?
     public var screen: ScreenDay?
     public var prefs: Preferences
+    public var exceptions: [DayException]
 
     public init(day: Date, events: [TimelineEvent], commitments: [Commitment], fixedEvents: [FixedEvent] = [],
                 routines: [Routine], outcomes: [BlockOutcome], itemsById: [UUID: WorkItem] = [:],
-                health: HealthDay?, nextHealth: HealthDay? = nil, screen: ScreenDay?, prefs: Preferences) {
+                health: HealthDay?, nextHealth: HealthDay? = nil, screen: ScreenDay?, prefs: Preferences,
+                exceptions: [DayException] = []) {
+        self.exceptions = exceptions
         self.day = day
         self.events = events
         self.commitments = commitments
@@ -222,22 +225,22 @@ public enum TimelineBuilder {
         func at(_ t: TimeOfDay) -> Date { cal.date(bySettingHour: t.hour, minute: t.minute, second: 0, of: dayStart) ?? dayStart }
 
         // Layer 1: schedule + routines (assumed to have happened).
-        let weekday = cal.component(.weekday, from: dayStart)
-        let todays = d.commitments.filter { $0.weekdays.contains(weekday) }
-        for c in todays { paint(at(c.start), at(c.end), TimeCategory.from(c.kind), c.title, observed: false) }
+        let occ = Commitment.occurrences(d.commitments, on: dayStart, exceptions: d.exceptions, calendar: cal)
+        let todays = occ.map(\.commitment)
+        for o in occ { paint(o.start, o.end, TimeCategory.from(o.commitment.kind), o.commitment.title, observed: false) }
         for e in d.fixedEvents where cal.isDate(e.start, inSameDayAs: dayStart) {
             paint(e.start, e.end, TimeCategory.from(e.kind), e.title, observed: false)
         }
         for r in d.routines where r.enabled {
-            let anchored = todays.filter { r.anchorKind == nil || $0.kind == r.anchorKind }
+            let anchored = occ.filter { r.anchorKind == nil || $0.commitment.kind == r.anchorKind }
             switch r.anchor {
             case .beforeFirstCommitment:
-                if let f = anchored.min(by: { $0.start < $1.start }) {
-                    let s = at(f.start); paint(s.addingTimeInterval(-Double(r.minutes) * 60), s, r.category, r.name, observed: false)
+                if let f = anchored.first {
+                    paint(f.start.addingTimeInterval(-Double(r.minutes) * 60), f.start, r.category, r.name, observed: false)
                 }
             case .afterLastCommitment:
                 if let l = anchored.max(by: { $0.end < $1.end }) {
-                    let e = at(l.end); paint(e, e.addingTimeInterval(Double(r.minutes) * 60), r.category, r.name, observed: false)
+                    paint(l.end, l.end.addingTimeInterval(Double(r.minutes) * 60), r.category, r.name, observed: false)
                 }
             case .afterWake:
                 if let w = d.health?.wake, cal.isDate(w, inSameDayAs: dayStart) {
@@ -251,7 +254,10 @@ public enum TimelineBuilder {
             let bed = h.bedtime ?? wake.addingTimeInterval(-Double(h.sleepMinutes ?? d.prefs.sleepNeedMinutes) * 60)
             paint(max(bed, dayStart), wake, .sleep, "Sleep", observed: true)
         } else {
-            let w = at(d.prefs.schoolDays.contains(weekday) ? d.prefs.schoolDayWake : d.prefs.freeDayWake)
+            // No Health data: assume the planned wake-up, which already knows about
+            // exceptions (no school today means a free-day wake).
+            let w = WakePlanner.plan(for: dayStart, commitments: d.commitments, events: d.fixedEvents, routines: d.routines,
+                                     prefs: d.prefs, calendar: cal, exceptions: d.exceptions).wake
             paint(dayStart, w, .sleep, "Sleep", observed: false)
         }
         if let next = d.nextHealth, let bed = next.bedtime, cal.isDate(bed, inSameDayAs: dayStart) {
@@ -275,7 +281,7 @@ public enum TimelineBuilder {
             case .end:
                 if let s = open.removeValue(forKey: e.activity) {
                     paint(s.at, e.at, e.category, display(e.activity), observed: true)
-                } else if e.activity == "wake" {
+                } else if e.activity == "wake" || e.activity == "sleep" {
                     paint(dayStart, e.at, .sleep, "Sleep", observed: true)
                 } else if let scheduled = todays.first(where: { MarkerParser.normalise($0.title) == e.activity }) {
                     paint(at(scheduled.start), e.at, e.category, scheduled.title, observed: true)

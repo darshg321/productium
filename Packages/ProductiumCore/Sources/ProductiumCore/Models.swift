@@ -316,16 +316,35 @@ public struct MoodEntry: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-/// Minutes in distracting apps per day, from the DeviceActivity monitor thresholds.
+public struct AppUsage: Codable, Hashable, Sendable {
+    public var name: String
+    public var minutes: Int
+    public var distracting: Bool
+    public init(name: String, minutes: Int, distracting: Bool) {
+        self.name = name
+        self.minutes = minutes
+        self.distracting = distracting
+    }
+}
+
+/// Minutes in distracting apps per day, from DeviceActivity thresholds or a
+/// Screen Time screenshot read by the AI.
 public struct ScreenDay: Codable, Hashable, Sendable {
     public var day: Date
     public var distractingMinutes: Int
     public var unlockRequests: Int
+    public var totalMinutes: Int?
+    public var apps: [AppUsage]?
+    public var source: String?           // "monitor" | "screenshot"
 
-    public init(day: Date, distractingMinutes: Int, unlockRequests: Int = 0) {
+    public init(day: Date, distractingMinutes: Int, unlockRequests: Int = 0, totalMinutes: Int? = nil,
+                apps: [AppUsage]? = nil, source: String? = nil) {
         self.day = day
         self.distractingMinutes = distractingMinutes
         self.unlockRequests = unlockRequests
+        self.totalMinutes = totalMinutes
+        self.apps = apps
+        self.source = source
     }
 }
 

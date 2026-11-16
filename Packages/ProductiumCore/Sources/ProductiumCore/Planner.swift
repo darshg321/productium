@@ -14,12 +14,15 @@ public struct PlannerInput: Sendable {
     public var locked: [PlannedBlock]
     /// Learned routines (commute, getting ready), filled in automatically.
     public var routines: [Routine]
+    /// One-day changes ("no school today", "practice moved to 5").
+    public var exceptions: [DayException]
     public var horizonDays: Int
 
     public init(now: Date, calendar: Calendar = .current, items: [WorkItem], commitments: [Commitment] = [],
                 events: [FixedEvent] = [], preferences: Preferences = Preferences(),
                 learned: LearnedModel = LearnedModel(), health: [HealthDay] = [], moods: [MoodEntry] = [],
-                locked: [PlannedBlock] = [], routines: [Routine] = Routine.defaults, horizonDays: Int = 14) {
+                locked: [PlannedBlock] = [], routines: [Routine] = Routine.defaults,
+                exceptions: [DayException] = [], horizonDays: Int = 14) {
         self.now = now
         self.calendar = calendar
         self.items = items
@@ -31,6 +34,7 @@ public struct PlannerInput: Sendable {
         self.moods = moods
         self.locked = locked
         self.routines = routines
+        self.exceptions = exceptions
         self.horizonDays = max(1, min(42, horizonDays))
     }
 }
@@ -153,12 +157,12 @@ public enum Planner {
         }
 
         func isSchoolDay(_ day: Date) -> Bool {
-            prefs.schoolDays.contains(cal.component(.weekday, from: day))
+            SchoolDay.isSchoolDay(day, prefs: prefs, commitments: input.commitments, exceptions: input.exceptions, calendar: cal)
         }
 
         func wakePlan(on day: Date) -> WakePlan {
             WakePlanner.plan(for: day, commitments: input.commitments, events: input.events,
-                             routines: input.routines, prefs: prefs, calendar: cal)
+                             routines: input.routines, prefs: prefs, calendar: cal, exceptions: input.exceptions)
         }
 
         func routine(_ id: String) -> Routine? { input.routines.first { $0.id == id && $0.enabled } }
@@ -188,27 +192,23 @@ public enum Planner {
                     fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: wakeT,
                                               end: wakeT.addingTimeInterval(Double(r.minutes) * 60), title: r.name))
                 }
-                let weekday = cal.component(.weekday, from: day)
-                // Commute routines attach to the first/last commitment of their kind.
-                let todays = input.commitments.filter { $0.weekdays.contains(weekday) }
+                // Commute routines attach to the first/last commitment of their kind (after exceptions).
+                let todays = Commitment.occurrences(input.commitments, on: day, exceptions: input.exceptions, calendar: cal)
                 for r in input.routines where r.enabled && r.anchor != .afterWake {
-                    let anchored = todays.filter { r.anchorKind == nil || $0.kind == r.anchorKind }
+                    let anchored = todays.filter { r.anchorKind == nil || $0.commitment.kind == r.anchorKind }
                     var s: Date?, e: Date?
                     if r.anchor == .beforeFirstCommitment, let f = anchored.min(by: { $0.start < $1.start }) {
-                        e = at(day, f.start); s = e!.addingTimeInterval(-Double(r.minutes) * 60)
+                        e = f.start; s = f.start.addingTimeInterval(-Double(r.minutes) * 60)
                     } else if r.anchor == .afterLastCommitment, let l = anchored.max(by: { $0.end < $1.end }) {
-                        s = at(day, l.end); e = s!.addingTimeInterval(Double(r.minutes) * 60)
+                        s = l.end; e = l.end.addingTimeInterval(Double(r.minutes) * 60)
                     }
                     if let s, let e {
                         busy.append(Interval(start: s, end: e))
                         fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: s, end: e, title: r.name))
                     }
                 }
-                for c in input.commitments where c.weekdays.contains(weekday) {
-                    if let from = c.validFrom, day < cal.startOfDay(for: from) { continue }
-                    if let until = c.validUntil, day > until { continue }
-                    let s = at(day, c.start), e = at(day, c.end)
-                    guard e > s else { continue }
+                for o in todays {
+                    let c = o.commitment, s = o.start, e = o.end
                     let buf = Double(c.bufferMinutes) * 60
                     busy.append(Interval(start: s.addingTimeInterval(-buf), end: e.addingTimeInterval(buf)))
                     fixed.append(PlannedBlock(id: stableId("c", c.id.uuidString, day), kind: .commitment,

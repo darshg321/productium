@@ -54,7 +54,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             }
         }
         if let text = (response as? UNTextInputNotificationResponse)?.userText, !text.isEmpty {
-            await AppModel.shared.submit(text)
+            await AppModel.shared.dump(text)
         }
     }
 }

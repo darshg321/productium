@@ -36,35 +36,30 @@ struct GapView: View {
     private var chooser: some View {
         let opts = GapPlanner.options(minutes: minutes, cards: model.state.flashcards, reads: model.state.reads,
                                       items: model.state.items, mood: model.todayMood?.mood, now: Date())
-        return VStack(alignment: .leading, spacing: 14) {
-            Text("\(minutes) minutes").font(.largeTitle.bold())
-            Text("Pick one. Or put the phone down. That counts too.").foregroundStyle(.secondary)
+        return VStack(alignment: .leading, spacing: 22) {
+            Text("\(minutes) minutes").font(.display(34, .bold))
             if Friction.pausesToday() > 0 {
-                Text("Paused \(Friction.pausesToday())× today").font(.caption).foregroundStyle(.tertiary)
+                Text("Paused \(Friction.pausesToday()) times today.").font(.subheadline).foregroundStyle(.secondary)
             }
             ForEach(Array(opts.enumerated()), id: \.offset) { _, o in
                 Button { mode = o } label: {
-                    Card {
-                        HStack {
-                            Image(systemName: symbol(o)).font(.title3).foregroundStyle(Theme.accent).frame(width: 32)
-                            Text(o.title).font(.headline).foregroundStyle(.primary).multilineTextAlignment(.leading)
-                            Spacer()
-                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                        }
+                    HStack(spacing: 14) {
+                        Image(systemName: symbol(o)).font(.title3).foregroundStyle(Theme.cobalt).frame(width: 28)
+                        Text(o.title).font(.title3).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                        Spacer()
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
             Spacer()
-            Button {
+            TextAction("Go back to the app anyway (no pause for 10 min)", color: .secondary) {
                 Friction.grant(minutes: 10)
                 dismiss()
-            } label: {
-                Text("I'll go back anyway (10 min)").font(.footnote).frame(maxWidth: .infinity)
             }
-            .foregroundStyle(.secondary)
+            .font(.footnote)
         }
-        .padding()
+        .padding(24)
     }
 
     private func symbol(_ o: GapActivity) -> String {
@@ -87,8 +82,8 @@ struct FlashcardSession: View {
     var body: some View {
         VStack(spacing: 20) {
             if let c = queue.first {
-                Text("\(done) done · \(queue.count) left").font(.caption).foregroundStyle(.secondary)
-                Card(padding: 24) {
+                Text("\(done) done, \(queue.count) to go").font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 0) {
                     VStack(alignment: .leading, spacing: 16) {
                         if let s = c.subject { Text(s).font(.caption).foregroundStyle(.secondary) }
                         Text(c.front).font(.title3.weight(.semibold))
@@ -99,16 +94,18 @@ struct FlashcardSession: View {
                             Text("Answer in your head first. Retrieving it is what builds memory.").font(.footnote).foregroundStyle(.tertiary)
                         }
                     }
+                    .padding(22)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.fog.opacity(0.55), in: RoundedRectangle(cornerRadius: Theme.radius))
                 }
                 .onTapGesture { withAnimation { revealed = true } }
                 if revealed {
                     HStack(spacing: 12) {
-                        Button { next(c, false) } label: { Text("Missed it").frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.bordered)
-                        Button { next(c, true) } label: { Text("Got it").frame(maxWidth: .infinity, minHeight: 48) }.buttonStyle(.borderedProminent)
+                        Button("Missed it") { next(c, false) }.buttonStyle(SlabButtonStyle(color: .gray))
+                        Button("Got it") { next(c, true) }.buttonStyle(SlabButtonStyle())
                     }
                 } else {
-                    Button { withAnimation { revealed = true } } label: { Text("Show answer").frame(maxWidth: .infinity, minHeight: 48) }
-                        .buttonStyle(.borderedProminent)
+                    Button("Show answer") { withAnimation { revealed = true } }.buttonStyle(SlabButtonStyle())
                 }
             } else {
                 ContentUnavailableView(done > 0 ? "Done: \(done) cards" : "No cards due",
@@ -138,19 +135,17 @@ struct ReadView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text(piece.title).font(.title2.bold())
+                Text(piece.title).font(.display(24, .bold))
                 Text(piece.body).font(.body).lineSpacing(5)
                 if let q = piece.question {
-                    Card {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Think about it").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            Text(q).font(.headline)
-                            TextField("Your answer (optional)", text: $answer, axis: .vertical).lineLimit(2...5)
-                        }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(q).font(.headline)
+                        TextField("Your answer, if you want", text: $answer, axis: .vertical).lineLimit(2...5)
                     }
+                    .padding(.leading, 12)
+                    .overlay(alignment: .leading) { Rectangle().fill(Theme.cobalt).frame(width: 3) }
                 }
-                Button { model.markRead(piece.id); dismiss() } label: { Text("Done").frame(maxWidth: .infinity, minHeight: 48) }
-                    .buttonStyle(.borderedProminent)
+                Button("Done reading") { model.markRead(piece.id); dismiss() }.buttonStyle(SlabButtonStyle())
             }
             .padding()
         }
@@ -167,15 +162,16 @@ struct NextStepView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(prompt).font(.headline)
-            TextField("• …", text: $text, axis: .vertical).lineLimit(4...10).textFieldStyle(.roundedBorder)
+            TextField("Three short points", text: $text, axis: .vertical).lineLimit(4...10)
+                .padding(12).background(Theme.fog.opacity(0.55), in: RoundedRectangle(cornerRadius: Theme.radius))
             Button {
                 if var item = model.state.items.first(where: { $0.id == itemId }), !text.isEmpty {
                     item.notes = [item.notes, "Next: " + text].compactMap { $0 }.joined(separator: "\n")
                     model.update(item)
                 }
                 dismiss()
-            } label: { Text("Save").frame(maxWidth: .infinity, minHeight: 48) }
-                .buttonStyle(.borderedProminent)
+            } label: { Text("Save to the task") }
+                .buttonStyle(SlabButtonStyle())
             Text("Planning the next step lowers the effort of starting it, and it stops it nagging at you in the meantime.")
                 .font(.footnote).foregroundStyle(.secondary)
             Spacer()
@@ -197,7 +193,8 @@ struct BreatheView: View {
             let step = cycle < 2 ? 0 : cycle < 3 ? 1 : 2
             VStack(spacing: 30) {
                 Spacer()
-                Circle().fill(Theme.accent.opacity(0.25)).frame(width: 240, height: 240).scaleEffect(scale)
+                Rectangle().fill(Theme.cobalt.opacity(0.85)).frame(width: 12, height: 300 * scale)
+                    .frame(height: 300, alignment: .bottom)
                 Text(GapPlanner.breathingSteps[step]).font(.title3)
                 Text(t < 60 ? "\(60 - Int(t))s" : "That's a minute. Nicely done.").foregroundStyle(.secondary)
                 Spacer()
@@ -216,8 +213,7 @@ struct BreatheView: View {
 struct WalkView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: "figure.walk").font(.system(size: 56)).foregroundStyle(Theme.accent)
-            Text("Walk for a few minutes").font(.title2.bold())
+            Text("Walk for a few minutes").font(.display(26, .bold))
             Text("Phone in your pocket, eyes up. Even a short walk improves attention for the next block, and daylight helps you fall asleep on time tonight.")
                 .foregroundStyle(.secondary)
             Spacer()

@@ -12,7 +12,7 @@ struct SettingsView: View {
     @State private var testing = false
     @State private var importing = false
     @State private var confirmDelete = false
-    @State private var interests = ""
+    @State private var exportURLs: [URL] = []
 
     var body: some View {
         @Bindable var m = model
@@ -47,7 +47,7 @@ struct SettingsView: View {
             Section {
                 Text("Blocking and measuring apps uses Apple's Screen Time API, which needs a paid developer account. This build was signed with a free one.")
                     .font(.subheadline)
-                Text("Meanwhile you can add friction with Shortcuts: Automation → + → App → pick an app → Is Opened → Run Immediately. Actions: “Should I pause?” (Productium) → If Result is true → Open URLs productium://gap. Opening that app now brings up a short pause with something better to do. “I'll go back anyway” skips the pause for 10 minutes.")
+                Text("Meanwhile you can add friction with Shortcuts: Automation → + → App → pick an app → Is Opened → Run Immediately. Actions: “Should I pause?” (Productium) → If Result is true → Open URLs productium://gap. Opening that app now brings up a short pause with something better to do. “Go back to the app anyway” skips the pause for 10 minutes.")
                     .font(.footnote).foregroundStyle(.secondary)
             } header: { Text("Screen time") }
             #else
@@ -98,7 +98,9 @@ struct SettingsView: View {
                 Toggle("Wake-up alarms", isOn: Binding(get: { model.state.integrations.alarms }, set: { on in
                     Task { m.state.integrations.alarms = on ? await AlarmService.requestAuthorization() : false; model.replan() }
                 }))
+                #if !FREE_TIER
                 Toggle("Live Activity for current block", isOn: $m.state.integrations.liveActivities)
+                #endif
             }
 
             Section {
@@ -156,15 +158,25 @@ struct SettingsView: View {
                     Label(ok ? "Online" : "Offline", systemImage: ok ? "checkmark.circle" : "xmark.circle").foregroundStyle(ok ? .green : .red)
                 }
             } header: { Text("Claude") } footer: {
-                Text("Your own claude-server (Haiku for quick parsing, Sonnet for planning advice). Planning itself runs on the phone and works offline.")
+                Text("Your claude-server. Productium needs it: Haiku reads everything you type or screenshot, Sonnet breaks down big projects and writes your weekly note.")
             }
 
-            Section("Short reads") {
-                TextField("Interests (e.g. space, basketball, music)", text: $interests)
-                    .onSubmit { m.state.prefs.interests = interests.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }; model.save() }
+            if Signature.isFreeTier || model.signatureExpiry != nil {
+                Section {
+                    if let e = model.signatureExpiry {
+                        LabeledContent("This build works until", value: e.formatted(date: .abbreviated, time: .shortened))
+                    }
+                    Text("Free signing lasts 7 days. SideStore re-signs it on your phone over Wi-Fi: open SideStore, connect LocalDevVPN, tap Refresh All. To make it automatic, add a daily Shortcuts automation with SideStore's “Refresh All Apps” action.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } header: { Text("Keeping the app installed") }
             }
 
             Section("Your data") {
+                if exportURLs.isEmpty {
+                    Button("Prepare export (CSV, JSON, calendar)") { exportURLs = (try? model.exportFiles()) ?? [] }
+                } else {
+                    ShareLink("Export \(exportURLs.count) files", items: exportURLs)
+                }
                 Button("Import backup") { importing = true }
                 Button("Delete everything", role: .destructive) { confirmDelete = true }
             }
@@ -175,7 +187,6 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .onChange(of: model.state.prefs) { _, _ in model.replan() }
-        .onAppear { interests = model.state.prefs.interests.joined(separator: ", ") }
         .familyActivityPicker(isPresented: $showPicker, selection: $selection)
         .onChange(of: selection) { _, s in ScreenTimeService.shared.selection = s; model.replan() }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { r in
@@ -200,7 +211,7 @@ struct WeekdayToggles: View {
                         if days.contains(d) { days.remove(d) } else { days.insert(d) }
                     } label: {
                         Text(names[d - 1]).font(.subheadline.weight(.semibold)).frame(width: 34, height: 34)
-                            .background(days.contains(d) ? Theme.accent : Color(.tertiarySystemFill), in: Circle())
+                            .background(days.contains(d) ? Theme.cobalt : Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: Theme.radius))
                             .foregroundStyle(days.contains(d) ? .white : .primary)
                     }
                     .buttonStyle(.plain)
@@ -232,7 +243,7 @@ struct ScheduleEditor: View {
                 Button { editing = c } label: {
                     VStack(alignment: .leading) {
                         Text(c.title).foregroundStyle(.primary)
-                        Text("\(c.weekdays.sorted().map { Calendar.current.shortWeekdaySymbols[$0 - 1] }.joined(separator: " ")) · \(c.start.label)–\(c.end.label)")
+                        Text("\(c.weekdays.sorted().map { Calendar.current.shortWeekdaySymbols[$0 - 1] }.joined(separator: " ")), \(c.start.label) to \(c.end.label)")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

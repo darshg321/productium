@@ -14,6 +14,9 @@ final class AppModel {
 
     var state: AppState
     var toast: String?
+    /// What the last brain dump did, shown under the box with Undo.
+    var receipt: Receipt?
+    @ObservationIgnored private var undoSnapshot: AppState?
     var busy: Set<String> = []
     var serverOnline: Bool?
     var deepLink: String?
@@ -92,9 +95,10 @@ final class AppModel {
         } else if let cur = state.plan.current(at: now), cur.isStudy, !state.outcomes.contains(where: { $0.blockId == cur.id }) {
             locked = [cur]
         }
-        let input = PlannerInput(now: now, calendar: cal, items: state.items, commitments: state.commitments, events: state.events,
-                                 preferences: state.prefs, learned: state.learned, health: state.health, moods: state.moods,
-                                 locked: locked, routines: state.routines, horizonDays: 14)
+        let input = PlannerInput(now: now, calendar: cal, items: state.items, commitments: state.commitments,
+                                 events: state.events + state.oneOffs, preferences: state.prefs, learned: state.learned,
+                                 health: state.health, moods: state.moods, locked: locked, routines: state.routines,
+                                 exceptions: state.exceptions, horizonDays: 14)
         state.plan = Planner.merge(previous: state.plan, new: Planner.plan(input), now: now, calendar: cal)
         save()
         applyPlanEffects()
@@ -105,6 +109,7 @@ final class AppModel {
         let now = Date()
         if state.integrations.notifications {
             NotificationService.schedule(plan: plan, prefs: state.prefs, items: state.items, suggestions: markerPrompts())
+            NotificationService.scheduleHousekeeping(freeTier: Signature.isFreeTier, expiry: signatureExpiry)
         }
         if state.integrations.screenTime {
             let st = ScreenTimeService.shared
@@ -189,10 +194,7 @@ final class AppModel {
         }
         guard !dup else { return }
         state.items.append(item)
-        if [.application, .essay, .project].contains(item.kind), item.due.timeIntervalSinceNow > 10 * 86400, item.parentId == nil {
-            Task { await decompose(item.id) }
-        }
-        if item.kind.isMemoryBased, !item.topics.isEmpty { Task { await makeCards(for: item) } }
+        followUp(new: item)
     }
 
     func update(_ item: WorkItem) {
@@ -216,71 +218,6 @@ final class AppModel {
 
     func delete(_ id: UUID) {
         state.items.removeAll { $0.id == id || $0.parentId == id }
-        replan()
-    }
-
-    // MARK: - Quick input (the main way data gets in)
-
-    /// One line of text: a check-in ("left home"), a new deadline ("bio quiz thurs"),
-    /// a recurring activity ("debate tue 3:30-5"), a mood ("tired"), or several at once.
-    func submit(_ raw: String) async {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        let now = Date()
-        // Common check-ins are parsed on the device instantly, no network.
-        let local = MarkerParser.parse(text, at: now, commitments: state.commitments, calendar: cal)
-        if !local.isEmpty, text.split(separator: " ").count <= 5 {
-            state.markers += local
-            toast = "Logged · \(text)"
-            save()
-            return
-        }
-        guard ClaudeClient.shared.isConfigured else {
-            fallbackAdd(text)
-            return
-        }
-        busy.insert("add")
-        defer { busy.remove("add") }
-        do {
-            let open = state.items.filter { !$0.isDone }
-            let r = try await ClaudeClient.shared.structured(
-                .fast, system: Prompts.quickAdd(now: now, timeZone: cal.timeZone, commitments: state.commitments, openItems: open),
-                user: text, schema: Schemas.quickAdd, as: QuickAddResult.self)
-            apply(r, now: now)
-        } catch {
-            fallbackAdd(text)
-            toast = (error as? AIError)?.errorDescription ?? "Offline. Saved it as a task you can edit."
-        }
-    }
-
-    private func apply(_ r: QuickAddResult, now: Date) {
-        for p in r.items { if let it = AIMapper.item(p, timeZone: cal.timeZone) { add(it) } }
-        for c in r.commitments { if let cm = AIMapper.commitment(c) { state.commitments.append(cm) } }
-        state.markers += r.markers.map { AIMapper.marker($0, now: now) }
-        for title in r.completedTitles {
-            if let it = state.items.first(where: { !$0.isDone && ($0.title.localizedCaseInsensitiveContains(title) || title.localizedCaseInsensitiveContains($0.title)) }) {
-                complete(it.id)
-            }
-        }
-        if let m = r.mood { logMood(m, energy: nil, note: nil) }
-        toast = r.reply
-        replan()
-    }
-
-    /// No server: a keyword parse is better than losing the input.
-    private func fallbackAdd(_ text: String) {
-        let t = text.lowercased()
-        let kind: TaskKind = t.contains("test") || t.contains("exam") ? .test : t.contains("quiz") ? .quiz
-            : t.contains("essay") ? .essay : t.contains("project") ? .project : .assignment
-        var due = cal.date(byAdding: .day, value: 3, to: Date())!
-        let days = ["sun": 1, "mon": 2, "tue": 3, "wed": 4, "thu": 5, "fri": 6, "sat": 7]
-        if t.contains("tomorrow") { due = cal.date(byAdding: .day, value: 1, to: Date())! }
-        for (k, wd) in days where t.contains(k) {
-            due = cal.nextDate(after: Date(), matching: DateComponents(weekday: wd), matchingPolicy: .nextTime) ?? due
-        }
-        due = cal.date(bySettingHour: kind.isMemoryBased ? 8 : 23, minute: kind.isMemoryBased ? 0 : 59, second: 0, of: due) ?? due
-        add(WorkItem(title: text, kind: kind, due: due))
-        toast = toast ?? "Added. Tap it in Plan to fix details."
         replan()
     }
 
@@ -326,6 +263,9 @@ final class AppModel {
         }
         return out.filter { $0.0 > now }
     }
+
+    /// When this sideloaded build stops launching (free signing lasts 7 days).
+    var signatureExpiry: Date? { Signature.expiry }
 
     func logMood(_ mood: Int, energy: Int?, note: String?) {
         state.moods.append(MoodEntry(mood: mood, energy: energy, note: note))
@@ -392,10 +332,11 @@ final class AppModel {
     func dayInputs(_ day: Date) -> DayInputs {
         let next = cal.date(byAdding: .day, value: 1, to: day) ?? day
         return DayInputs(day: day, events: state.markers, commitments: state.commitments,
-                         fixedEvents: state.events, routines: state.routines, outcomes: state.outcomes, itemsById: itemsById,
+                         fixedEvents: state.events + state.oneOffs, routines: state.routines, outcomes: state.outcomes, itemsById: itemsById,
                          health: state.health.first { cal.isDate($0.day, inSameDayAs: day) },
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
-                         screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs)
+                         screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,
+                         exceptions: state.exceptions)
     }
 
     func dayTotals(last n: Int, includeToday: Bool = false) -> [DayTotals] {
@@ -484,21 +425,75 @@ final class AppModel {
         replan()
     }
 
-    func ask(_ question: String) async {
-        state.chat.append(AIMessage(role: "user", content: question))
-        busy.insert("coach")
-        defer { busy.remove("coach") }
-        let summary = Insights.summarize(dayTotals(last: 7), learned: state.learned)
-        let ctx = Prompts.context(now: Date(), items: state.items, plan: state.plan, summary: summary, moods: state.moods,
-                                  taper: state.taper, learned: state.learned, calendar: cal)
+    // MARK: - Brain dump (the main way anything gets in or gets fixed)
+
+    struct Receipt: Equatable {
+        var input: String
+        var reply: String
+        var changes: [String]
+        var canUndo: Bool
+        var failed: Bool
+    }
+
+    /// Anything at all: deadlines, corrections, what happened, how they feel, a question,
+    /// screenshots (Screen Time, assignment sheets, timetables). Haiku reads it in context
+    /// and returns actions. The device applies them, then shows what changed, with Undo.
+    @discardableResult
+    func dump(_ raw: String, images: [AIImage] = []) async -> Bool {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !images.isEmpty else { return false }
+        busy.insert("dump")
+        defer { busy.remove("dump") }
+        let now = Date()
+        let today = cal.startOfDay(for: now)
+        let context = Prompts.dumpContext(now: now, calendar: cal, items: state.items, commitments: state.commitments,
+                                          exceptions: state.exceptions, routines: state.routines,
+                                          todaySegments: segments(on: today),
+                                          todayMarkers: state.markers.filter { cal.isDate($0.at, inSameDayAs: now) },
+                                          plan: state.plan)
+        let message = "Context:\n\(context)\n\nStudent wrote:\n\(text.isEmpty ? "(screenshots only)" : text)"
+        let history = Array(state.chat.suffix(4))
         do {
-            let reply = try await ClaudeClient.shared.text(.reason, system: Prompts.coach() + "\n\nContext:\n" + ctx,
-                                                           messages: Array(state.chat.suffix(12)))
-            state.chat.append(AIMessage(role: "assistant", content: reply))
+            let req = AIRequest(tier: .fast, system: Prompts.dump(),
+                                messages: history + [AIMessage(role: "user", content: message, images: images)],
+                                schema: Schemas.dump)
+            let res = try await ClaudeClient.shared.complete(req)
+            guard let structured = res.structured, let result = try? structured.decode(DumpResult.self) else { throw AIError.decoding }
+            undoSnapshot = state
+            let before = Set(state.items.map(\.id))
+            var ds = state.dumpState
+            let changes = DumpApplier.apply(result, to: &ds, now: now, calendar: cal)
+            state.dumpState = ds
+            state.chat += [AIMessage(role: "user", content: text.isEmpty ? "(screenshots)" : text),
+                           AIMessage(role: "assistant", content: result.reply)]
+            receipt = Receipt(input: text, reply: result.reply, changes: changes, canUndo: !changes.isEmpty, failed: false)
+            replan()
+            for item in state.items where !before.contains(item.id) { followUp(new: item) }
+            return true
         } catch {
-            state.chat.append(AIMessage(role: "assistant", content: (error as? AIError)?.errorDescription ?? "Couldn't reach the server."))
+            let msg = (error as? AIError)?.errorDescription ?? "Couldn't reach your Claude server. Check that Tailscale is on, then send again."
+            receipt = Receipt(input: text, reply: msg, changes: [], canUndo: false, failed: true)
+            return false
         }
-        save()
+    }
+
+    func undo() {
+        guard let snap = undoSnapshot else { return }
+        let chat = state.chat
+        state = snap
+        state.chat = chat
+        undoSnapshot = nil
+        receipt?.canUndo = false
+        receipt?.changes = ["Undone"]
+        replan()
+    }
+
+    /// Long projects get broken into steps; tests with topics get flashcards.
+    private func followUp(new item: WorkItem) {
+        if [.application, .essay, .project].contains(item.kind), item.due.timeIntervalSinceNow > 10 * 86400, item.parentId == nil {
+            Task { await decompose(item.id) }
+        }
+        if item.kind.isMemoryBased, !item.topics.isEmpty { Task { await makeCards(for: item) } }
     }
 
     // MARK: - Gap mode
@@ -555,5 +550,26 @@ final class AppModel {
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         state = AppState()
         Persistence.save(state)
+    }
+}
+
+/// Reads the provisioning profile embedded in a sideloaded/dev build to find when it expires.
+enum Signature {
+    static var expiry: Date? {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .isoLatin1),
+              let key = text.range(of: "<key>ExpirationDate</key>"),
+              let open = text.range(of: "<date>", range: key.upperBound..<text.endIndex),
+              let close = text.range(of: "</date>", range: open.upperBound..<text.endIndex) else { return nil }
+        return ISO8601DateFormatter().date(from: String(text[open.upperBound..<close.lowerBound]))
+    }
+
+    static var isFreeTier: Bool {
+        #if FREE_TIER
+        return true
+        #else
+        return false
+        #endif
     }
 }

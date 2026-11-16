@@ -55,6 +55,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.free_build
     needs: [core-tests]
     runs-on: macos-26
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: maxim-lobanov/setup-xcode@v1
@@ -88,6 +90,14 @@ jobs:
           name: Productium-free-ipa
           path: Productium-free.ipa
           retention-days: 14
+      - name: Publish as the "free-latest" release (download it on the phone for SideStore)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view free-latest >/dev/null 2>&1 || \
+            gh release create free-latest --prerelease --title "Latest free build" \
+              --notes "Open this page on your iPhone, download Productium-free.ipa, then add it in SideStore (+)."
+          gh release upload free-latest Productium-free.ipa --clobber
 
   ios-device:
     if: github.event_name == 'workflow_dispatch' && inputs.device_build

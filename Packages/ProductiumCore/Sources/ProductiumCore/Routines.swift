@@ -91,19 +91,18 @@ public enum WakePlanner {
     /// getting ready − 5 min slack. Without a morning commitment, use the free-day wake
     /// time. Keeping that close to school days limits social jet lag (Wittmann et al. 2006).
     public static func plan(for day: Date, commitments: [Commitment], events: [FixedEvent], routines: [Routine],
-                            prefs: Preferences, calendar cal: Calendar) -> WakePlan {
-        let weekday = cal.component(.weekday, from: day)
-        let isSchool = prefs.schoolDays.contains(weekday)
+                            prefs: Preferences, calendar cal: Calendar, exceptions: [DayException] = []) -> WakePlan {
+        let isSchool = SchoolDay.isSchoolDay(day, prefs: prefs, commitments: commitments, exceptions: exceptions, calendar: cal)
+        if let w = exceptions.wakeOverride(on: day, calendar: cal) {
+            return WakePlan(day: day, wake: at(day, w, cal), leaveBy: nil, firstCommitment: nil, reason: "You changed this day's wake-up")
+        }
         let fallback = at(day, isSchool ? prefs.schoolDayWake : prefs.freeDayWake, cal)
         guard prefs.autoWake else {
             return WakePlan(day: day, wake: fallback, leaveBy: nil, firstCommitment: nil, reason: "Your set wake time")
         }
         let noon = at(day, TimeOfDay(12), cal)
-        var firsts: [(Date, CommitmentKind)] = commitments.filter { c in
-            c.weekdays.contains(weekday)
-                && (c.validFrom.map { cal.startOfDay(for: $0) <= day } ?? true)
-                && (c.validUntil.map { day <= $0 } ?? true)
-        }.map { (at(day, $0.start, cal), $0.kind) }
+        var firsts: [(Date, CommitmentKind)] = Commitment.occurrences(commitments, on: day, exceptions: exceptions, calendar: cal)
+            .map { ($0.start, $0.commitment.kind) }
         firsts += events.filter { cal.isDate($0.start, inSameDayAs: day) }.map { ($0.start, $0.kind) }
         guard let first = firsts.filter({ $0.0 < noon }).min(by: { $0.0 < $1.0 }) else {
             return WakePlan(day: day, wake: fallback, leaveBy: nil, firstCommitment: nil,

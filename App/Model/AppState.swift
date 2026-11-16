@@ -41,7 +41,9 @@ struct AppState: Codable {
     var moods: [MoodEntry] = []
     var health: [HealthDay] = []
     var screen: [ScreenDay] = []
-    var events: [FixedEvent] = []
+    var events: [FixedEvent] = []          // calendar cache
+    var oneOffs: [FixedEvent] = []         // one-off busy time from the brain dump
+    var exceptions: [DayException] = []    // one-day changes ("no school today")
     var learned = LearnedModel()
     var taper = ScreenTaper()
     var flashcards: [Flashcard] = []
@@ -55,6 +57,24 @@ struct AppState: Codable {
     var focus: FocusSession?
     var learnedDays: Set<String> = []
     var dismissed: Set<String> = []
+
+    var dumpState: DumpState {
+        get {
+            DumpState(items: items, commitments: commitments, exceptions: exceptions, oneOffs: oneOffs, markers: markers,
+                      routines: routines, moods: moods, screen: screen, prefs: prefs)
+        }
+        set {
+            items = newValue.items
+            commitments = newValue.commitments
+            exceptions = newValue.exceptions
+            oneOffs = newValue.oneOffs
+            markers = newValue.markers
+            routines = newValue.routines
+            moods = newValue.moods
+            screen = newValue.screen
+            prefs = newValue.prefs
+        }
+    }
 
     init() {}
 
@@ -73,6 +93,8 @@ struct AppState: Codable {
         health = v(.health, d.health)
         screen = v(.screen, d.screen)
         events = v(.events, d.events)
+        oneOffs = v(.oneOffs, d.oneOffs)
+        exceptions = v(.exceptions, d.exceptions)
         learned = v(.learned, d.learned)
         taper = v(.taper, d.taper)
         flashcards = v(.flashcards, d.flashcards)
@@ -119,7 +141,9 @@ struct AppState: Codable {
         screen.removeAll { $0.day < cutoff }
         items.removeAll { $0.isDone && ($0.doneAt ?? $0.due) < cutoff }
         reads.removeAll { ($0.readAt ?? $0.createdAt) < now.addingTimeInterval(-30 * 86400) }
-        if chat.count > 40 { chat.removeFirst(chat.count - 40) }
+        exceptions.removeAll { $0.day < now.addingTimeInterval(-60 * 86400) }
+        oneOffs.removeAll { $0.end < cutoff }
+        if chat.count > 12 { chat.removeFirst(chat.count - 12) }
     }
 }
 

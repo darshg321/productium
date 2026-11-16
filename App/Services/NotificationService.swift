@@ -16,7 +16,7 @@ enum NotificationService {
         let skipped = UNNotificationAction(identifier: "skipped", title: "Didn't get to it", options: [])
         let block = UNNotificationCategory(identifier: blockCategory, actions: [done, partial, skipped], intentIdentifiers: [], options: [])
         let reply = UNTextInputNotificationAction(identifier: "reply", title: "Reply", options: [],
-                                                  textInputButtonTitle: "Send", textInputPlaceholder: "e.g. good day · bio quiz thursday")
+                                                  textInputButtonTitle: "Send", textInputPlaceholder: "e.g. good day, bio quiz thursday")
         let great = UNNotificationAction(identifier: "mood5", title: "😊 Good", options: [])
         let ok = UNNotificationAction(identifier: "mood3", title: "😐 Okay", options: [])
         let low = UNNotificationAction(identifier: "mood1", title: "😔 Rough", options: [])
@@ -88,6 +88,27 @@ enum NotificationService {
                 c.userInfo = ["marker": s.1]
                 add(center, "plan.marker.\(i)", c, at: s.0)
             }
+        }
+    }
+
+    /// Free builds: a weekly nudge to drop a Screen Time screenshot, and a warning
+    /// the day before the 7-day signature runs out.
+    static func scheduleHousekeeping(freeTier: Bool, expiry: Date?) {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: ["house.screenshot", "house.expiry"])
+        if freeTier {
+            let c = UNMutableNotificationContent()
+            c.title = "Screen Time screenshot"
+            c.body = "Settings → Screen Time → See All Activity → Week. Screenshot it and drop it in the box."
+            c.userInfo = ["deeplink": "productium://today"]
+            center.add(UNNotificationRequest(identifier: "house.screenshot", content: c,
+                                             trigger: UNCalendarNotificationTrigger(dateMatching: DateComponents(hour: 19, weekday: 1), repeats: true)))
+        }
+        if let expiry, expiry.addingTimeInterval(-86400) > Date() {
+            let c = UNMutableNotificationContent()
+            c.title = "Productium expires tomorrow"
+            c.body = "Open SideStore and tap Refresh All (LocalDevVPN on) so it keeps working."
+            add(center, "house.expiry", c, at: expiry.addingTimeInterval(-86400))
         }
     }
 

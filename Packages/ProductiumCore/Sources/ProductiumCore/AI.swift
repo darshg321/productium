@@ -41,10 +41,57 @@ public enum AITier: String, Codable, Sendable {
     case reason = "sonnet"
 }
 
+public struct AIImage: Codable, Hashable, Sendable {
+    public var mediaType: String      // image/jpeg, image/png
+    public var base64: String
+    public init(mediaType: String, base64: String) { self.mediaType = mediaType; self.base64 = base64 }
+}
+
+/// A chat message. With images it's sent as content blocks (image… then text),
+/// the shape claude-server and the Anthropic API take.
 public struct AIMessage: Codable, Hashable, Sendable {
     public var role: String
     public var content: String
-    public init(role: String, content: String) { self.role = role; self.content = content }
+    public var images: [AIImage]
+
+    public init(role: String, content: String, images: [AIImage] = []) {
+        self.role = role
+        self.content = content
+        self.images = images
+    }
+
+    enum CodingKeys: String, CodingKey { case role, content }
+    struct Block: Codable {
+        struct Source: Codable { var type = "base64"; var media_type: String; var data: String }
+        var type: String
+        var text: String?
+        var source: Source?
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        role = try c.decode(String.self, forKey: .role)
+        if let s = try? c.decode(String.self, forKey: .content) {
+            content = s
+            images = []
+        } else {
+            let blocks = try c.decode([Block].self, forKey: .content)
+            content = blocks.compactMap(\.text).joined(separator: "\n")
+            images = blocks.compactMap { $0.source.map { AIImage(mediaType: $0.media_type, base64: $0.data) } }
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(role, forKey: .role)
+        if images.isEmpty {
+            try c.encode(content, forKey: .content)
+        } else {
+            let blocks = images.map { Block(type: "image", text: nil, source: .init(media_type: $0.mediaType, data: $0.base64)) }
+                + [Block(type: "text", text: content.isEmpty ? "(see image)" : content, source: nil)]
+            try c.encode(blocks, forKey: .content)
+        }
+    }
 }
 
 public struct AIRequest: Codable, Sendable {

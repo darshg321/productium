@@ -18,14 +18,16 @@ blocking): see **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
   writing (see SOURCES §5).
 - **Adapts to you**: learns how long your tasks really take, which hours you actually get work done in, your
   focus length, and your commute. If you complete less than planned, it plans less.
-- **Minimal input**: one line of text, Siri, or lock-screen taps ("left home", "bio quiz thursday",
-  "essay done", 😐). Health, Calendar, Screen Time and geofences fill in the rest.
+- **One box for everything**: type, or drop screenshots of, anything: deadlines, what you did, how you feel,
+  questions, and corrections ("didn't go to school today", "chem test moved to tues", "walk to school is 25 min").
+  Claude (Haiku) turns it into changes, applies them on the phone, and shows what changed, with Undo.
+  Health, Calendar, location and Screen Time fill in the rest.
 - **Screen time**: a week of measuring, then a limit that tapers about 10% a week. Calm shields with a deliberate
   "15 more minutes", and apps paused during focus blocks and wind-down.
 - **Gap mode**: in a few spare minutes it offers flashcards (Leitner), a 2-minute read, "3 bullets for your next essay
   step", a breathing minute, or a walk instead of a feed.
-- **Insights**: where your time went (stacked by category), a reconstructed day timeline (observed vs. assumed),
-  sleep, mood vs. study, screen vs. limit, peak hours, learned routines, and a weekly Sonnet review.
+- **Review**: a weekly note from Claude, the last seven days drawn as they actually went, and three
+  sentences (sleep, work done, scrolling). Design notes: [docs/DESIGN.md](docs/DESIGN.md).
 - **Your data**: on-device JSON, with export to CSV, JSON backup and .ics, plus restore and delete-everything.
 
 ## Layout
@@ -50,9 +52,10 @@ productium/
 └── docs/                        NO_MAC.md, DISTRIBUTION.md
 ```
 
-AI runs through **[../claude-server](../claude-server)**, a small API on a Raspberry Pi 5 that wraps the
-Claude Code CLI on your subscription. Haiku handles parsing and short generation. Sonnet handles breaking
-down big tasks, weekly reviews and "Ask". Planning itself never needs the server.
+Productium is an AI app and needs **[../claude-server](../claude-server)**, a small API on a Raspberry Pi 5 that
+wraps the Claude Code CLI on your subscription and accepts images. Haiku reads the box and screenshots.
+Sonnet breaks down big projects and writes the weekly note. The scheduler itself is deterministic code
+on the phone (see SOURCES §1).
 
 ## Develop on Linux
 
