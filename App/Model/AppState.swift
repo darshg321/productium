@@ -1,0 +1,142 @@
+import Foundation
+import ProductiumCore
+
+struct SavedPlace: Codable, Hashable, Identifiable {
+    var id: String          // "home", "school", or a custom id
+    var name: String
+    var latitude: Double
+    var longitude: Double
+    var radius: Double = 120
+}
+
+struct Integrations: Codable, Hashable {
+    var health = false
+    var calendarImport = false
+    var calendarExport = false
+    var screenTime = false
+    var location = false
+    var alarms = false
+    var liveActivities = true
+    var notifications = false
+}
+
+struct FocusSession: Codable, Hashable {
+    var blockId: UUID
+    var itemId: UUID?
+    var title: String
+    var startedAt: Date
+    var plannedEnd: Date
+}
+
+/// Everything the app persists. Every field decodes with a default, so app updates
+/// that add fields never wipe a student's data.
+struct AppState: Codable {
+    var onboarded = false
+    var prefs = Preferences()
+    var items: [WorkItem] = []
+    var commitments: [Commitment] = []
+    var routines: [Routine] = Routine.defaults
+    var markers: [TimelineEvent] = []
+    var outcomes: [BlockOutcome] = []
+    var moods: [MoodEntry] = []
+    var health: [HealthDay] = []
+    var screen: [ScreenDay] = []
+    var events: [FixedEvent] = []
+    var learned = LearnedModel()
+    var taper = ScreenTaper()
+    var flashcards: [Flashcard] = []
+    var reads: [ReadPiece] = []
+    var plan: Plan = .empty
+    var places: [SavedPlace] = []
+    var integrations = Integrations()
+    var review: WeeklyReview?
+    var reviewAt: Date?
+    var chat: [AIMessage] = []
+    var focus: FocusSession?
+    var learnedDays: Set<String> = []
+    var dismissed: Set<String> = []
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AppState()
+        func v<T: Decodable>(_ k: CodingKeys, _ def: T) -> T { (try? c.decodeIfPresent(T.self, forKey: k)) ?? def }
+        onboarded = v(.onboarded, d.onboarded)
+        prefs = v(.prefs, d.prefs)
+        items = v(.items, d.items)
+        commitments = v(.commitments, d.commitments)
+        routines = v(.routines, d.routines)
+        markers = v(.markers, d.markers)
+        outcomes = v(.outcomes, d.outcomes)
+        moods = v(.moods, d.moods)
+        health = v(.health, d.health)
+        screen = v(.screen, d.screen)
+        events = v(.events, d.events)
+        learned = v(.learned, d.learned)
+        taper = v(.taper, d.taper)
+        flashcards = v(.flashcards, d.flashcards)
+        reads = v(.reads, d.reads)
+        plan = v(.plan, d.plan)
+        places = v(.places, d.places)
+        integrations = v(.integrations, d.integrations)
+        review = v(.review, d.review)
+        reviewAt = v(.reviewAt, d.reviewAt)
+        chat = v(.chat, d.chat)
+        focus = v(.focus, d.focus)
+        learnedDays = v(.learnedDays, d.learnedDays)
+        dismissed = v(.dismissed, d.dismissed)
+    }
+
+    var backup: Backup {
+        Backup(exportedAt: Date(), preferences: prefs, items: items, commitments: commitments, routines: routines,
+               markers: markers, outcomes: outcomes, moods: moods, health: health, screen: screen,
+               learned: learned, taper: taper, flashcards: flashcards)
+    }
+
+    mutating func restore(_ b: Backup) {
+        prefs = b.preferences
+        items = b.items
+        commitments = b.commitments
+        routines = b.routines
+        markers = b.markers
+        outcomes = b.outcomes
+        moods = b.moods
+        health = b.health
+        screen = b.screen
+        learned = b.learned
+        taper = b.taper
+        flashcards = b.flashcards
+        onboarded = true
+    }
+
+    /// Keep the file small: old fine-grained data is pruned (aggregates live in learned/taper).
+    mutating func prune(now: Date) {
+        let cutoff = now.addingTimeInterval(-180 * 86400)
+        markers.removeAll { $0.at < cutoff }
+        outcomes.removeAll { $0.plannedStart < cutoff }
+        health.removeAll { $0.day < cutoff }
+        screen.removeAll { $0.day < cutoff }
+        items.removeAll { $0.isDone && ($0.doneAt ?? $0.due) < cutoff }
+        reads.removeAll { ($0.readAt ?? $0.createdAt) < now.addingTimeInterval(-30 * 86400) }
+        if chat.count > 40 { chat.removeFirst(chat.count - 40) }
+    }
+}
+
+enum Persistence {
+    static var url: URL { SharedConfig.containerURL.appendingPathComponent("state.json") }
+
+    static func load() -> AppState {
+        guard let data = try? Data(contentsOf: url) else { return AppState() }
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        return (try? dec.decode(AppState.self, from: data)) ?? AppState()
+    }
+
+    static func save(_ s: AppState) {
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        guard let data = try? enc.encode(s) else { return }
+        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+}

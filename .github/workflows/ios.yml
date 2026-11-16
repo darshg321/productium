@@ -1,0 +1,169 @@
+# Builds Productium without a Mac.
+#  • core-tests: the planning engine, on Linux (every push)
+#  • ios-compile: compile-check the whole app + extensions for the simulator, unsigned (every push)
+#  • ios-free-ipa: .ipa for signing with a FREE Apple ID on Linux (manual; no Screen Time features)
+#  • ios-device: signed development .ipa, needs the paid Apple Developer Program (manual)
+# Setup: docs/NO_MAC.md
+name: ios
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      free_build:
+        description: "Free-account .ipa (sign it yourself with Impactor/SideStore)"
+        type: boolean
+        default: true
+      device_build:
+        description: "Signed dev .ipa (paid Apple Developer Program + secrets)"
+        type: boolean
+        default: false
+
+env:
+  BUNDLE_PREFIX: ${{ vars.BUNDLE_PREFIX || 'com.example' }}
+
+jobs:
+  core-tests:
+    runs-on: ubuntu-latest
+    container: swift:6.2-noble
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+        working-directory: Packages/ProductiumCore
+
+  ios-compile:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+      - run: brew install xcodegen
+      - run: DEVELOPMENT_TEAM="" xcodegen generate
+      - name: Compile (simulator, unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild -project Productium.xcodeproj -scheme Productium \
+            -destination 'generic/platform=iOS Simulator' -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+      - name: Upload log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: build-log, path: build.log }
+
+  ios-free-ipa:
+    if: github.event_name == 'workflow_dispatch' && inputs.free_build
+    needs: [core-tests]
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+      - run: brew install xcodegen uv
+      - run: uv run --with pyyaml scripts/make-free-spec.py
+      - run: DEVELOPMENT_TEAM="" xcodegen generate --spec project-free.yml
+      - name: Build for device, unsigned
+        run: |
+          set -o pipefail
+          xcodebuild -project Productium.xcodeproj -scheme Productium -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -30
+      - name: Package .ipa (ad-hoc signed so re-signers keep App Group + HealthKit entitlements)
+        run: |
+          GROUP="group.${BUNDLE_PREFIX}.productium"
+          cat > app.ent <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>com.apple.security.application-groups</key><array><string>$GROUP</string></array>
+            <key>com.apple.developer.healthkit</key><true/>
+            <key>com.apple.developer.healthkit.access</key><array/>
+            <key>com.apple.developer.healthkit.background-delivery</key><true/>
+          </dict></plist>
+          PLIST
+          cat > widgets.ent <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>com.apple.security.application-groups</key><array><string>$GROUP</string></array>
+          </dict></plist>
+          PLIST
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/Productium.app Payload/
+          codesign -f -s - --entitlements widgets.ent Payload/Productium.app/PlugIns/ProductiumWidgets.appex
+          codesign -f -s - --entitlements app.ent Payload/Productium.app
+          zip -qry Productium-free.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Productium-free-ipa
+          path: Productium-free.ipa
+          retention-days: 14
+
+  ios-device:
+    if: github.event_name == 'workflow_dispatch' && inputs.device_build
+    needs: [core-tests, ios-compile]
+    runs-on: macos-26
+    env:
+      DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+      - run: brew install xcodegen
+      - run: xcodegen generate
+
+      - name: Install signing certificate + App Store Connect key
+        env:
+          P12: ${{ secrets.DEV_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.DEV_CERT_PASSWORD }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          KC=$RUNNER_TEMP/build.keychain-db; KCPW=$(uuidgen)
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          echo "$P12" | base64 --decode > $RUNNER_TEMP/dev.p12
+          security import $RUNNER_TEMP/dev.p12 -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KC"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KCPW" "$KC" >/dev/null
+          security list-keychain -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          echo "$ASC_KEY_P8" | base64 --decode > $RUNNER_TEMP/AuthKey.p8
+
+      - name: Archive (automatic signing via App Store Connect API key)
+        run: |
+          set -o pipefail
+          xcodebuild -project Productium.xcodeproj -scheme Productium -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath $RUNNER_TEMP/Productium.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath $RUNNER_TEMP/AuthKey.p8 \
+            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }} \
+            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM archive | tail -40
+
+      - name: Export development .ipa
+        run: |
+          cat > $RUNNER_TEMP/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>debugging</string>
+            <key>teamID</key><string>$DEVELOPMENT_TEAM</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>compileBitcode</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath $RUNNER_TEMP/Productium.xcarchive \
+            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist -exportPath $RUNNER_TEMP/out \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath $RUNNER_TEMP/AuthKey.p8 \
+            -authenticationKeyID ${{ secrets.ASC_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.ASC_ISSUER_ID }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Productium-ipa
+          path: ${{ runner.temp }}/out/*.ipa
+          retention-days: 14
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain $RUNNER_TEMP/build.keychain-db || true
