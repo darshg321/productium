@@ -21,9 +21,9 @@ final class CalendarService {
         let end = start.addingTimeInterval(Double(days) * 86400)
         let cals = store.calendars(for: .event).filter { $0.title != calendarTitle }
         let pred = store.predicateForEvents(withStart: start, end: end, calendars: cals)
-        return store.events(matching: pred).filter { !$0.isAllDay && $0.availability != .free }.map {
-            FixedEvent(id: $0.eventIdentifier ?? UUID().uuidString, title: $0.title ?? "Event",
-                       start: $0.startDate, end: $0.endDate, kind: .other)
+        return store.events(matching: pred).filter { !$0.isAllDay && $0.availability != .free }.compactMap { e in
+            guard let start = e.startDate, let end = e.endDate else { return nil }
+            return FixedEvent(id: e.eventIdentifier ?? UUID().uuidString, title: e.title ?? "Event", start: start, end: end, kind: .other)
         }
     }
 
@@ -34,10 +34,10 @@ final class CalendarService {
         let pred = store.predicateForEvents(withStart: start, end: start.addingTimeInterval(Double(days) * 86400),
                                             calendars: store.calendars(for: .event).filter { $0.title != calendarTitle })
         return store.events(matching: pred).compactMap { e in
-            guard let title = e.title, let kind = Self.deadlineKind(title) else { return nil }
+            guard let title = e.title, let kind = Self.deadlineKind(title), let start = e.startDate else { return nil }
             let due = e.isAllDay ? (Calendar.current.date(bySettingHour: kind.isMemoryBased ? 8 : 23,
-                                                         minute: kind.isMemoryBased ? 0 : 59, second: 0, of: e.startDate) ?? e.startDate)
-                                 : e.startDate
+                                                         minute: kind.isMemoryBased ? 0 : 59, second: 0, of: start) ?? start)
+                                 : start
             return WorkItem(title: title, kind: kind, due: due, importance: kind == .test ? 4 : 3, source: .calendar,
                             externalId: "cal:" + (e.eventIdentifier ?? title))
         }
