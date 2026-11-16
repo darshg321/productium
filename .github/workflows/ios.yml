@@ -68,29 +68,19 @@ jobs:
           xcodebuild -project Productium.xcodeproj -scheme Productium -configuration Release \
             -destination 'generic/platform=iOS' -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -30
-      - name: Package .ipa (ad-hoc signed so re-signers keep App Group + HealthKit entitlements)
+      - name: Package .ipa (ad-hoc signed so the re-signer keeps the HealthKit entitlement)
         run: |
-          GROUP="group.${BUNDLE_PREFIX}.productium"
           cat > app.ent <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
-            <key>com.apple.security.application-groups</key><array><string>$GROUP</string></array>
             <key>com.apple.developer.healthkit</key><true/>
             <key>com.apple.developer.healthkit.access</key><array/>
             <key>com.apple.developer.healthkit.background-delivery</key><true/>
           </dict></plist>
           PLIST
-          cat > widgets.ent <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>com.apple.security.application-groups</key><array><string>$GROUP</string></array>
-          </dict></plist>
-          PLIST
           mkdir Payload
           cp -R build/Build/Products/Release-iphoneos/Productium.app Payload/
-          codesign -f -s - --entitlements widgets.ent Payload/Productium.app/PlugIns/ProductiumWidgets.appex
           codesign -f -s - --entitlements app.ent Payload/Productium.app
           zip -qry Productium-free.ipa Payload
       - uses: actions/upload-artifact@v4

@@ -7,9 +7,13 @@ enum SharedConfig {
 
     static var defaults: UserDefaults { UserDefaults(suiteName: appGroup) ?? .standard }
 
+    /// App Group container, or (free-account builds without an App Group) Application Support,
+    /// which iOS doesn't create by default, so make sure it exists.
     static var containerURL: URL {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) { return url }
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        return support
     }
 
     enum Key {

@@ -39,14 +39,19 @@ free variant below already does, so the same build works for both.
 | Calendar, Location, local notifications, Live Activities, widgets, App Intents/Siri Shortcuts, AlarmKit | ✅ (no paid capability needed) |
 
 Limits of free signing: apps **expire after 7 days**; at most **3 sideloaded apps** active; **10 App IDs per
-7 days**, and each app extension uses one. The full Productium has 6 bundle IDs, the free variant 2.
+7 days**, and each app extension uses one. The full Productium has 6 bundle IDs, the free variant 1.
 
 ## What's built in this repo
 
 **Free variant (default)**: `Actions → ios → Run workflow` with *free_build* checked. CI runs
-`scripts/make-free-spec.py`, which drops the 4 Screen Time extensions and the paid-only entitlements and
-sets `FREE_TIER`. It builds for device and ad-hoc signs with the App Group and HealthKit entitlements, so
-a re-signer keeps them. Output: `Productium-free-ipa`.
+`scripts/make-free-spec.py`, which drops the 4 Screen Time extensions, the widget extension and the App Group,
+removes the paid-only entitlements, and sets `FREE_TIER`. It builds for device and ad-hoc signs with the HealthKit
+entitlement, so a re-signer keeps it. Output: `Productium-free-ipa`.
+
+Why no widget: Impactor 2.7 failed with *"An Application Group with Identifier 'group.….<TEAMID>' is not
+available"* when registering the App Group on a free account (tested 2026-11-16). Only the widget and Live
+Activity needed the App Group, so the free build goes without them. Planning, Health, calendar, notifications,
+alarms, Siri and location all still work.
 
 You sign it on Linux with your Apple ID:
 
@@ -78,8 +83,8 @@ The app counts pauses instead.
 ## To verify on the first real install
 
 Not confirmed in testing yet (I haven't signed a build myself):
-- that Impactor/SideStore carry the **HealthKit** entitlement through on a free account (App Groups are
-  widely reported to work). If Health permission never appears, that's the reason. Everything else still runs.
+- that Impactor/SideStore carry the **HealthKit** entitlement through on a free account. If Health permission
+  never appears, that's the reason. Everything else still runs.
 - AlarmKit's authorization prompt with free signing (it isn't a listed paid capability).
 
 ## Sources

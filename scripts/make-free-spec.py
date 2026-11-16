@@ -4,9 +4,11 @@
 A free account ("Personal Team") can't use Family Controls or Time Sensitive Notifications
 (Apple's supported-capabilities table), and can only hold 10 App IDs per 7 days. So this variant:
   • drops the 4 Screen Time extensions (monitor, report, shield, shield action)
+  • drops the widget extension and the App Group. Free-account signers (Impactor) fail to register
+    App Groups ("Application Group … is not available"), and only the widget needed one.
   • removes the family-controls and time-sensitive entitlements from the app
   • adds the FREE_TIER compile flag (the UI hides Screen Time and explains the alternative)
-This leaves 2 App IDs: the app and the widgets. App Groups and HealthKit stay; free accounts may use both.
+This leaves 1 App ID with HealthKit as its only capability.
 
   uv run --with pyyaml scripts/make-free-spec.py   # writes project-free.yml, then: xcodegen --spec project-free.yml
 """
@@ -15,8 +17,9 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-PAID_ONLY_TARGETS = {"ProductiumMonitor", "ProductiumReport", "ProductiumShield", "ProductiumShieldAction"}
-PAID_ONLY_ENTITLEMENTS = {"com.apple.developer.family-controls", "com.apple.developer.usernotifications.time-sensitive"}
+PAID_ONLY_TARGETS = {"ProductiumMonitor", "ProductiumReport", "ProductiumShield", "ProductiumShieldAction", "ProductiumWidgets"}
+PAID_ONLY_ENTITLEMENTS = {"com.apple.developer.family-controls", "com.apple.developer.usernotifications.time-sensitive",
+                          "com.apple.security.application-groups"}
 
 spec = yaml.safe_load((ROOT / "project.yml").read_text())
 for name in PAID_ONLY_TARGETS:
