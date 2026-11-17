@@ -1,12 +1,15 @@
 import SwiftUI
 import ProductiumCore
 
-/// What Productium knows about one task and when it's planned. Changes go through the Inbox
-/// on Today ("move the essay to friday", "the essay is done"), so there's no form to fill in.
+/// What Productium knows about one task and when it's planned. Edit opens the same form as
+/// adding a task (no tokens); the Inbox still takes plain-words changes ("move the essay to friday").
 struct TaskDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let itemId: UUID
+    @State private var editing: WorkItem?
+
+    init(itemId: UUID) { self.itemId = itemId }
 
     var body: some View {
         if let item = model.state.items.first(where: { $0.id == itemId }) {
@@ -84,21 +87,31 @@ struct TaskDetailView: View {
                 }
 
                 Section {
-                    Button { model.focusNow(on: item); dismiss() } label: {
-                        Label("Work on It Now", systemImage: "play.fill")
-                    }
-                    Button { model.complete(item.id); dismiss() } label: {
-                        Label("Mark as Done", systemImage: "checkmark.circle")
+                    if item.isDone {
+                        Button { model.reopen(item.id) } label: {
+                            Label("Mark as Not Done", systemImage: "arrow.uturn.backward")
+                        }
+                    } else {
+                        Button { model.focusNow(on: item); dismiss() } label: {
+                            Label("Work on It Now", systemImage: "play.fill")
+                        }
+                        Button { model.complete(item.id); dismiss() } label: {
+                            Label("Mark as Done", systemImage: "checkmark.circle")
+                        }
                     }
                     Button(role: .destructive) { model.delete(item.id); dismiss() } label: {
                         Label("Delete Task", systemImage: "trash")
                     }
                 } footer: {
-                    Text("To change the date, length or anything else, tell the Inbox on Today.")
+                    Text("Edit changes it here, with no AI. You can also tell the Inbox, like “move this to friday”.")
                 }
             }
             .listStyle(.insetGrouped)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) { Button("Edit") { editing = item } }
+            }
+            .sheet(item: $editing) { TaskEditor(item: $0, isNew: false) }
         } else {
             ContentUnavailableView("Task Removed", systemImage: "tray")
         }

@@ -11,7 +11,7 @@ Three ground rules shaped the design:
 
 1. **Population research supplies the priors. The student's own data decides.** Each learned quantity starts at a research-backed default and shrinks toward that student's observed behaviour as evidence builds up (§16). People differ a lot in chronotype, how long tasks take them, how they respond to breaks, how much scrolling bothers them, and how mood interacts with work.
 2. **Effects that have replicated get weight. Shaky ones are flagged.** Where a well-known result has failed to replicate, this file says so and the app doesn't depend on it.
-3. **The model doesn't schedule.** A deterministic planner does the constraint solving. Claude (Haiku/Sonnet) parses language, breaks down goals, and explains (§1).
+3. **The model doesn't schedule.** A deterministic planner does the constraint solving. Claude (Sonnet) parses language, breaks down goals, and explains (§1).
 
 ---
 
@@ -19,7 +19,7 @@ Three ground rules shaped the design:
 
 | | |
 |---|---|
-| **Decision** | `Planner.plan()` is a pure function: same inputs, same plan, in milliseconds, offline. Claude never places blocks. Haiku turns "chem test fri ch 4-5" into a structured item. Sonnet breaks a college essay into dated steps and writes the weekly review. |
+| **Decision** | `Planner.plan()` is a pure function: same inputs, same plan, in milliseconds, offline. Claude never places blocks. Sonnet turns "chem test fri ch 4-5" into a structured item, breaks a college essay into dated steps and writes the weekly review. |
 | **Why** | Scheduling around hard constraints (classes, sleep, deadlines) is constraint satisfaction. LLMs are unreliable at it and can't be unit-tested. A deterministic engine can be (`Packages/ProductiumCore/Tests`, 29 tests on Linux), and it explains itself through warnings. Any AI-suggested setting change is clamped (`AIMapper.apply`: at most ±10 min per change, and sleep settings can never be touched). |
 | **Code** | `Planner.swift`, `AI.swift` (`Prompts`, `Schemas`, `AIMapper`) |
 
@@ -79,6 +79,7 @@ Three ground rules shaped the design:
 | **Evidence** | Plans that are repeatedly missed erode self-efficacy (Bandura, 1977) and invite "what-the-hell" abandonment once a goal feels blown (Polivy & Herman, 1985; Cochran & Tesser, 1996). Specific, challenging *but attainable* goals perform best (Locke & Latham, 2002). Forgiving yourself for procrastinating reduces procrastination on the next task (Wohl, Pychyl & Bennett, 2010). Procrastination is largely short-term mood repair (Sirois & Pychyl, 2013; Steel, 2007). |
 | **Implementation** | (a) **Rolling replanning**: any skipped or partial block puts its remaining minutes back into the pool and the plan is rebuilt. Nothing is "failed", it's moved. (b) **Load follows reality**: daily study capacity × `loadFactor`, which comes from an EWMA of block completion (from 1.0 down to a 0.6 floor, phased in over the first ~14 blocks), so plans get achievable again. (c) **Focus length adapts**: abandoned blocks shrink the default block length (min 20 min), completed full blocks grow it slowly (max 55). (d) Messages are self-compassionate ("No problem. It's been moved to a better slot."). (e) The block in progress is never yanked by a replan. |
 | **No streaks** | Broken streaks reduce people's motivation to continue a behaviour (Silverman & Barasch, 2023). Productium shows follow-through percentages, never a streak that can break. |
+| **Prompts, not nagging** | A cue at the moment of action carries out an if-then plan (Gollwitzer & Sheeran, 2006), so a block's heads-up asks for the first small step, and its notification starts focus in one tap. But notifications cost attention: turning them up increased inattention (Kushlev, Proulx & Dunn, 2016), and batching them improved well-being (Fitz et al., 2019). So follow-ups stop the moment focus starts or the block is answered, two in the same minute become one, the default is Standard (one follow-up), and Persistent is opt-in. `NudgePlanner`. |
 | **Fresh starts** | Screen limits step on Mondays. Temporal landmarks raise goal motivation (Dai, Milkman & Riis, 2014). |
 | **Code** | `LearnedModel.record`, `loadFactor`, `AppModel.logOutcome`, `AppModel.replan` |
 
@@ -113,7 +114,7 @@ Three ground rules shaped the design:
 | | |
 |---|---|
 | **Evidence** | Retrieval practice and spacing work in small doses (§2). Answering "why/how" questions improves learning from text (elaborative interrogation; Dunlosky et al., 2013, moderate utility). Writing a concrete next step reduces the cost of starting and quiets the unfinished task (Masicampo & Baumeister, 2011). Five minutes a day of cyclic sighing improved mood more than mindfulness meditation (Balban et al., 2023). Even short bouts of physical activity support attention and executive function (Hillman, Erickson & Kramer, 2008). |
-| **Implementation** | Free windows of 5–25 min become "gaps". In a gap, the shield nudge, or a tap on Now, offers 2–3 options: due flashcards, a short read (120–180 words generated by Haiku 4.5 from the student's subjects and interests, ending with one "why/how" question), "3 bullets for your next essay step", a 1-minute breathing exercise (logged to Health as Mindful Minutes), or a walk. |
+| **Implementation** | Free windows of 5–25 min become "gaps". In a gap, the shield nudge, or a tap on Now, offers 2–3 options: due flashcards, a short read (120–180 words generated by Claude from the student's subjects and interests, ending with one "why/how" question), "3 bullets for your next essay step", a 1-minute breathing exercise (logged to Health as Mindful Minutes), or a walk. |
 | **Choice** | It offers 2–3 options, not one prescribed task (autonomy, a core need in self-determination theory; Ryan & Deci, 2000), and never a feed. The often-cited "choice overload" effect (Iyengar & Lepper, 2000) averages near zero in meta-analysis (Scheibehenne, Greifeneder & Todd, 2010), so the limit of three is about keeping the screen calm, not a strong claim about choice. |
 | **Code** | `MicroLearning.swift` (`GapPlanner`), `GapView.swift` |
 
@@ -194,6 +195,7 @@ Few elements per screen. One accent colour. One primary action (Today answers "w
 - Dunlosky, J., Rawson, K. A., Marsh, E. J., Nathan, M. J., & Willingham, D. T. (2013). Improving students' learning with effective learning techniques. *Psychological Science in the Public Interest, 14*(1), 4–58.
 - Ekers, D., et al. (2014). Behavioural activation for depression; an update of meta-analysis of effectiveness and sub group analysis. *PLoS ONE, 9*(6), e100100.
 - Gillen-O'Neel, C., Huynh, V. W., & Fuligni, A. J. (2013). To study or to sleep? The academic costs of extra studying at the expense of sleep. *Child Development, 84*(1), 133–142.
+- Fitz, N., Kushlev, K., Jagannathan, R., Lewis, T., Paliwal, D., & Ariely, D. (2019). Batching smartphone notifications can improve well-being. *Computers in Human Behavior, 101*, 84–94.
 - Gollwitzer, P. M., & Sheeran, P. (2006). Implementation intentions and goal achievement: A meta-analysis. *Advances in Experimental Social Psychology, 38*, 69–119.
 - Grüning, D. J., Riedel, F., & Lorenz-Spreen, P. (2023). Directing smartphone use through the self-nudge app one sec. *PNAS, 120*(8), e2213114120.
 - Hale, L., & Guan, S. (2015). Screen time and sleep among school-aged children and adolescents. *Sleep Medicine Reviews, 21*, 50–58.
@@ -202,6 +204,7 @@ Few elements per screen. One accent colour. One primary action (Today answers "w
 - Iyengar, S. S., & Lepper, M. R. (2000). When choice is demotivating. *Journal of Personality and Social Psychology, 79*(6), 995–1006.
 - Kahneman, D., & Tversky, A. (1979). Intuitive prediction: Biases and corrective procedures. *TIMS Studies in Management Science, 12*, 313–327.
 - Kruger, J., & Evans, M. (2004). If you don't want to be late, enumerate: Unpacking reduces the planning fallacy. *Journal of Experimental Social Psychology, 40*(5), 586–598.
+- Kushlev, K., Proulx, J., & Dunn, E. W. (2016). "Silence your phones": Smartphone notifications increase inattention and hyperactivity symptoms. *Proceedings of CHI 2016*, 1011–1020.
 - Leroy, S. (2009). Why is it so hard to do my work? The challenge of attention residue when switching between work tasks. *Organizational Behavior and Human Decision Processes, 109*(2), 168–181.
 - Lieberman, M. D., et al. (2007). Putting feelings into words. *Psychological Science, 18*(5), 421–428.
 - Locke, E. A., & Latham, G. P. (2002). Building a practically useful theory of goal setting and task motivation. *American Psychologist, 57*(9), 705–717.

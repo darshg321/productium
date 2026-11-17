@@ -217,6 +217,8 @@ public struct Preferences: Codable, Hashable, Sendable {
     public var interests: [String]
     /// Work wake-up time back from the first commitment and the learned commute.
     public var autoWake: Bool
+    /// How much the phone interrupts, and with what.
+    public var nudges: NudgeSettings
 
     public init(sleepNeedMinutes: Int = 540, sleepFloorMinutes: Int = 420,
                 schoolDayWake: TimeOfDay = TimeOfDay(6, 45), freeDayWake: TimeOfDay = TimeOfDay(8, 30),
@@ -226,7 +228,7 @@ public struct Preferences: Codable, Hashable, Sendable {
                 minFreeMinutesSchoolDay: Int = 60, minFreeMinutesFreeDay: Int = 180,
                 allowSleepTradeoffs: Bool = true, chronotype: Chronotype = .late,
                 schoolDays: Set<Int> = [2, 3, 4, 5, 6], screenTimeGoalMinutes: Int = 45,
-                interests: [String] = [], autoWake: Bool = true) {
+                interests: [String] = [], autoWake: Bool = true, nudges: NudgeSettings = NudgeSettings()) {
         self.sleepNeedMinutes = sleepNeedMinutes
         self.sleepFloorMinutes = sleepFloorMinutes
         self.schoolDayWake = schoolDayWake
@@ -246,6 +248,7 @@ public struct Preferences: Codable, Hashable, Sendable {
         self.screenTimeGoalMinutes = screenTimeGoalMinutes
         self.interests = interests
         self.autoWake = autoWake
+        self.nudges = nudges
     }
 
     /// Missing keys fall back to defaults, so adding a preference in an update keeps the rest.
@@ -272,6 +275,7 @@ public struct Preferences: Codable, Hashable, Sendable {
         screenTimeGoalMinutes = v(.screenTimeGoalMinutes, d.screenTimeGoalMinutes)
         interests = v(.interests, d.interests)
         autoWake = v(.autoWake, d.autoWake)
+        nudges = v(.nudges, d.nudges)
     }
 }
 

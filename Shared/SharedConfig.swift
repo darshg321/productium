@@ -30,6 +30,9 @@ enum SharedConfig {
         static let nudgeOnShield = "screen.nudgeOnShield"
         static let frictionGraceUntil = "friction.graceUntil"   // Double timeIntervalSince1970
         static let frictionPrefix = "friction.pauses."          // + yyyy-MM-dd → Int
+        static let scrollLog = "friction.scrollLog"             // ScrollLog JSON (opens, closes, minutes)
+        static let scrollCheckIns = "friction.checkIns"         // [Int] minutes after "go back anyway", [] = off
+        static let alarmIds = "alarm.nudgeIds"                  // [key: AlarmKit UUID] for nudge alarms
     }
 
     static func dayKey(_ date: Date = Date()) -> String {

@@ -3,6 +3,7 @@ import ActivityKit
 import WidgetKit
 import BackgroundTasks
 import SwiftUI
+import AppIntents
 import ProductiumCore
 #if canImport(AlarmKit) && ENABLE_ALARMKIT
 import AlarmKit
@@ -65,6 +66,79 @@ enum AlarmService {
             if (try? await AlarmManager.shared.schedule(id: id, configuration: config)) != nil { newIds.append(id.uuidString) }
         }
         UserDefaults.standard.set(newIds, forKey: "alarm.ids")
+    }
+    #endif
+
+    // MARK: Nudge alarms (opt-in): bedtime, time to leave, a block that hasn't started
+
+    /// AlarmKit alarms ring through silent mode and Focus, so they're only used when the student
+    /// turns them on (Settings → Notifications). Kept in step with the plan: alarms whose key and
+    /// time haven't changed are left alone, the rest are cancelled or added.
+    /// Without AlarmKit (iOS before 26.1) this does nothing: the notifications already cover it.
+    static func scheduleNudges(_ alarms: [PlannedAlarm]) async {
+        #if canImport(AlarmKit) && ENABLE_ALARMKIT
+        if #available(iOS 26.1, *) {
+            var saved = savedNudges
+            let wanted = Dictionary(alarms.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+            for (key, entry) in saved {
+                if let w = wanted[key], Int(w.at.timeIntervalSince1970) == entry.at { continue }
+                try? AlarmManager.shared.cancel(id: entry.id)
+                saved[key] = nil
+            }
+            for a in alarms where saved[a.key] == nil {
+                let id = UUID()
+                if await scheduleNudge(a, id: id) { saved[a.key] = (id: id, at: Int(a.at.timeIntervalSince1970)) }
+            }
+            savedNudges = saved
+        }
+        #endif
+    }
+
+    /// Focus started early: the "hasn't started" alarm for that block goes.
+    static func cancelNudge(blockId: UUID) {
+        #if canImport(AlarmKit) && ENABLE_ALARMKIT
+        if #available(iOS 26.1, *) {
+            var saved = savedNudges
+            if let e = saved["miss.\(blockId)"] {
+                try? AlarmManager.shared.cancel(id: e.id)
+                saved["miss.\(blockId)"] = nil
+                savedNudges = saved
+            }
+        }
+        #endif
+    }
+
+    private static var savedNudges: [String: (id: UUID, at: Int)] {
+        get {
+            let raw = UserDefaults.standard.dictionary(forKey: SharedConfig.Key.alarmIds) as? [String: String] ?? [:]
+            return raw.compactMapValues { v in
+                let parts = v.split(separator: "|")
+                guard parts.count == 2, let id = UUID(uuidString: String(parts[0])), let at = Int(parts[1]) else { return nil }
+                return (id: id, at: at)
+            }
+        }
+        set {
+            UserDefaults.standard.set(newValue.mapValues { "\($0.id.uuidString)|\($0.at)" }, forKey: SharedConfig.Key.alarmIds)
+        }
+    }
+
+    #if canImport(AlarmKit) && ENABLE_ALARMKIT
+    struct NudgeMetadata: AlarmMetadata {}
+
+    @available(iOS 26.1, *)
+    private static func scheduleNudge(_ a: PlannedAlarm, id: UUID) async -> Bool {
+        let start = AlarmButton(text: "Start", textColor: .white, systemImageName: "play.fill")
+        let alert = a.kind == .missedStart
+            ? AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: a.title), secondaryButton: start,
+                                      secondaryButtonBehavior: .custom)
+            : AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: a.title), secondaryButton: nil,
+                                      secondaryButtonBehavior: nil)
+        let tint: Color = a.kind == .bedtime ? .indigo : a.kind == .leave ? .green : .blue
+        let attrs = AlarmAttributes<NudgeMetadata>(presentation: AlarmPresentation(alert: alert), metadata: NudgeMetadata(), tintColor: tint)
+        let secondary: (any LiveActivityIntent)? = a.kind == .missedStart ? StartFocusIntent() : nil
+        let config = AlarmManager.AlarmConfiguration<NudgeMetadata>.alarm(
+            schedule: .fixed(a.at), attributes: attrs, stopIntent: nil, secondaryIntent: secondary, sound: .default)
+        return (try? await AlarmManager.shared.schedule(id: id, configuration: config)) != nil
     }
     #endif
 }

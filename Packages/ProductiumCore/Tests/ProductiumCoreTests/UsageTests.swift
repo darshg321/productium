@@ -8,28 +8,31 @@ final class UsageTests: XCTestCase {
         return c
     }()
 
-    func testLedgerTotalsAndBudget() {
+    /// Only output tokens count: toward the meter, the budget, the chart and the breakdown.
+    func testLedgerCountsOutputTokensOnly() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         var l = UsageLedger()
         l.dailyBudget = 1000
-        l.record(UsageRecord(at: now, feature: .box, model: "lite", tokens: TokenCount(input: 500, output: 100)))
-        l.record(UsageRecord(at: now, feature: .flashcards, model: "lite", tokens: TokenCount(input: 200, output: 150)))
-        l.record(UsageRecord(at: now.addingTimeInterval(-2 * 86400), feature: .box, model: "lite", tokens: TokenCount(input: 9000)))
-        XCTAssertEqual(l.total(on: now, calendar: cal).total, 950)
-        XCTAssertEqual(l.total(lastDays: 7, now: now, calendar: cal).total, 9950)
+        l.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(input: 5000, output: 400, cacheRead: 900)))
+        l.record(UsageRecord(at: now, feature: .flashcards, model: "sonnet", tokens: TokenCount(input: 200, output: 150, cacheWrite: 800)))
+        l.record(UsageRecord(at: now.addingTimeInterval(-2 * 86400), feature: .box, model: "sonnet", tokens: TokenCount(input: 9000, output: 90)))
+        XCTAssertEqual(l.total(on: now, calendar: cal).counted, 550)
+        XCTAssertEqual(l.total(lastDays: 7, now: now, calendar: cal).counted, 640)
+        XCTAssertEqual(l.byFeature(on: now, calendar: cal).map(\.tokens), [400, 150])
         XCTAssertEqual(l.byFeature(on: now, calendar: cal).first?.feature, .box)
-        XCTAssertTrue(l.allows(.reads, now: now, calendar: cal))
-        l.record(UsageRecord(at: now, feature: .box, model: "lite", tokens: TokenCount(input: 60)))
+        XCTAssertEqual(l.fractionUsed(now: now, calendar: cal), 0.55, accuracy: 0.001)
+        XCTAssertTrue(l.allows(.reads, now: now, calendar: cal), "20k tokens read, but only 550 written")
+        l.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(input: 60, output: 450)))
         XCTAssertFalse(l.allows(.reads, now: now, calendar: cal), "background AI pauses over budget")
         XCTAssertTrue(l.allows(.box, now: now, calendar: cal), "the box always works")
-        XCTAssertEqual(l.daily(lastDays: 3, now: now, calendar: cal).map(\.tokens), [9000, 0, 1010])
+        XCTAssertEqual(l.daily(lastDays: 3, now: now, calendar: cal).map(\.tokens), [90, 0, 1000])
     }
 
     func testLedgerPrunesOldRecords() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         var l = UsageLedger()
-        l.records = [UsageRecord(at: now.addingTimeInterval(-40 * 86400), feature: .box, model: "lite", tokens: TokenCount(input: 1))]
-        l.record(UsageRecord(at: now, feature: .box, model: "lite", tokens: TokenCount(input: 1)))
+        l.records = [UsageRecord(at: now.addingTimeInterval(-40 * 86400), feature: .box, model: "sonnet", tokens: TokenCount(input: 1))]
+        l.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(input: 1)))
         XCTAssertEqual(l.records.count, 1)
     }
 
@@ -48,28 +51,28 @@ final class UsageTests: XCTestCase {
 
     func testResponseParsesStructuredTextAndUsage() throws {
         let json = """
-        {"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-4-5","stop_reason":"end_turn",
+        {"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5-5","stop_reason":"end_turn",
          "content":[{"type":"text","text":"{\\"actions\\":[],\\"reply\\":\\"ok\\"}"}],
          "usage":{"input_tokens":900,"output_tokens":80,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}
         """
         let r = try JSONDecoder().decode(AIResponse.self, from: Data(json.utf8))
         XCTAssertEqual(try r.structured?.decode(DumpResult.self).reply, "ok")
-        XCTAssertEqual(r.tokens.total, 980)
+        XCTAssertEqual(r.tokens.counted, 80)
         let fenced = AIResponse(model: nil, text: "```json\n{\"cards\":[]}\n```", usage: nil)
         XCTAssertNotNil(try fenced.structured?.decode(CardBatch.self))
     }
 
     func testRequestEncodesMessagesAPIShape() throws {
-        let req = AIRequest(tier: .fast, system: "s", messages: [AIMessage(role: "user", content: "hi")],
+        let req = AIRequest(system: "s", messages: [AIMessage(role: "user", content: "hi")],
                             schema: Schemas.cards, maxTokens: 300, cacheTTL: 60)
         let obj = try JSONSerialization.jsonObject(with: JSONEncoder().encode(req)) as! [String: Any]
-        XCTAssertEqual(obj["model"] as? String, "lite")
+        XCTAssertEqual(obj["model"] as? String, "sonnet")
         XCTAssertEqual(obj["max_tokens"] as? Int, 300)
         XCTAssertNil(obj["cacheTTL"], "the cache TTL travels as a header, not in the body")
         let fmt = (obj["output_config"] as? [String: Any])?["format"] as? [String: Any]
         XCTAssertEqual(fmt?["type"] as? String, "json_schema")
         let plain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(
-            AIRequest(tier: .reason, system: "s", messages: []))) as! [String: Any]
+            AIRequest(system: "s", messages: []))) as! [String: Any]
         XCTAssertNil(plain["output_config"])
     }
 

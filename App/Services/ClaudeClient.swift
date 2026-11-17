@@ -25,7 +25,17 @@ enum Keychain {
 }
 
 enum AIError: LocalizedError {
-    case notConfigured, server(Int, String), decoding, overBudget
+    /// `unusable` carries what came back: a reply with nothing in it the app could show or apply.
+    case notConfigured, server(Int, String), unusable(String), overBudget
+
+    /// The raw text behind a failure, for the receipt's Details.
+    var detail: String? {
+        switch self {
+        case .unusable(let raw): return raw.isEmpty ? "(empty reply)" : String(raw.prefix(1500))
+        case .server(_, let msg): return msg
+        default: return nil
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -35,9 +45,10 @@ enum AIError: LocalizedError {
             case 401: return "The server didn't accept the API key. Check it in Settings → Claude."
             case 429: return "Claude is at its usage limit. Try again in a bit."
             case 529, 503: return "The server is busy. Send again in a moment."
+            case 200: return "Your server address answered, but not as claude-server. Check the address in Settings → Claude."
             default: return "Server error \(code): \(msg)"
             }
-        case .decoding: return "Couldn't understand the server's reply."
+        case .unusable: return "Claude's reply came back empty twice, so nothing was changed. Send it again."
         case .overBudget: return "Today's AI budget is spent, so this waits until tomorrow."
         }
     }
@@ -53,7 +64,7 @@ struct ServerUsage: Decodable, Equatable {
         var cached: Int?
         var cache_read_tokens: Int?
         var cache_write_tokens: Int?
-        var tokens: Int { input_tokens + output_tokens }
+        var tokens: Int { output_tokens }
     }
     struct Key: Decodable, Equatable { var name: String?; var rpm: Int?; var daily: Int? }
     var key: Key?
@@ -105,33 +116,51 @@ final class ClaudeClient {
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let ttl = req.cacheTTL { r.setValue(String(ttl), forHTTPHeaderField: "x-cache-ttl") }
-        r.timeoutInterval = req.model == AITier.reason.rawValue ? 120 : 60
+        r.timeoutInterval = 120
         r.httpBody = try JSONEncoder().encode(req)
         var (data, resp) = try await session.data(for: r)
         var code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         // Busy or a transient CLI failure: one retry, as the server's guide recommends.
-        if [502, 529].contains(code) {
+        if [502, 503, 504, 529].contains(code) {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             (data, resp) = try await session.data(for: r)
             code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         }
+        let body = String(data: data, encoding: .utf8) ?? "(\(data.count) bytes, not text)"
         guard code == 200 else {
             struct Err: Decodable { struct E: Decodable { var message: String? }; var error: E? }
-            let msg = (try? JSONDecoder().decode(Err.self, from: data))?.error?.message ?? String(data: data, encoding: .utf8) ?? ""
+            let msg = (try? JSONDecoder().decode(Err.self, from: data))?.error?.message ?? body
             throw AIError.server(code, String(msg.prefix(200)))
         }
-        guard let res = try? JSONDecoder().decode(AIResponse.self, from: data) else { throw AIError.decoding }
+        // Any JSON object is read as a message (see AIResponse). Anything else isn't claude-server.
+        guard let res = try? JSONDecoder().decode(AIResponse.self, from: data) else {
+            throw AIError.server(200, String(body.prefix(200)))
+        }
         let tokens = res.tokens, model = res.model ?? req.model
         if let cb = onUsage { await MainActor.run { cb(feature, model, tokens) } }
         return res
     }
 
-    func structured<T: Decodable>(_ tier: AITier, feature: AIFeature, system: String, user: String, schema: JSONValue,
-                                  as type: T.Type, maxTokens: Int, cacheTTL: Int? = nil) async throws -> T {
-        let res = try await complete(AIRequest(tier: tier, system: system, messages: [AIMessage(role: "user", content: user)],
-                                               schema: schema, maxTokens: maxTokens, cacheTTL: cacheTTL), feature: feature)
-        guard let s = res.structured, let v = try? s.decode(T.self) else { throw AIError.decoding }
-        return v
+    /// Sends `req` and reads the reply with `read`, which returns nil only when the reply has
+    /// nothing usable in it (see Reply.swift). That's rare enough that asking once more is cheaper
+    /// than failing; the second request skips the server's response cache so it can't get the
+    /// same reply back. Returns the value, the reply it came from, and the tokens of both tries.
+    func send<T>(_ req: AIRequest, feature: AIFeature, read: (AIResponse) -> T?) async throws -> (value: T, response: AIResponse, tokens: TokenCount) {
+        let first = try await complete(req, feature: feature)
+        if let v = read(first) { return (v, first, first.tokens) }
+        var again = req
+        again.cacheTTL = nil
+        let second = try await complete(again, feature: feature)
+        guard let v = read(second) else { throw AIError.unusable(second.text.isEmpty ? first.text : second.text) }
+        return (v, second, first.tokens + second.tokens)
+    }
+
+    /// A reply decoded as `type`. `accept` can turn down an answer that decodes but is empty.
+    func structured<T: Decodable>(feature: AIFeature, system: String, user: String, schema: JSONValue, as type: T.Type,
+                                  maxTokens: Int, cacheTTL: Int? = nil, accept: @escaping (T) -> Bool = { _ in true }) async throws -> T {
+        let req = AIRequest(system: system, messages: [AIMessage(role: "user", content: user)],
+                            schema: schema, maxTokens: maxTokens, cacheTTL: cacheTTL)
+        return try await send(req, feature: feature) { $0.decoded(T.self, schema: schema, accept: accept) }.value
     }
 
     /// No tokens: just "is it there". With a key the server also checks auth.

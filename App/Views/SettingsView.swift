@@ -38,6 +38,11 @@ struct SettingsView: View {
             }
 
             Section {
+                row("Notifications", "bell.badge.fill", .red, model.state.integrations.notifications ? p.nudges.level.title : "Off") { NudgeSettingsView() }
+                row("Shortcuts & Automations", "square.stack.3d.up.fill", .indigo, nil) { ShortcutsGuideView() }
+            }
+
+            Section {
                 row("Connections", "link", .green, nil) { ConnectionSettings() }
                 row("Places", "location.fill", .blue, model.state.integrations.location ? "On" : "Off") { PlacesSettings() }
                 row("Routines", "figure.walk", .orange, nil) { RoutineSettings() }
@@ -128,10 +133,10 @@ struct ClaudeSettings: View {
             }
 
             Section {
-                LabeledContent("Inbox, flashcards, reads", value: "Haiku 4.5")
-                LabeledContent("Project steps, weekly note", value: "Sonnet")
-            } header: { Text("Models") } footer: {
-                Text("Everyday jobs use Haiku 4.5 with thinking off, the cheapest model on the server. Sonnet only runs for the two rare jobs that need reasoning. Flashcards and short reads are made in small batches, only when you open a gap.")
+                LabeledContent("Model", value: "Sonnet")
+                LabeledContent("Effort", value: "Low")
+            } header: { Text("Model") } footer: {
+                Text("Everything uses Sonnet at low effort. On this app's own requests it wrote a little over half the tokens Haiku 5.5 did, because Haiku's thinking can't be turned off. Flashcards and short reads are made in small batches, only when you open a gap.")
             }
         }
         .listStyle(.insetGrouped)
@@ -181,7 +186,7 @@ struct UsageView: View {
                     }
                     .frame(width: 64, height: 64)
                     VStack(alignment: .leading, spacing: 2) {
-                        BigValue(value: tokensLabel(today.total), unit: "tokens today")
+                        BigValue(value: tokensLabel(today.counted), unit: "output tokens today")
                         Text("of a \(tokensLabel(ledger.dailyBudget)) daily budget").font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
@@ -201,8 +206,8 @@ struct UsageView: View {
                 .frame(height: 120)
                 .padding(.vertical, 4)
             } footer: {
-                Text("Last 7 days: \(tokensLabel(ledger.total(lastDays: 7, now: now, calendar: cal).total)) tokens. "
-                     + "In \(tokensLabel(today.prompt)), out \(tokensLabel(today.output)) today.")
+                Text("Counts the tokens Claude writes, including its hidden thinking. Last 7 days: "
+                     + "\(tokensLabel(ledger.total(lastDays: 7, now: now, calendar: cal).counted)).")
             }
 
             Section {
@@ -220,7 +225,7 @@ struct UsageView: View {
             } header: { Text("Today") }
 
             Section {
-                Stepper(value: $m.state.usage.dailyBudget, in: 5_000...200_000, step: 5_000) {
+                Stepper(value: $m.state.usage.dailyBudget, in: 1_000...100_000, step: 1_000) {
                     LabeledContent("Daily budget", value: tokensLabel(model.state.usage.dailyBudget))
                 }
                 Toggle("Pause background AI over budget", isOn: $m.state.usage.pauseBackgroundOverBudget)
@@ -240,7 +245,7 @@ struct UsageView: View {
                         .foregroundStyle(.secondary)
                 }
             } header: { Text("Server") } footer: {
-                Text("What claude-server counted for this key. Cached answers count there but use no subscription tokens.")
+                Text("Output tokens claude-server counted for this key. Cached answers count there but use no subscription tokens.")
             }
 
             let recent = Array(ledger.records.suffix(8).reversed())
@@ -255,9 +260,8 @@ struct UsageView: View {
                             }
                             Spacer()
                             VStack(alignment: .trailing, spacing: 1) {
-                                Text(tokensLabel(r.tokens.total)).font(.subheadline.monospacedDigit())
-                                Text("\(tokensLabel(r.tokens.prompt)) in · \(tokensLabel(r.tokens.output)) out")
-                                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                                Text(tokensLabel(r.tokens.counted)).font(.subheadline.monospacedDigit())
+                                Text("out").font(.caption2).foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -382,10 +386,19 @@ struct ScreenTimeSettings: View {
                 Text("Blocking and measuring apps uses Apple's Screen Time API, which needs a paid developer account. This build was signed with a free one.")
             }
             Section {
-                Text("Shortcuts → Automation → + → App → pick an app → Is Opened → Run Immediately. Add “Should I pause?” (Productium), then If Result is true → Open URLs productium://gap.")
-                    .font(.subheadline)
+                NavigationLink { RecipeView(recipe: Recipe.scrolling[0]) } label: { RecipeRow(recipe: Recipe.scrolling[0]) }
+                NavigationLink { RecipeView(recipe: Recipe.scrolling[1]) } label: { RecipeRow(recipe: Recipe.scrolling[1]) }
+                NavigationLink { RecipeView(recipe: Recipe.scrolling[2]) } label: { RecipeRow(recipe: Recipe.scrolling[2]) }
             } header: { Text("Add a Pause Instead") } footer: {
-                Text("Opening that app brings up a short pause with something better to do. “Go back anyway” skips it for 10 minutes.")
+                Text("Opening one of those apps brings up a short pause with something better to do. “Go back anyway” skips it for 10 minutes. With the second automation, Productium also counts your minutes.")
+            }
+            let log = Friction.log
+            if let d = log.today(Date(), calendar: .current) {
+                Section("Today") {
+                    LabeledContent("Opened", value: "\(d.opens)×")
+                    LabeledContent("Paused", value: "\(d.pauses)×")
+                    if log.measuresClosing { LabeledContent("Time in those apps", value: durationLabel(d.minutes)) }
+                }
             }
             #else
             Section {
@@ -425,6 +438,114 @@ struct ScreenTimeSettings: View {
         .familyActivityPicker(isPresented: $showPicker, selection: $selection)
         .onChange(of: selection) { _, s in ScreenTimeService.shared.selection = s; model.replan() }
         .onChange(of: model.state.prefs) { _, _ in model.replan() }
+    }
+}
+
+// MARK: - Notifications
+
+/// How much the phone interrupts, what with, and a preview of what's actually coming.
+struct NudgeSettingsView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var m = model
+        let on = model.state.integrations.notifications
+        List {
+            if !on {
+                Section {
+                    Button {
+                        Task {
+                            m.state.integrations.notifications = await NotificationService.requestAuthorization()
+                            model.replan()
+                        }
+                    } label: { SettingsLabel(title: "Turn On Notifications", symbol: "bell.badge.fill", color: .red) }
+                } footer: {
+                    Text("Nothing below is sent until notifications are on. If you said no before, turn them on in Settings → Notifications → Productium.")
+                }
+            }
+
+            Section {
+                ForEach(NudgeLevel.allCases, id: \.self) { level in
+                    Button { m.state.prefs.nudges.level = level } label: {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: model.state.prefs.nudges.level == level ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(model.state.prefs.nudges.level == level ? Color.accentColor : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(level.title).foregroundStyle(.primary)
+                                Text(level.summary).font(.caption).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .accessibilityAddTraits(model.state.prefs.nudges.level == level ? .isSelected : [])
+                }
+            } header: { Text("How Much to Interrupt") } footer: {
+                Text("Every start notification has Start Focus, In 10 Minutes and Can't Today buttons. Starting focus, or answering, stops the rest for that block.")
+            }
+
+            Section {
+                Toggle(isOn: $m.state.prefs.nudges.deadlines) {
+                    SettingsLabel(title: "Deadline Reminders", symbol: "flag.fill", color: .red)
+                }
+                Toggle(isOn: $m.state.prefs.nudges.arrivingHome) {
+                    SettingsLabel(title: "When You Get Home", symbol: "house.fill", color: .blue)
+                }
+                .disabled(!model.state.integrations.location)
+                Toggle(isOn: $m.state.prefs.nudges.scrollCheckIns) {
+                    SettingsLabel(title: "Scrolling Check-ins", symbol: "hand.raised.fill", color: .purple)
+                }
+            } footer: {
+                Text("“When you get home” needs Places. Scrolling check-ins come after “Go back anyway” in a pause: \(model.state.prefs.nudges.level.scrollCheckIns.map { "\($0)" }.joined(separator: ", ")) minutes in, and stop when you close the app (with the Count Scrolling Time automation).")
+            }
+
+            Section {
+                Toggle(isOn: Binding(get: { model.state.prefs.nudges.alarms }, set: { v in
+                    Task {
+                        let ok = v ? await AlarmService.requestAuthorization() : false
+                        m.state.prefs.nudges.alarms = v && ok
+                        if v && !ok { model.toast = "Alarms aren't allowed. Settings → Productium → Alarms." }
+                    }
+                })) {
+                    SettingsLabel(title: "Alarms for the Important Ones", symbol: "alarm.waves.left.and.right.fill", color: .orange)
+                }
+                .disabled(!alarmKitAvailable)
+            } footer: {
+                Text(alarmKitAvailable
+                     ? "A real alarm, through silent mode and Focus, at bedtime, when it's time to leave, and 10 minutes into a work block you haven't started (with a Start button). Starting focus cancels that one."
+                     : "Needs iOS 26.1 or later. Until then the notifications above do the job.")
+            }
+
+            if on {
+                Section {
+                    let upcoming = NudgePlanner.plan(model.nudgeInput()).prefix(10)
+                    if upcoming.isEmpty { Text("Nothing in the next 24 hours.").foregroundStyle(.secondary) }
+                    ForEach(Array(upcoming), id: \.id) { n in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(n.at.hm).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).frame(width: 70, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(n.title).font(.subheadline).lineLimit(1)
+                                Text(n.body).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                        }
+                    }
+                } header: { Text("Coming Up") } footer: {
+                    Text(Signature.isFreeTier
+                         ? "This build can't mark notifications Time Sensitive, so a Focus can hold them back. Settings → Focus → each Focus → Apps → Add Productium."
+                         : "Starts, leave-by and bedtime are Time Sensitive, so they get through most Focuses.")
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Notifications")
+        .onChange(of: model.state.prefs.nudges) { _, _ in model.replan() }
+    }
+
+    private var alarmKitAvailable: Bool {
+        #if canImport(AlarmKit) && ENABLE_ALARMKIT
+        if #available(iOS 26.1, *) { return true }
+        #endif
+        return false
     }
 }
 

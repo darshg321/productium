@@ -36,15 +36,31 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         [.banner, .list, .sound]
     }
 
-    /// Lock-screen replies land here: Done / Partly / Skipped, mood taps, typed check-ins.
+    /// Lock-screen replies land here: Done / Partly / Skipped, Start / Snooze / Can't Today,
+    /// mood taps, typed check-ins, scrolling check-ins and deadline buttons.
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         let action = response.actionIdentifier
         await MainActor.run {
             let model = AppModel.shared
-            if let idStr = info["blockId"] as? String, let id = UUID(uuidString: idStr),
-               let status = OutcomeStatus(rawValue: action) {
+            let blockId = (info["blockId"] as? String).flatMap(UUID.init(uuidString:))
+            let itemId = (info["itemId"] as? String).flatMap(UUID.init(uuidString:))
+            if let id = blockId, let status = OutcomeStatus(rawValue: action) {
                 model.logOutcome(blockId: id, status: status)
+            } else if action == "focus.start" {
+                if let id = blockId { model.startFocus(blockId: id) } else { model.startNowOrNext() }
+            } else if action == "focus.snooze", let id = blockId {
+                model.snooze(blockId: id)
+            } else if action == "focus.cant", let id = blockId {
+                model.logOutcome(blockId: id, status: .skipped)
+            } else if action == "scroll.gap" {
+                model.deepLink = "productium://gap"
+            } else if action == "scroll.stop" {
+                NotificationService.cancelScrollCheckIns()
+            } else if action == "item.done", let id = itemId {
+                model.complete(id)
+            } else if action == "item.focus", let id = itemId, let item = model.state.items.first(where: { $0.id == id }) {
+                model.focusNow(on: item)
             } else if action.hasPrefix("mood"), let m = Int(action.dropFirst(4)) {
                 model.logMood(m, energy: nil, note: nil)
             } else if action == "marker.yes", let phrase = info["marker"] as? String {

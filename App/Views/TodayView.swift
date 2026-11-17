@@ -50,7 +50,7 @@ struct TodayView: View {
 
 // MARK: - Inbox
 
-/// The one box. Typed text and screenshots go to Claude (lite), which returns changes;
+/// The one box. Typed text and screenshots go to Claude (Sonnet), which returns changes;
 /// the receipt says what changed, with Undo, and what it cost.
 struct DumpBox: View {
     @Environment(AppModel.self) private var model
@@ -155,6 +155,14 @@ struct ReceiptView: View {
                 .font(.subheadline)
                 .foregroundStyle(receipt.failed ? Theme.alert : .primary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let d = receipt.detail {
+                DisclosureGroup("Details") {
+                    Text(d).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(.footnote)
+            }
             ForEach(receipt.changes, id: \.self) { c in
                 Label(c, systemImage: c == "Undone" ? "arrow.uturn.backward" : "checkmark")
                     .font(.footnote)
@@ -164,7 +172,7 @@ struct ReceiptView: View {
                 if receipt.canUndo { Button("Undo") { withAnimation { model.undo() } } }
                 Spacer()
                 if let t = receipt.tokens {
-                    Text("\(tokensLabel(t)) tokens").font(.caption).foregroundStyle(.tertiary)
+                    Text("\(tokensLabel(t)) tokens out").font(.caption).foregroundStyle(.tertiary)
                 }
                 Button("Clear") { withAnimation { model.receipt = nil } }.foregroundStyle(.secondary)
             }

@@ -72,13 +72,18 @@ You sign it on Linux with your Apple ID:
 
 **Screen time in the free build** is measured from screenshots: drop a Screen Time "Week" screenshot in
 the box (a Sunday reminder asks for it) and Claude reads per-day and per-app minutes into the same
-weekly taper. **Friction**: a Shortcuts automation (iOS 17+ can "Run Immediately"):
-*When Instagram is opened → Productium "Should I pause?" → if true, open `productium://gap`*. Opening the
-app brings up a short pause with flashcards, a read or a breathing minute. "I'll go back anyway" gives a
-10-minute grace window so it doesn't loop. This is how the one sec app worked before Screen Time APIs,
-and it's the friction mechanism behind its 57% drop in openings (Grüning et al., 2023). One automation per
-app. Settings in the free build walks you through it. You lose the measured usage and the tapering limit.
-The app also counts pauses.
+weekly taper. **Friction**: Shortcuts automations (iOS 17+ can "Run Immediately"). On iOS 26+ it's one action:
+*When Instagram or TikTok is opened → Productium "Pause Before Scrolling"*. The intent declares
+`supportedModes = [.background, .foreground(.dynamic)]` and calls `continueInForeground(alwaysConfirm: false)` only
+when a pause is due, so it stays in the background during the grace window. On iOS 17–18 the older form still works:
+*"Should I pause?" → If true → Open URLs `productium://gap`*. Opening the app brings up a short pause with
+flashcards, a read or a breathing minute. "I'll go back anyway" gives a 10-minute grace window so it doesn't loop,
+plus "still scrolling?" check-ins (10/20/30 min depending on Settings → Notifications). This is how the one sec app
+worked before Screen Time APIs, and it's the friction mechanism behind its 57% drop in openings (Grüning et al.,
+2023). Several apps can go in one automation (Productium's action doesn't need to know which app). A second
+automation, *those apps → Is Closed → "Closed a Distracting App"*, ends the session: it cancels the check-ins and
+counts the minutes per day, which go into the same weekly taper as screenshots (a screenshot for a day wins over
+the count). Settings → Shortcuts & Automations walks through every recipe tap by tap.
 
 **Paid variant**: unchanged (`device_build`, see `NO_MAC.md` part B).
 
@@ -98,6 +103,11 @@ Not confirmed in testing yet (I haven't signed a build myself):
 - that Impactor/SideStore carry the **HealthKit** entitlement through on a free account. If Health permission
   never appears, that's the reason. Everything else still runs.
 - AlarmKit's authorization prompt with free signing (it isn't a listed paid capability).
+- that `continueInForeground(alwaysConfirm: false)` brings the app forward from an "App is opened" automation
+  without a confirmation prompt. Apple's docs say the system may still ask; if it does every time, use the
+  iOS 17–18 recipe (If + Open URLs), which is known to work.
+- that the Shortcuts App trigger takes several apps in one automation (the Shortcuts UI shows a multi-select list;
+  one sec's guide says one per app, but only because its action needs to know which app).
 
 ## Sources
 
@@ -108,4 +118,6 @@ Not confirmed in testing yet (I haven't signed a build myself):
 - AltStore FAQ: App IDs needed per app extension. Sideloadly FAQ: 3-app limit on free accounts
 - Impactor: github.com/khcrysalis/impactor (Flathub `dev.khcrysalis.PlumeImpactor`). SideStore: github.com/SideStore/SideStore
 - one sec Shortcuts setup; iOS 17 "Run Immediately" for personal automations
+- Apple, App Intents: `supportedModes`, `IntentModes.ForegroundMode.dynamic`, `continueInForeground(_:alwaysConfirm:)` (iOS 26)
+- Apple, AlarmKit: `AlarmPresentation.Alert(title:secondaryButton:secondaryButtonBehavior:)` (iOS 26.1), `AlarmConfiguration.alarm(schedule:attributes:stopIntent:secondaryIntent:sound:)` with a `LiveActivityIntent`
 - Apple fee waiver: nonprofits, accredited educational institutions, government entities only

@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Brain dump: one box for everything
 //
 // The student types (or pastes a screenshot of) anything: new deadlines, what they did,
-// what changed, how they feel, a question. Haiku returns a list of actions plus a reply.
+// what changed, how they feel, a question. Claude returns a list of actions plus a reply.
 // `DumpApplier` turns them into state changes on the device, deterministically and
 // testably, and reports what it changed so the UI can show it with an Undo.
 
@@ -57,6 +57,60 @@ public struct DumpResult: Codable, Hashable, Sendable {
     public var actions: [DumpAction]
     public var reply: String
     public init(actions: [DumpAction], reply: String) { self.actions = actions; self.reply = reply }
+
+    /// Lenient: a reply with no actions, or actions with no reply, still counts. One malformed
+    /// action is dropped rather than losing the whole message.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        reply = (try? c.decodeIfPresent(String.self, forKey: .reply)) ?? ""
+        let raw = (try? c.decodeIfPresent([JSONValue].self, forKey: .actions)) ?? []
+        actions = raw.compactMap { try? $0.decode(DumpAction.self) }
+        guard !reply.isEmpty || !raw.isEmpty else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "no actions and no reply"))
+        }
+    }
+}
+
+extension DumpResult {
+    /// Reads the Inbox answer out of a reply, whatever shape it came back in: the schema's
+    /// `{actions, reply}`, a list of actions, one action on its own, the reply under another name,
+    /// or plain prose (shown as the reply, changing nothing). Nil only when there's nothing to
+    /// show and nothing to do.
+    public static func read(_ res: AIResponse) -> DumpResult? {
+        for c in res.candidates {
+            let fitted = StructuredRepair.coerce(normalise(c), to: Schemas.dump)
+            if var r = try? fitted.decode(DumpResult.self) {
+                r.reply = r.reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                return r
+            }
+        }
+        // No JSON at all, just sentences: the model answered in words. That's a reply.
+        let prose = res.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard res.candidates.isEmpty, prose.filter(\.isLetter).count >= 3, !prose.contains("{"), !prose.contains("```"),
+              !["null", "none", "undefined"].contains(prose.lowercased()) else { return nil }
+        return DumpResult(actions: [], reply: String(prose.prefix(600)))
+    }
+
+    static func normalise(_ v: JSONValue) -> JSONValue {
+        guard case .object(var o) = v else { return v }
+        let plain = Dictionary(o.keys.map { (StructuredRepair.plain($0), $0) }, uniquingKeysWith: { a, _ in a })
+        func value(_ names: [String]) -> JSONValue? { names.lazy.compactMap { plain[$0].flatMap { o[$0] } }.first }
+        if plain["reply"] == nil,
+           let r = value(["message", "response", "answer", "text", "summary", "content", "output"]), case .string = r {
+            o["reply"] = r
+        }
+        if plain["actions"] == nil {
+            if let a = value(["action", "changes", "items", "tasks"]) {
+                o["actions"] = a
+            } else if case .string(let t)? = value(["type"]), DumpActionType(loose: t) != nil {
+                // One action on its own, with the reply (if any) beside its fields.
+                var action = o
+                action["reply"] = nil
+                o = ["actions": .array([.object(action)]), "reply": o["reply"] ?? .string("")]
+            }
+        }
+        return .object(o)
+    }
 }
 
 public enum DumpActionType: String, CaseIterable, Sendable {
@@ -64,6 +118,30 @@ public enum DumpActionType: String, CaseIterable, Sendable {
     case addActivity = "add_activity", updateActivity = "update_activity", deleteActivity = "delete_activity"
     case addEvent = "add_event", changeDay = "change_day", log, routine, mood
     case screenTime = "screen_time", settings
+
+    /// The schema's names, plus the near misses a model can produce: "addTask", "create_task",
+    /// "mark_done", "remove_activity", "screentime", "preferences".
+    public init?(loose raw: String) {
+        if let exact = DumpActionType(rawValue: raw) { self = exact; return }
+        let words = raw.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1_$2", options: .regularExpression).lowercased()
+            .split(whereSeparator: { !$0.isLetter }).map(String.init)
+        let joined = words.joined(separator: "_")
+        if let exact = DumpActionType(rawValue: joined) { self = exact; return }
+        func has(_ options: String...) -> Bool { words.contains { options.contains($0) } }
+        let activity = has("activity", "activities", "commitment", "class", "club", "practice")
+        if has("screen", "screentime") { self = .screenTime }
+        else if has("setting", "settings", "preference", "preferences", "prefs") { self = .settings }
+        else if has("mood", "feeling", "energy") { self = .mood }
+        else if has("routine") { self = .routine }
+        else if has("day", "exception") { self = .changeDay }
+        else if has("event", "appointment") { self = .addEvent }
+        else if has("log", "checkin", "marker", "happened") { self = .log }
+        else if has("complete", "completed", "done", "finish", "finished") { self = .completeTask }
+        else if has("delete", "remove", "cancel", "drop") { self = activity ? .deleteActivity : .deleteTask }
+        else if has("update", "change", "edit", "move", "reschedule", "modify") { self = activity ? .updateActivity : .updateTask }
+        else if has("add", "create", "new") { self = activity ? .addActivity : .addTask }
+        else { return nil }
+    }
 }
 
 extension Schemas {
@@ -216,7 +294,7 @@ public enum DumpApplier {
         func activityIndex(_ t: String?) -> Int? { match(t, s.commitments.indices.map { ($0, s.commitments[$0].title) }) }
 
         for a in r.actions {
-            guard let type = DumpActionType(rawValue: a.type) else { continue }
+            guard let type = DumpActionType(loose: a.type) else { continue }
             switch type {
             case .addTask:
                 let p = ParsedItem(title: a.title ?? a.target ?? "", kind: a.kind ?? "other", subject: a.subject, due: a.due ?? "",

@@ -284,7 +284,7 @@ struct UsageToolbar: ViewModifier {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showUsage = true } label: { TokenMeter() }
-                        .accessibilityLabel("AI usage today: \(tokensLabel(model.tokensToday)) tokens")
+                        .accessibilityLabel("AI usage today: \(tokensLabel(model.tokensToday)) output tokens")
                 }
             }
             .sheet(isPresented: $showUsage) { UsageView() }
@@ -295,7 +295,7 @@ extension View {
     func usageMeter() -> some View { modifier(UsageToolbar()) }
 }
 
-/// A small ring that fills toward today's budget, with today's token count.
+/// A small ring that fills toward today's budget, with today's output-token count.
 struct TokenMeter: View {
     @Environment(AppModel.self) private var model
 

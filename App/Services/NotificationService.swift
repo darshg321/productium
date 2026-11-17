@@ -5,16 +5,36 @@ import ProductiumCore
 /// Notifications carry most of the input: one tap on Done / Partly / Skipped
 /// from the lock screen, or a typed or dictated reply to the evening check-in.
 /// The app often never needs opening.
+///
+/// What gets sent, and when, is decided by `NudgePlanner` (ProductiumCore); this file only turns
+/// those into requests. Ids starting "plan." are rebuilt on every replan. "snooze." and
+/// "scroll." ones are set by a tap or by a Shortcuts automation and left alone by replans.
 enum NotificationService {
     static let blockCategory = "BLOCK_END"
+    static let startCategory = "BLOCK_START"
+    static let leadCategory = "LEAD_UP"
     static let checkInCategory = "CHECK_IN"
     static let markerCategory = "MARKER"
+    static let scrollCategory = "SCROLL"
+    static let deadlineCategory = "DEADLINE"
 
     static func register() {
         let done = UNNotificationAction(identifier: "done", title: "Done ✓", options: [])
         let partial = UNNotificationAction(identifier: "partial", title: "Partly", options: [])
         let skipped = UNNotificationAction(identifier: "skipped", title: "Didn't get to it", options: [])
         let block = UNNotificationCategory(identifier: blockCategory, actions: [done, partial, skipped], intentIdentifiers: [], options: [])
+
+        let startNow = UNNotificationAction(identifier: "focus.start", title: "Start Focus", options: [.foreground],
+                                            icon: UNNotificationActionIcon(systemImageName: "play.fill"))
+        let snooze = UNNotificationAction(identifier: "focus.snooze", title: "In 10 Minutes", options: [],
+                                          icon: UNNotificationActionIcon(systemImageName: "clock.arrow.circlepath"))
+        let cant = UNNotificationAction(identifier: "focus.cant", title: "Can't Today", options: [.destructive],
+                                        icon: UNNotificationActionIcon(systemImageName: "arrow.uturn.forward"))
+        let start = UNNotificationCategory(identifier: startCategory, actions: [startNow, snooze, cant], intentIdentifiers: [], options: [])
+        let early = UNNotificationAction(identifier: "focus.start", title: "Start Now", options: [.foreground],
+                                         icon: UNNotificationActionIcon(systemImageName: "play.fill"))
+        let lead = UNNotificationCategory(identifier: leadCategory, actions: [early], intentIdentifiers: [], options: [])
+
         let reply = UNTextInputNotificationAction(identifier: "reply", title: "Reply", options: [],
                                                   textInputButtonTitle: "Send", textInputPlaceholder: "e.g. good day, bio quiz thursday")
         let great = UNNotificationAction(identifier: "mood5", title: "😊 Good", options: [])
@@ -23,72 +43,114 @@ enum NotificationService {
         let checkIn = UNNotificationCategory(identifier: checkInCategory, actions: [reply, great, ok, low], intentIdentifiers: [], options: [])
         let yes = UNNotificationAction(identifier: "marker.yes", title: "Yes", options: [])
         let marker = UNNotificationCategory(identifier: markerCategory, actions: [yes], intentIdentifiers: [], options: [])
-        UNUserNotificationCenter.current().setNotificationCategories([block, checkIn, marker])
+
+        let showMe = UNNotificationAction(identifier: "scroll.gap", title: "Something Better", options: [.foreground])
+        let stop = UNNotificationAction(identifier: "scroll.stop", title: "I'm Done", options: [])
+        let scroll = UNNotificationCategory(identifier: scrollCategory, actions: [showMe, stop], intentIdentifiers: [], options: [])
+
+        let finished = UNNotificationAction(identifier: "item.done", title: "It's Done", options: [])
+        let workNow = UNNotificationAction(identifier: "item.focus", title: "Work on It Now", options: [.foreground])
+        let deadline = UNNotificationCategory(identifier: deadlineCategory, actions: [workNow, finished], intentIdentifiers: [], options: [])
+
+        UNUserNotificationCenter.current().setNotificationCategories([block, start, lead, checkIn, marker, scroll, deadline])
     }
 
     static func requestAuthorization() async -> Bool {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
     }
 
-    /// Rebuilds the next 24 h of plan notifications (iOS keeps at most 64 pending).
-    static func schedule(plan: Plan, prefs: Preferences, items: [WorkItem], suggestions: [(Date, String)]) {
+    /// Replaces every pending "plan." notification with `nudges`.
+    static func schedule(_ nudges: [PlannedNudge]) {
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { pending in
             let ours = pending.map(\.identifier).filter { $0.hasPrefix("plan.") }
             center.removePendingNotificationRequests(withIdentifiers: ours)
-            let now = Date()
-            let horizon = now.addingTimeInterval(86400)
-            var count = 0
-            for b in plan.blocks where b.isStudy && b.end > now && b.start < horizon && count < 40 {
-                if b.start > now.addingTimeInterval(60) {
-                    let c = UNMutableNotificationContent()
-                    c.title = b.title
-                    c.body = b.hint ?? "Starting now."
-                    c.interruptionLevel = .timeSensitive
-                    c.userInfo = ["blockId": b.id.uuidString, "deeplink": "productium://now"]
-                    add(center, "plan.start.\(b.id)", c, at: b.start)
-                    count += 1
-                }
-                let e = UNMutableNotificationContent()
-                e.title = "How did it go?"
-                e.body = b.title
-                e.categoryIdentifier = blockCategory
-                e.userInfo = ["blockId": b.id.uuidString]
-                e.interruptionLevel = .active
-                add(center, "plan.end.\(b.id)", e, at: b.end)
-                count += 1
-            }
-            // Evening check-in, about 30 min before wind-down: mood + anything new, ~20 s.
-            if let wind = plan.blocks.first(where: { $0.kind == .windDown && $0.start > now.addingTimeInterval(30 * 60) }) {
-                let c = UNMutableNotificationContent()
-                c.title = "20-second check-in"
-                c.body = "How was today? Anything new due? Reply here, no need to open the app."
-                c.categoryIdentifier = checkInCategory
-                add(center, "plan.checkin", c, at: wind.start.addingTimeInterval(-30 * 60))
-            }
-            // Morning brief, just after the planned wake-up.
-            if let w = plan.wakePlans.first(where: { $0.wake > now }) {
-                let cal = Calendar.current
-                let day = plan.blocks(on: w.wake, calendar: cal).filter(\.isStudy)
-                let mins = day.reduce(0) { $0 + $1.minutes }
-                let c = UNMutableNotificationContent()
-                c.title = day.isEmpty ? "Nothing planned today" : "Today: \(minutesLabel(mins)) of focused work"
-                var body = day.first.map { "First up \($0.start.formatted(date: .omitted, time: .shortened)): \($0.title)." } ?? "Enjoy it."
-                if let leave = w.leaveBy { body += " Leave by \(leave.formatted(date: .omitted, time: .shortened))." }
-                c.body = body
-                c.userInfo = ["deeplink": "productium://today"]
-                add(center, "plan.morning", c, at: w.wake.addingTimeInterval(10 * 60))
-            }
-            // One-tap check-in prompts while routines are still being learned.
-            for (i, s) in suggestions.prefix(4).enumerated() where s.0 > now {
-                let c = UNMutableNotificationContent()
-                c.title = s.1 + "?"
-                c.body = "Tap Yes when it happens. A few of these and Productium learns your routine."
-                c.categoryIdentifier = markerCategory
-                c.userInfo = ["marker": s.1]
-                add(center, "plan.marker.\(i)", c, at: s.0)
-            }
+            for n in nudges { add(center, n.id, content(n), at: n.at) }
         }
+    }
+
+    static func content(_ n: PlannedNudge) -> UNMutableNotificationContent {
+        let c = UNMutableNotificationContent()
+        c.title = n.title
+        c.body = n.body
+        var info: [String: String] = [:]
+        if let b = n.blockId { info["blockId"] = b.uuidString }
+        if let i = n.itemId { info["itemId"] = i.uuidString }
+        if let m = n.marker { info["marker"] = m }
+        if let d = n.deeplink { info["deeplink"] = d }
+        info["kind"] = n.kind.rawValue
+        c.userInfo = info
+        switch n.kind {
+        case .start, .followUp: c.categoryIdentifier = startCategory
+        case .leadUp: c.categoryIdentifier = leadCategory
+        case .end: c.categoryIdentifier = blockCategory
+        case .checkIn: c.categoryIdentifier = checkInCategory
+        case .marker: c.categoryIdentifier = markerCategory
+        case .deadline: c.categoryIdentifier = deadlineCategory
+        default: break
+        }
+        // Follow-ups for the same block replace each other in Notification Center.
+        if let b = n.blockId { c.threadIdentifier = b.uuidString }
+        // Time Sensitive needs a paid-account entitlement; without it iOS treats this as .active.
+        c.interruptionLevel = n.urgent ? .timeSensitive : .active
+        c.relevanceScore = n.urgent ? 0.9 : 0.4
+        return c
+    }
+
+    /// "In 10 minutes" from a start notification: one reminder, and the block's own follow-ups
+    /// are dropped (the next replan leaves them out while it's snoozed).
+    static func snooze(blockId: UUID, title: String, minutes: Int = 10) {
+        let center = UNUserNotificationCenter.current()
+        cancel(blockId: blockId)
+        let c = UNMutableNotificationContent()
+        c.title = title
+        c.body = "Snoozed. Start now, or tap Can't Today and it moves to a better slot."
+        c.categoryIdentifier = startCategory
+        c.userInfo = ["blockId": blockId.uuidString, "deeplink": "productium://now", "kind": "snooze"]
+        c.threadIdentifier = blockId.uuidString
+        c.interruptionLevel = .timeSensitive
+        add(center, "snooze.\(blockId)", c, at: Date().addingTimeInterval(Double(minutes) * 60))
+    }
+
+    /// Focus started (or the block was answered): no more heads-ups, starts or follow-ups for it.
+    static func cancel(blockId: UUID) {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { pending in
+            let ids = pending.map(\.identifier).filter {
+                $0 == "plan.lead.\(blockId)" || $0 == "plan.start.\(blockId)" || $0.hasPrefix("plan.follow.\(blockId)")
+                    || $0 == "snooze.\(blockId)"
+            }
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+        }
+        center.getDeliveredNotifications { delivered in
+            let ids = delivered.filter { ($0.request.content.userInfo["blockId"] as? String) == blockId.uuidString
+                && ($0.request.content.userInfo["kind"] as? String) != NudgeKind.end.rawValue }.map(\.request.identifier)
+            center.removeDeliveredNotifications(withIdentifiers: ids)
+        }
+    }
+
+    // MARK: Scrolling check-ins (free build, from the Shortcuts pause)
+
+    /// After "Go back anyway": a few check-ins while the app is open. The "closed" automation
+    /// cancels them, so they only arrive if you're actually still in there.
+    static func scheduleScrollCheckIns(minutes: [Int]) {
+        let center = UNUserNotificationCenter.current()
+        cancelScrollCheckIns()
+        for (i, m) in minutes.enumerated() {
+            let c = UNMutableNotificationContent()
+            c.title = i == minutes.count - 1 && minutes.count > 1 ? "\(m) minutes. Time to stop?" : "\(m) minutes in"
+            c.body = i == 0 ? "Still scrolling? Productium has something short that beats it."
+                            : "That's \(m) minutes. Close the app now and the evening is still yours."
+            c.categoryIdentifier = scrollCategory
+            c.threadIdentifier = "scroll"
+            c.userInfo = ["deeplink": "productium://gap", "kind": "scroll"]
+            c.interruptionLevel = .active
+            add(center, "scroll.\(i)", c, at: Date().addingTimeInterval(Double(m) * 60))
+        }
+    }
+
+    static func cancelScrollCheckIns() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: (0..<4).map { "scroll.\($0)" })
     }
 
     /// Free builds: a weekly nudge to drop a Screen Time screenshot, and a warning
@@ -119,10 +181,15 @@ enum NotificationService {
                                          trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
     }
 
-    static func notify(_ title: String, _ body: String) {
+    static func notify(_ title: String, _ body: String, deeplink: String? = nil, blockId: UUID? = nil) {
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
+        c.sound = .default
+        var info: [String: String] = [:]
+        if let deeplink { info["deeplink"] = deeplink }
+        if let blockId { info["blockId"] = blockId.uuidString; c.categoryIdentifier = startCategory }
+        c.userInfo = info
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
     }
 }

@@ -2,9 +2,9 @@ import Foundation
 
 // MARK: - Token accounting
 //
-// Every reply from claude-server carries a `usage` block. The app keeps a small local
-// ledger of them so the student can see, at a glance, how much the AI is costing today,
-// and so background AI (flashcards, reads, project breakdowns) can stand down once the
+// Every reply from claude-server carries a `usage` block. The app keeps a small local ledger
+// of them and counts output tokens only, so the student can see at a glance how much the AI
+// is costing today, and so background AI (flashcards, reads, project breakdowns) can stand down once the
 // daily budget is spent. The box always works: it's the one thing that must never stop.
 
 public struct TokenCount: Codable, Hashable, Sendable {
@@ -20,10 +20,9 @@ public struct TokenCount: Codable, Hashable, Sendable {
         self.cacheWrite = cacheWrite
     }
 
-    /// Everything the server processed for this request (what its usage log counts).
-    public var total: Int { input + output + cacheRead + cacheWrite }
-    /// All prompt-side tokens, cached or not.
-    public var prompt: Int { input + cacheRead + cacheWrite }
+    /// What the meter and the budget count: the tokens the model wrote, including its hidden
+    /// thinking. Prompt and cache tokens are kept on the record but never counted.
+    public var counted: Int { output }
 
     public static func + (a: TokenCount, b: TokenCount) -> TokenCount {
         TokenCount(input: a.input + b.input, output: a.output + b.output,
@@ -75,7 +74,8 @@ public struct FeatureTokens: Hashable, Sendable {
 }
 
 public struct UsageLedger: Codable, Hashable, Sendable {
-    public static let defaultBudget = 25_000
+    /// Output tokens a day. A typical Inbox message is a few hundred.
+    public static let defaultBudget = 10_000
 
     public var records: [UsageRecord] = []
     /// Daily token budget the meter fills against.
@@ -121,7 +121,7 @@ public struct UsageLedger: Codable, Hashable, Sendable {
         let today = calendar.startOfDay(for: now)
         return (0..<n).reversed().compactMap { i in
             guard let d = calendar.date(byAdding: .day, value: -i, to: today) else { return nil }
-            return DailyTokens(day: d, tokens: total(on: d, calendar: calendar).total)
+            return DailyTokens(day: d, tokens: total(on: d, calendar: calendar).counted)
         }
     }
 
@@ -129,7 +129,7 @@ public struct UsageLedger: Codable, Hashable, Sendable {
         let todays = records(on: day, calendar: calendar)
         return AIFeature.allCases.compactMap { f in
             let rs = todays.filter { $0.feature == f }
-            return rs.isEmpty ? nil : FeatureTokens(feature: f, tokens: rs.reduce(0) { $0 + $1.tokens.total }, requests: rs.count)
+            return rs.isEmpty ? nil : FeatureTokens(feature: f, tokens: rs.reduce(0) { $0 + $1.tokens.counted }, requests: rs.count)
         }
         .sorted { $0.tokens > $1.tokens }
     }
@@ -137,7 +137,7 @@ public struct UsageLedger: Codable, Hashable, Sendable {
     /// Fraction of today's budget used (can exceed 1).
     public func fractionUsed(now: Date, calendar: Calendar) -> Double {
         guard dailyBudget > 0 else { return 0 }
-        return Double(total(on: now, calendar: calendar).total) / Double(dailyBudget)
+        return Double(total(on: now, calendar: calendar).counted) / Double(dailyBudget)
     }
 
     public func allows(_ feature: AIFeature, now: Date, calendar: Calendar) -> Bool {

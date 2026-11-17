@@ -113,10 +113,15 @@ final class AppModel {
     private func applyPlanEffects() {
         let plan = state.plan
         let now = Date()
+        let nudges = nudgeInput(now: now)
         if state.integrations.notifications {
-            NotificationService.schedule(plan: plan, prefs: state.prefs, items: state.items, suggestions: markerPrompts())
+            NotificationService.schedule(NudgePlanner.plan(nudges))
             NotificationService.scheduleHousekeeping(freeTier: Signature.isFreeTier, expiry: signatureExpiry)
         }
+        let n = state.prefs.nudges
+        SharedConfig.defaults.set(n.scrollCheckIns && state.integrations.notifications ? n.level.scrollCheckIns : [],
+                                  forKey: SharedConfig.Key.scrollCheckIns)
+        Task { await AlarmService.scheduleNudges(NudgePlanner.alarms(nudges)) }
         if state.integrations.screenTime {
             let st = ScreenTimeService.shared
             st.configureDaily(limitMinutes: state.taper.dailyLimit, unlocksPerDay: state.taper.unlocksPerDay)
@@ -128,6 +133,15 @@ final class AppModel {
         }
         if state.integrations.alarms { Task { await AlarmService.schedule(plan.wakePlans) } }
         if state.integrations.calendarExport { CalendarService.shared.export(plan: plan) }
+    }
+
+    /// Everything the notification planner needs to know about right now.
+    func nudgeInput(now: Date = Date()) -> NudgeInput {
+        let answered = Set(state.outcomes.filter { $0.plannedStart > now.addingTimeInterval(-2 * 86400) }.map(\.blockId))
+        let snoozed = Set(state.snoozed.filter { $0.value > now }.map(\.key))
+        return NudgeInput(now: now, calendar: cal, plan: state.plan, items: state.items, settings: state.prefs.nudges,
+                          startedBlockId: state.focus?.blockId, answeredBlockIds: answered, snoozedBlockIds: snoozed,
+                          markerPrompts: markerPrompts(), timeLabel: { $0.formatted(date: .omitted, time: .shortened) })
     }
 
     var currentBlock: PlannedBlock? { state.plan.current(at: Date()) }
@@ -157,6 +171,8 @@ final class AppModel {
         let o = BlockOutcome(blockId: blockId, itemId: b.itemId, kind: idx.map { state.items[$0].kind }, plannedStart: b.start,
                              plannedMinutes: b.minutes, actualMinutes: actual, status: status)
         state.outcomes.append(o)
+        state.snoozed[blockId] = nil
+        NotificationService.cancel(blockId: blockId)
         state.learned.record(outcome: o, calendar: cal)
         if let i = idx { state.items[i].completedMinutes += actual }
         if status == .skipped {
@@ -169,8 +185,39 @@ final class AppModel {
     func startFocus(_ b: PlannedBlock) {
         let end = max(b.end, Date().addingTimeInterval(Double(b.minutes) * 60))
         state.focus = FocusSession(blockId: b.id, itemId: b.itemId, title: b.title, startedAt: Date(), plannedEnd: end)
+        state.snoozed[b.id] = nil
+        NotificationService.cancel(blockId: b.id)
+        AlarmService.cancelNudge(blockId: b.id)
         if state.integrations.screenTime { ScreenTimeService.shared.focusNow(true, title: b.title, ends: end) }
         LiveActivityService.update(current: PlannedBlock(id: b.id, kind: b.kind, start: Date(), end: end, title: b.title), next: nil)
+        save()
+    }
+
+    /// The block that's on now, or (if it's study) the next one. From Siri, an NFC tag, a
+    /// notification or an alarm button.
+    func startNowOrNext() {
+        guard state.focus == nil else { return }
+        let now = Date()
+        if let b = state.plan.current(at: now), b.isStudy { startFocus(b); return }
+        if let n = state.plan.next(after: now), n.isStudy, n.start.timeIntervalSince(now) < 90 * 60 { startFocus(n); return }
+        if let n = state.plan.next(after: now), n.isStudy, let item = n.itemId.flatMap({ id in state.items.first { $0.id == id } }) {
+            focusNow(on: item)
+        }
+    }
+
+    /// From a start notification: start a specific block now, even if it's a few minutes early.
+    func startFocus(blockId: UUID) {
+        guard state.focus == nil else { return }
+        if let b = state.plan.blocks.first(where: { $0.id == blockId }), b.isStudy, b.end > Date() { startFocus(b) }
+        else { startNowOrNext() }
+    }
+
+    /// "In 10 minutes" on a start notification.
+    func snooze(blockId: UUID, minutes: Int = 10) {
+        guard let b = state.plan.blocks.first(where: { $0.id == blockId }) else { return }
+        state.snoozed[blockId] = Date().addingTimeInterval(Double(minutes) * 60)
+        NotificationService.snooze(blockId: blockId, title: b.title, minutes: minutes)
+        AlarmService.cancelNudge(blockId: blockId)
         save()
     }
 
@@ -201,6 +248,25 @@ final class AppModel {
         guard !dup else { return }
         state.items.append(item)
         followUp(new: item)
+    }
+
+    /// From the task form: no AI involved, the plan just makes room for it.
+    func addManually(_ item: WorkItem) {
+        state.items.append(item)
+        replan()
+        followUp(new: item)
+    }
+
+    /// Undo "done" from the task list.
+    func reopen(_ id: UUID) {
+        guard let i = state.items.firstIndex(where: { $0.id == id }), state.items[i].isDone else { return }
+        state.items[i].isDone = false
+        state.items[i].doneAt = nil
+        if let p = state.items[i].parentId, let j = state.items.firstIndex(where: { $0.id == p }) {
+            state.items[j].isDone = false
+            state.items[j].doneAt = nil
+        }
+        replan()
     }
 
     func update(_ item: WorkItem) {
@@ -245,6 +311,22 @@ final class AppModel {
         default: phrase = entered ? "at \(name)" : "finished \(name)"
         }
         logMarker(phrase, source: .geofence)
+        if place == "home" && entered { arrivedHome() }
+    }
+
+    /// Getting home is when the evening gets decided, so say what's next while it's still a choice.
+    private func arrivedHome() {
+        guard state.integrations.notifications, state.prefs.nudges.arrivingHome, state.prefs.nudges.level != .gentle,
+              state.focus == nil else { return }
+        let now = Date()
+        if let b = state.plan.current(at: now), b.isStudy, !state.outcomes.contains(where: { $0.blockId == b.id }) {
+            NotificationService.notify("Welcome home", "\(b.title) is on now, until \(b.end.hm). Start when you're in the door.",
+                                       deeplink: "productium://now", blockId: b.id)
+        } else if let n = state.plan.blocks.first(where: { $0.isStudy && $0.start > now && $0.start < now.addingTimeInterval(2 * 3600) }) {
+            let mins = Int(n.start.timeIntervalSince(now) / 60)
+            NotificationService.notify("Welcome home", "\(mins) minutes free, then \(n.title) at \(n.start.hm). Snack, change, then start.",
+                                       deeplink: "productium://now", blockId: n.id)
+        }
     }
 
     /// While a routine is still being learned (and there's no geofence), prompt at the
@@ -308,6 +390,9 @@ final class AppModel {
     }
 
     private func syncScreen() {
+        // Free builds: minutes counted by the Shortcuts open/close automations.
+        let measured = Friction.log.screenDays(before: Date(), calendar: cal)
+        if !measured.isEmpty { state.screen = state.screen.merging(measured: measured, calendar: cal) }
         guard state.integrations.screenTime else { return }
         var byDay = Dictionary(state.screen.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
         for d in ScreenTimeService.shared.usageDays(back: 21) where d.distractingMinutes > 0 || byDay[d.day] == nil {
@@ -361,9 +446,10 @@ final class AppModel {
 
     // MARK: - AI usage
     //
-    // Token budget, in order of what matters: the box (lite, every message) is trimmed hardest;
-    // flashcards and reads are batched and only made when gap mode needs them; Sonnet runs only
-    // for project breakdowns and the weekly note. Background jobs stand down over budget.
+    // Everything runs on Sonnet (see AIModel) and only output tokens are counted. In order of what
+    // matters: the box (every message) is trimmed hardest; flashcards and reads are batched and
+    // only made when gap mode needs them; project breakdowns and the weekly note are rare.
+    // Background jobs stand down over budget.
 
     func recordUsage(_ feature: AIFeature, model: String, tokens: TokenCount) {
         state.usage.record(UsageRecord(at: Date(), feature: feature, model: model, tokens: tokens))
@@ -374,7 +460,8 @@ final class AppModel {
         ClaudeClient.shared.isConfigured && state.usage.allows(feature, now: Date(), calendar: cal)
     }
 
-    var tokensToday: Int { state.usage.total(on: Date(), calendar: cal).total }
+    /// Output tokens today: what the meter shows.
+    var tokensToday: Int { state.usage.total(on: Date(), calendar: cal).counted }
     var usageFraction: Double { state.usage.fractionUsed(now: Date(), calendar: cal) }
 
     func refreshServerUsage() async {
@@ -388,28 +475,33 @@ final class AppModel {
         busy.insert("decompose")
         defer { busy.remove("decompose") }
         guard let d = try? await ClaudeClient.shared.structured(
-            .reason, feature: .breakdown, system: Prompts.decomposition(),
+            feature: .breakdown, system: Prompts.decomposition(),
             user: Prompts.decompositionRequest(item: item, now: Date(), timeZone: cal.timeZone),
-            schema: Schemas.decomposition, as: Decomposition.self, maxTokens: 700) else { return }
+            schema: Schemas.decomposition, as: Decomposition.self, maxTokens: 700,
+            accept: { !$0.steps.isEmpty }) else { return }
+        var added = 0
         for s in d.steps {
             let p = ParsedItem(title: "\(item.title): \(s.title)", kind: s.kind, subject: item.subject, due: s.due,
                                estimateMinutes: s.estimateMinutes, importance: item.importance, difficulty: item.difficulty, topics: nil)
             if var child = AIMapper.item(p, timeZone: cal.timeZone, parentId: item.id) {
                 child.due = min(child.due, item.due)
                 state.items.append(child)
+                added += 1
             }
         }
-        toast = "Broke “\(item.title)” into \(d.steps.count) steps."
+        guard added > 0 else { return }
+        toast = "Broke “\(item.title)” into \(added) steps."
         replan()
     }
 
     func makeCards(for item: WorkItem) async {
         guard aiAllowed(.flashcards), !item.topics.isEmpty else { return }
         guard let batch = try? await ClaudeClient.shared.structured(
-            .fast, feature: .flashcards, system: Prompts.flashcards(),
+            feature: .flashcards, system: Prompts.flashcards(),
             user: Prompts.flashcardsRequest(subject: item.subject, topics: item.topics, count: 8),
-            schema: Schemas.cards, as: CardBatch.self, maxTokens: 900, cacheTTL: 86400) else { return }
-        state.flashcards += batch.cards.map { Flashcard(itemId: item.id, subject: item.subject, front: $0.front, back: $0.back) }
+            schema: Schemas.cards, as: CardBatch.self, maxTokens: 900, cacheTTL: 86400,
+            accept: { !$0.usable.isEmpty }) else { return }
+        state.flashcards += batch.usable.map { Flashcard(itemId: item.id, subject: item.subject, front: $0.front, back: $0.back) }
         save()
     }
 
@@ -423,10 +515,11 @@ final class AppModel {
         guard aiAllowed(.reads), state.reads.filter({ $0.readAt == nil }).count < 2 else { return }
         let subjects = Array(Set(state.items.compactMap(\.subject))).sorted().prefix(4)
         guard let batch = try? await ClaudeClient.shared.structured(
-            .fast, feature: .reads, system: Prompts.reads(),
+            feature: .reads, system: Prompts.reads(),
             user: Prompts.readsRequest(interests: state.prefs.interests, subjects: Array(subjects), count: 3),
-            schema: Schemas.reads, as: ReadBatch.self, maxTokens: 1100) else { return }
-        state.reads += batch.pieces.map { ReadPiece(title: $0.title, body: $0.body, subject: $0.subject, question: $0.question, source: "Claude") }
+            schema: Schemas.reads, as: ReadBatch.self, maxTokens: 1100,
+            accept: { !$0.usable.isEmpty }) else { return }
+        state.reads += batch.usable.map { ReadPiece(title: $0.title, body: $0.body, subject: $0.subject, question: $0.question, source: "Claude") }
         save()
     }
 
@@ -439,9 +532,9 @@ final class AppModel {
         let summary = Insights.summarize(dayTotals(last: 7), learned: state.learned)
         let ctx = Prompts.context(now: Date(), items: state.items, plan: state.plan, summary: summary, moods: state.moods,
                                   taper: state.taper, learned: state.learned, calendar: cal)
-        guard let r = try? await ClaudeClient.shared.structured(.reason, feature: .review, system: Prompts.weeklyReview(), user: ctx,
+        guard let r = try? await ClaudeClient.shared.structured(feature: .review, system: Prompts.weeklyReview(), user: ctx,
                                                                schema: Schemas.weeklyReview, as: WeeklyReview.self,
-                                                               maxTokens: 500) else { return }
+                                                               maxTokens: 500, accept: { !$0.headline.isEmpty }) else { return }
         state.review = r
         state.reviewAt = Date()
         save()
@@ -464,10 +557,11 @@ final class AppModel {
         var canUndo: Bool
         var failed: Bool
         var tokens: Int? = nil
+        var detail: String? = nil
     }
 
     /// Anything at all: deadlines, corrections, what happened, how they feel, a question,
-    /// screenshots (Screen Time, assignment sheets, timetables). Haiku reads it in context
+    /// screenshots (Screen Time, assignment sheets, timetables). Claude reads it in context
     /// and returns actions. The device applies them, then shows what changed, with Undo.
     @discardableResult
     func dump(_ raw: String, images: [AIImage] = []) async -> Bool {
@@ -488,27 +582,35 @@ final class AppModel {
         let recent = state.chatAt.map { now.timeIntervalSince($0) < 30 * 60 } ?? false
         let history = recent ? Array(state.chat.suffix(2)) : []
         do {
-            let req = AIRequest(tier: .fast, system: Prompts.dump(),
+            let req = AIRequest(system: Prompts.dump(),
                                 messages: history + [AIMessage(role: "user", content: message, images: images)],
                                 schema: Schemas.dump, maxTokens: images.isEmpty ? 700 : 1500)
-            let res = try await ClaudeClient.shared.complete(req, feature: .box)
-            guard let structured = res.structured, let result = try? structured.decode(DumpResult.self) else { throw AIError.decoding }
+            let (result, res, tokens) = try await ClaudeClient.shared.send(req, feature: .box) { DumpResult.read($0) }
             undoSnapshot = state
             let before = Set(state.items.map(\.id))
             var ds = state.dumpState
             let changes = DumpApplier.apply(result, to: &ds, now: now, calendar: cal)
             state.dumpState = ds
+            // The receipt always says something, even if the model sent actions with no reply.
+            var reply = result.reply
+            if reply.isEmpty { reply = changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }
+            if res.isTruncated { reply += " That was a lot at once, so I may have missed the end. Check the list and send the rest again." }
             state.chat += [AIMessage(role: "user", content: text.isEmpty ? "(screenshots)" : String(text.prefix(500))),
-                           AIMessage(role: "assistant", content: result.reply)]
+                           AIMessage(role: "assistant", content: reply)]
             state.chatAt = now
-            receipt = Receipt(input: text, reply: result.reply, changes: changes, canUndo: !changes.isEmpty, failed: false,
-                              tokens: res.tokens.total)
+            receipt = Receipt(input: text, reply: reply, changes: changes, canUndo: !changes.isEmpty, failed: false,
+                              tokens: tokens.counted)
             replan()
             for item in state.items where !before.contains(item.id) { followUp(new: item) }
             return true
         } catch {
-            let msg = (error as? AIError)?.errorDescription ?? "Couldn't reach your Claude server. Check that Tailscale is on, then send again."
-            receipt = Receipt(input: text, reply: msg, changes: [], canUndo: false, failed: true)
+            let ai = error as? AIError
+            let msg = ai?.errorDescription ?? "Couldn't reach your Claude server. Check that Tailscale is on, then send again."
+            receipt = Receipt(input: text, reply: msg, changes: [], canUndo: false, failed: true,
+                              detail: ai?.detail ?? (ai == nil ? error.localizedDescription : nil))
+            if let d = ai?.detail {
+                try? Data(d.utf8).write(to: Persistence.url.deletingLastPathComponent().appendingPathComponent("last-ai-error.txt"))
+            }
             return false
         }
     }

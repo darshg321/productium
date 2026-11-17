@@ -55,7 +55,7 @@ public struct TimelineEvent: Codable, Hashable, Identifiable, Sendable {
 }
 
 /// Turns tiny free-text check-ins into timeline markers, on the device and
-/// instantly. Anything it doesn't recognise goes to Haiku, then comes back as
+/// instantly. Anything it doesn't recognise goes to Claude, then comes back as
 /// the same `TimelineEvent`.
 public enum MarkerParser {
     public static func parse(_ raw: String, at: Date, commitments: [Commitment], calendar cal: Calendar,

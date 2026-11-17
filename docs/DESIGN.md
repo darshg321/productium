@@ -9,8 +9,21 @@ screen, for the most help.
 The app now looks like it ships with the phone, taking its cues from Health and Settings: their
 informative simplicity is one number, one comparison, one small chart, and a row per thing.
 
-**Structure.** Four tabs: Today · Week · Review · Settings. Every tab has a large navigation title and
-the AI token meter at the top right.
+**Structure.** Five tabs: Today · Schedule · Tasks · Review · Settings. Every tab has the AI token meter at the
+top right.
+
+**Schedule** is the Calendar app's day view: day chips for the next two weeks along the top (a blue dot
+when work is planned, a red one when something's due), a row of four numbers (up, leave, work, bed), what's
+due, then the day to scale (1.2 pt a minute) from wake-up to bedtime with overlapping things side by side and
+a red now line. Study blocks open their task. A Day | Week switch gives the old seven-day list; tapping a day
+there opens it as a timeline.
+
+**Tasks** is a Reminders-style smart list: three numbers (open, due this week, past due) and work left
+against work planned, then sections by due date (Past Due, Today, Tomorrow, Next 7 Days, Later), subject or
+type, with Done hidden unless asked for. Each row has a check circle, due date and subject, the next planned
+session (or "Not planned yet"), and work left. Swipe right to finish, left to delete, edit or start now.
+Search covers titles, subjects, topics, notes and a project's steps. Adding and editing is a form on the phone,
+so it costs no tokens; the Inbox still takes plain words.
 
 **Surfaces.** `systemGroupedBackground` with `secondarySystemGroupedBackground` cards (16 pt continuous
 corners) on Today and Review, the Health summary layout. Week, task detail, day detail and all of
@@ -61,17 +74,59 @@ Rest of Today
 case for buttons and navigation, sentence case for prose.
 
 **The token meter.** A small ring that fills toward the daily budget (green, then orange from 80 %,
-red when spent) with today's count beside it. Tapping it opens AI Usage: today against the budget, a
+red when spent) with today's count beside it. It counts output tokens only: what Claude wrote, including
+its hidden thinking. Tapping it opens AI Usage: today against the budget, a
 7-day chart, tokens by feature, recent requests, the server's own count for the key, and the budget
 settings. Over budget, background AI (flashcards, reads, project steps, weekly note) waits until
 tomorrow; the Inbox always works.
 
+## Interruptions
+
+`NudgePlanner` (ProductiumCore, tested on Linux) decides every notification for the next 24 hours from the
+plan; the app only turns them into requests, rebuilt on each replan. iOS holds 64 pending, so the planner
+keeps the soonest 52 and leaves room for wake-ups, housekeeping, snoozes and scrolling check-ins. Two in the
+same minute become one (the more useful), except "how did it go?", whose buttons are the point.
+
+| | Gentle | Standard | Persistent |
+|---|---|---|---|
+| block start (Start Focus · In 10 Minutes · Can't Today) | ✓ | ✓ | ✓ |
+| "how did it go?" (Done · Partly · Didn't get to it) | ✓ | ✓ | ✓ |
+| 10-minute heads-up (not for back-to-back blocks) | | ✓ | ✓ |
+| follow-ups if focus hasn't started | | +7 min | +5, +12, +20 min |
+| wind-down, evening check-in, morning brief | ✓ | ✓ | ✓ |
+| bedtime | | ✓ | ✓ |
+| "still up?" 20 minutes after bedtime | | | ✓ |
+| leave in 10 minutes / time to go | go only | ✓ | ✓ |
+| due tomorrow (6 pm the day before) | ✓ | ✓ | ✓ |
+| due in 3 hours | | | ✓ |
+| arriving home (Places) | | ✓ | ✓ |
+| scrolling check-ins after "Go back anyway" | 15 | 10, 20 | 10, 20, 30 |
+
+Starting focus, snoozing or answering a block cancels what's left for it, pending and delivered. Snoozed
+blocks are remembered so a replan doesn't bring their follow-ups back. Starts, follow-ups on Persistent,
+leave-by and bedtime are Time Sensitive in the paid build; the free build can't be, so Settings tells you to
+allow Productium in your Focuses. Opt-in AlarmKit alarms (iOS 26.1) cover bedtime, time to leave, and a work
+block 10 minutes in that hasn't started, with a Start button that runs `StartFocusIntent`. Settings →
+Notifications shows the next ten that will actually arrive.
+
+## Shortcuts
+
+Shortcuts can do what an app can't: notice another app opening or closing, react to Wi-Fi, NFC, a Focus or
+an alarm, and run system actions (Color Filters, Set Focus). Productium supplies small intents for that:
+**Pause Before Scrolling** (iOS 26: background, foregrounds itself only when a pause is due), **Should I
+pause?** (the iOS 17–18 form with If + Open URLs), **Closed a Distracting App** (ends the scroll session,
+counts the minutes), **What's the Plan Now?** (Focus, Break, Busy, Free, Wind-down, Sleep), **Is It
+Screens-Off Time?** (a yes/no for If), plus Check in, Start focus, Tell Productium and Log mood. Settings →
+Shortcuts & Automations has each recipe as numbered taps with the exact Shortcuts wording in bold.
+
 ## AI cost (v3)
 
-- Everything frequent runs on `lite` (Haiku 4.5, thinking off) through claude-server's Anthropic-compatible
-  `/v1/messages`, with structured output as one forced tool call. Haiku 5.5 thinks on every request,
-  which costs hundreds of output tokens even for a one-line extraction.
-- Sonnet only runs for project breakdowns (rare, automatic for big projects) and the weekly note (once a week).
+- Only output tokens are counted (meter, budget, chart, receipts).
+- Everything runs on Sonnet at the server's default low effort, through claude-server's Anthropic-compatible
+  `/v1/messages`, with structured output as one forced tool call. Measured on the app's own prompts
+  (16 Inbox messages, a breakdown, flashcards, reads, the weekly note), Sonnet 5.5 wrote 8.1k output tokens
+  and Haiku 5.5 wrote 14.4k, with every case right on both. Haiku 5.5's thinking can't be turned off and it
+  thinks more than Sonnet does, so a second model would only add cost. Haiku 4.5 isn't used.
 - The Inbox's fixed prompt + schema went from ~5.5k to ~3.9k characters, the context it sends is
   compacted (one line per section, only today's past segments, 20 open tasks), and chat history is only
   the last exchange, and only within 30 minutes.
@@ -79,6 +134,17 @@ tomorrow; the Inbox always works.
 - Flashcards and short reads are generated when gap mode opens, not on every launch, in small batches.
 - Screenshots are sent at ≤1280 px (image tokens scale with pixels).
 - Every request has a `max_tokens` close to what it needs.
+
+## Reading replies
+
+A reply is read in three layers (`Reply.swift`), each accepting anything the one before can produce:
+the message in any shape (text, a tool call's arguments, a bare string); the JSON wherever it is and
+however it's written (fences, prose, single or curly quotes, unescaped quotes, trailing commas, a reply
+cut off mid-way, where half-written actions are left out); then the value fitted to the schema (keys in
+any spelling, values converted to the declared type or dropped, required fields filled, wrappers
+removed). The fitted value always decodes; fuzz tests hold that for every schema. The Inbox also takes
+a list of actions, one action on its own, or plain prose, which becomes the reply. A reply with nothing
+usable at all (empty) is asked for once more before the receipt reports it.
 
 ## Backup
 

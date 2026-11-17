@@ -59,6 +59,7 @@ struct AppState: Codable {
     var dismissed: Set<String> = []
     var chatAt: Date?                      // when the last box exchange happened
     var usage = UsageLedger()              // AI token meter
+    var snoozed: [UUID: Date] = [:]        // block → when its snooze reminder fires
 
     var dumpState: DumpState {
         get {
@@ -112,6 +113,7 @@ struct AppState: Codable {
         dismissed = v(.dismissed, d.dismissed)
         chatAt = v(.chatAt, d.chatAt)
         usage = v(.usage, d.usage)
+        snoozed = v(.snoozed, d.snoozed)
     }
 
     var backup: Backup {
@@ -149,6 +151,7 @@ struct AppState: Codable {
         oneOffs.removeAll { $0.end < cutoff }
         if chat.count > 12 { chat.removeFirst(chat.count - 12) }
         usage.prune(now: now)
+        snoozed = snoozed.filter { $0.value > now.addingTimeInterval(-3600) }
     }
 
     /// Restore from a full backup. Permissions (integrations) belong to this phone, not the

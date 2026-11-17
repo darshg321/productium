@@ -14,6 +14,7 @@ struct OnboardingView: View {
     @State private var workingPermissions = false
     @State private var showPicker = false
     @State private var selection = FamilyActivitySelection()
+    @State private var showGuide = false
 
     enum ServerState { case untested, testing, ok, badKey, failed }
 
@@ -62,6 +63,7 @@ struct OnboardingView: View {
         .background(Theme.background)
         .familyActivityPicker(isPresented: $showPicker, selection: $selection)
         .onChange(of: selection) { _, s in ScreenTimeService.shared.selection = s }
+        .sheet(isPresented: $showGuide) { ShortcutsGuideView(inSheet: true) }
     }
 
     private var canContinue: Bool {
@@ -207,14 +209,18 @@ struct OnboardingView: View {
                 .lineSpacing(3)
             Text("A pause before the apps you lose time in").font(.headline)
             VStack(alignment: .leading, spacing: 8) {
-                step(1, "Open the Shortcuts app and go to Automation.")
-                step(2, "Tap +, choose App, pick one app (Instagram, TikTok…), select Is Opened, then Run Immediately.")
-                step(3, "Add the action “Should I pause?” from Productium.")
-                step(4, "Add an If action: If Result is true, add the action Open URLs with productium://gap.")
-                step(5, "Repeat for each app (Shortcuts allows one app per automation).")
+                step(1, "In Shortcuts, open Automation and tap +. Choose App.")
+                step(2, "Tap Choose and tick every app you lose time in (several at once is fine). Keep Is Opened, untick Is Closed.")
+                step(3, "Pick Run Immediately, tap Next, then Create New Shortcut.")
+                step(4, "Add the Productium action Pause Before Scrolling. On iOS 17 or 18, see the full guide for the version with If.")
+                step(5, "Same again with Is Closed and the action Closed a Distracting App, so your minutes get counted.")
             }
-            Button("Open Shortcuts") { if let u = URL(string: "shortcuts://") { UIApplication.shared.open(u) } }
-                .buttonStyle(.bordered)
+            HStack {
+                Button("Open Shortcuts") { if let u = URL(string: "shortcuts://") { UIApplication.shared.open(u) } }
+                    .buttonStyle(.bordered)
+                Button("Full Guide") { showGuide = true }
+                    .buttonStyle(.bordered)
+            }
             Text("Opening one of those apps now shows a short pause with something better to do. “Go back anyway” turns the pause off for 10 minutes.")
                 .font(.subheadline).foregroundStyle(.secondary)
             Text("One screenshot a week").font(.headline).padding(.top, 8)

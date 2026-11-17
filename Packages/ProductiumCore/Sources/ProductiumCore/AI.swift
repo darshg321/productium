@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Wire format shared with claude-server (POST /v1/complete)
+// MARK: - Wire format shared with claude-server (POST /v1/messages)
 
 /// Minimal JSON value so schemas and structured output pass through untyped.
 public indirect enum JSONValue: Codable, Hashable, Sendable {
@@ -34,14 +34,14 @@ public indirect enum JSONValue: Codable, Hashable, Sendable {
     }
 }
 
-/// Which model to use. Token cost is the main constraint (see claude-server's /v1/guide):
-/// `lite` (Haiku 4.5) is the only model with thinking off, so one-shot extraction stays
-/// small. It does everything frequent: the box, flashcards, short reads. Sonnet only
-/// runs for the two rare jobs that need reasoning: breaking down a big project and
-/// the weekly note.
-public enum AITier: String, Codable, Sendable {
-    case fast = "lite"
-    case reason = "sonnet"
+/// The one model every request uses. Only output tokens are counted, and every call this app makes
+/// is structured extraction or short writing. Measured through claude-server on the app's own
+/// prompts (16 Inbox messages, a project breakdown, flashcards, reads, the weekly note), Sonnet 5.5
+/// at the server's default low effort wrote about 8.1k output tokens where Haiku 5.5 wrote 14.4k:
+/// Haiku's thinking can't be turned off and it thinks more than Sonnet does. Both got every case
+/// right, so a second model would only add cost. Haiku 4.5 isn't used.
+public enum AIModel {
+    public static let sonnet = "sonnet"
 }
 
 public struct AIImage: Codable, Hashable, Sendable {
@@ -114,54 +114,14 @@ public struct AIRequest: Encodable, Sendable {
 
     enum CodingKeys: String, CodingKey { case model, max_tokens, system, messages, output_config }
 
-    public init(tier: AITier, system: String, messages: [AIMessage], schema: JSONValue? = nil,
+    public init(model: String = AIModel.sonnet, system: String, messages: [AIMessage], schema: JSONValue? = nil,
                 maxTokens: Int = 600, cacheTTL: Int? = nil) {
-        self.model = tier.rawValue
+        self.model = model
         self.max_tokens = maxTokens
         self.system = system
         self.messages = messages
         self.output_config = schema.map { OutputConfig(format: Format(schema: $0)) }
         self.cacheTTL = cacheTTL
-    }
-}
-
-/// The Anthropic `message` object, reduced to what the app reads.
-public struct AIResponse: Decodable, Sendable {
-    public struct Block: Decodable, Sendable { public var type: String; public var text: String? }
-    public struct Usage: Codable, Hashable, Sendable {
-        public var input_tokens: Int?
-        public var output_tokens: Int?
-        public var cache_creation_input_tokens: Int?
-        public var cache_read_input_tokens: Int?
-    }
-
-    public var id: String?
-    public var model: String?
-    public var content: [Block]
-    public var stop_reason: String?
-    public var usage: Usage?
-
-    public init(model: String?, text: String, usage: Usage?) {
-        self.model = model
-        self.content = [Block(type: "text", text: text)]
-        self.usage = usage
-    }
-
-    public var text: String { content.compactMap(\.text).joined() }
-
-    /// Structured output comes back as JSON text. Tolerates a fenced block, just in case.
-    public var structured: JSONValue? {
-        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.hasPrefix("```"), let open = t.firstIndex(of: "\n"), let close = t.range(of: "```", options: .backwards), close.lowerBound > open {
-            t = String(t[t.index(after: open)..<close.lowerBound])
-        }
-        guard let d = t.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(JSONValue.self, from: d)
-    }
-
-    public var tokens: TokenCount {
-        TokenCount(input: usage?.input_tokens ?? 0, output: usage?.output_tokens ?? 0,
-                   cacheRead: usage?.cache_read_input_tokens ?? 0, cacheWrite: usage?.cache_creation_input_tokens ?? 0)
     }
 }
 
@@ -254,6 +214,8 @@ public struct WeeklyReview: Codable, Hashable, Sendable {
 public struct CardBatch: Codable, Hashable, Sendable {
     public struct Card: Codable, Hashable, Sendable { public var front: String; public var back: String }
     public var cards: [Card]
+    /// Cards with both sides written.
+    public var usable: [Card] { cards.filter { !$0.front.isEmpty && !$0.back.isEmpty } }
 }
 
 public struct ReadBatch: Codable, Hashable, Sendable {
@@ -264,9 +226,11 @@ public struct ReadBatch: Codable, Hashable, Sendable {
         public var question: String?
     }
     public var pieces: [Piece]
+    /// Reads with a title and a body.
+    public var usable: [Piece] { pieces.filter { !$0.title.isEmpty && !$0.body.isEmpty } }
 }
 
-// MARK: - Schemas (subset of JSON Schema, passed to `claude --json-schema`)
+// MARK: - Schemas (subset of JSON Schema, sent as `output_config.format`)
 
 public enum Schemas {
     static func obj(_ props: [String: JSONValue], required: [String]) -> JSONValue {
@@ -303,8 +267,8 @@ public enum Schemas {
 public enum Prompts {
     // System prompts are constants: the server's prompt cache and live sessions key on a
     // byte-identical system prompt, so anything that varies (dates, topics, names) goes in
-    // the user message. They're also short: on `lite`, prompts under 4k tokens aren't
-    // cached, so every word here is paid for on every request.
+    // the user message. They're also short: a shorter prompt is less to read and keeps the
+    // answer focused.
 
     static let persona = """
     You are the assistant in Productium, a calm planner for high-school students. Warm, brief, concrete, never \

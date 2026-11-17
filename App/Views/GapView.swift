@@ -67,7 +67,9 @@ struct GapView: View {
                 }
                 .foregroundStyle(.secondary)
             } footer: {
-                Text("No pause for the next 10 minutes.")
+                let mins = Friction.checkInMinutes
+                Text(mins.isEmpty ? "No pause for the next 10 minutes."
+                     : "No pause for the next 10 minutes. If you're still in there after \(mins[0]) minutes, Productium will check in.")
             }
         }
         .listStyle(.insetGrouped)
