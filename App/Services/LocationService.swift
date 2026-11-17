@@ -1,17 +1,20 @@
 import Foundation
 import CoreLocation
 import Observation
+import ProductiumCore
 
 @Observable
 final class LocationService: NSObject, CLLocationManagerDelegate {
     @ObservationIgnored static let shared = LocationService()
     @ObservationIgnored private let manager = CLLocationManager()
     @ObservationIgnored var onTransition: ((String, Bool) -> Void)?
+    @ObservationIgnored var onVisit: ((PlaceVisit) -> Void)?
     @ObservationIgnored private var pendingFix: CheckedContinuation<CLLocation?, Never>?
     private(set) var status: CLAuthorizationStatus = .notDetermined
 
     private static let askedAlwaysKey = "location.askedAlways"
     @ObservationIgnored private var wantsAlways = false
+    @ObservationIgnored var visitsWanted = false
 
     override init() {
         super.init()
@@ -44,6 +47,7 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
         status = m.authorizationStatus
         escalateIfNeeded()
+        monitorVisits(visitsWanted)
     }
 
     var statusText: String {
@@ -76,6 +80,19 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
             r.notifyOnExit = true
             manager.startMonitoring(for: r)
         }
+    }
+
+    /// Visits need Always. They find the places you keep returning to without a location history.
+    func monitorVisits(_ on: Bool) {
+        if on, manager.authorizationStatus == .authorizedAlways { manager.startMonitoringVisits() } else { manager.stopMonitoringVisits() }
+    }
+
+    func locationManager(_ m: CLLocationManager, didVisit visit: CLVisit) {
+        let arrival = visit.arrivalDate == .distantPast ? nil : visit.arrivalDate
+        guard let arrival else { return }
+        let departure = visit.departureDate == .distantFuture ? nil : visit.departureDate
+        onVisit?(PlaceVisit(latitude: visit.coordinate.latitude, longitude: visit.coordinate.longitude,
+                            arrival: arrival, departure: departure))
     }
 
     func locationManager(_ m: CLLocationManager, didEnterRegion region: CLRegion) { onTransition?(region.identifier, true) }

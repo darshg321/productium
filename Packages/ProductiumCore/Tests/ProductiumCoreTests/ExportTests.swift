@@ -48,6 +48,8 @@ final class ExportTests: XCTestCase {
                            [BehaviourProposal(runId: UUID(), change: .knob(key: "planner.maxBlockMinutes", to: 45), from: "", to: "",
                                               reason: "r", evidence: ["e"], model: "opus", at: now)], state: s.dumpState, now: now)
         s.dismissed = ["a warning"]
+        s.visits = [PlaceVisit(latitude: 43.6, longitude: -79.4, arrival: now)]
+        s.declinedPlaces = ["gym"]
         s.draft = Draft(text: "half a thought", imageFiles: ["a.jpg"])
         s.usage.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(output: 90)))
         s.snoozed = [UUID(): now.addingTimeInterval(600)]

@@ -96,6 +96,8 @@ public struct AppState: Codable, Sendable {
     public var reads: [ReadPiece] = []
     public var plan: Plan = .empty
     public var places: [SavedPlace] = []
+    public var visits: [PlaceVisit] = []
+    @SortedSet public var declinedPlaces: Set<String> = []
     public var integrations = Integrations()
     public var review: WeeklyReview?
     public var reviewAt: Date?
@@ -168,6 +170,8 @@ public struct AppState: Codable, Sendable {
         reads = v(.reads, d.reads)
         plan = v(.plan, d.plan)
         places = v(.places, d.places)
+        visits = v(.visits, d.visits)
+        declinedPlaces = v(.declinedPlaces, d.declinedPlaces)
         integrations = v(.integrations, d.integrations)
         review = v(.review, d.review)
         reviewAt = v(.reviewAt, d.reviewAt)

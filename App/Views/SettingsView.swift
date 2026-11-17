@@ -672,7 +672,9 @@ struct PlacesSettings: View {
             Section {
                 Toggle("Auto Check-in with Places", isOn: Binding(get: { model.state.integrations.location }, set: { on in
                     m.state.integrations.location = on
+                    LocationService.shared.visitsWanted = on
                     if on { LocationService.shared.requestAlways() }
+                    LocationService.shared.monitorVisits(on)
                     LocationService.shared.monitor(on ? model.state.places : [])
                     model.save()
                 }))

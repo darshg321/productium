@@ -98,7 +98,14 @@ final class AppModel {
         if state.integrations.health {
             HealthService.shared.observeSleep { [weak self] in Task { @MainActor in await self?.refresh(full: false) } }
         }
-        if state.integrations.location { LocationService.shared.monitor(state.places) }
+        LocationService.shared.onVisit = { [weak self] visit in
+            Task { @MainActor in self?.recordVisit(visit) }
+        }
+        if state.integrations.location {
+            LocationService.shared.monitor(state.places)
+            LocationService.shared.visitsWanted = true
+            LocationService.shared.monitorVisits(true)
+        }
         if state.onboarded { Task { await refresh() } }
     }
 
@@ -347,7 +354,69 @@ final class AppModel {
         guard !evs.isEmpty else { return }
         MarkerLog.add(evs, to: &state.markers)
         learnRoutines(days: 1)
+        if source != .geofence { offerPlace(after: evs) }
         if evs.contains(where: { $0.category == .sleep }) { estimateSleep(); replan() } else { save() }
+    }
+
+    // Places that learn themselves: ask to save a place you've just said you're at, or keep returning to.
+    var placeOffer: PlaceOffer?
+
+    func recordVisit(_ v: PlaceVisit) {
+        guard let i = state.visits.firstIndex(where: { $0.arrival == v.arrival }) else {
+            state.visits = Array((state.visits + [v]).suffix(120))
+            offerFrequentPlace()
+            return
+        }
+        state.visits[i] = v
+        offerFrequentPlace()
+    }
+
+    private func offerFrequentPlace() {
+        save()
+        guard placeOffer == nil else { return }
+        let declined = state.declinedPlaces.compactMap { id -> (Double, Double)? in
+            let p = id.split(separator: "_")
+            guard p.count == 3, p[0] == "visit", let a = Double(p[1]), let b = Double(p[2]) else { return nil }
+            return (a / 1000, b / 1000)
+        }
+        if let offer = PlaceSuggester.frequent(state.visits, places: state.places, declinedSpots: declined, calendar: cal),
+           !state.declinedPlaces.contains(offer.id) {
+            placeOffer = offer
+        }
+    }
+
+    private func offerPlace(after evs: [TimelineEvent]) {
+        guard placeOffer == nil, LocationService.shared.status != .denied,
+              var offer = PlaceSuggester.offer(after: evs, places: state.places, commitments: state.commitments,
+                                               declined: state.declinedPlaces) else { return }
+        Task {
+            guard let fix = await LocationService.shared.currentLocation() else { return }
+            offer.latitude = fix.coordinate.latitude
+            offer.longitude = fix.coordinate.longitude
+            placeOffer = offer
+        }
+    }
+
+    func acceptPlaceOffer(name: String? = nil) {
+        guard let o = placeOffer, let lat = o.latitude, let lon = o.longitude else { placeOffer = nil; return }
+        let chosen = (name ?? o.name).trimmingCharacters(in: .whitespaces)
+        guard !chosen.isEmpty else { return }
+        let id = o.needsName ? PlaceSuggester.slug(chosen) : o.id
+        state.places.removeAll { $0.id == id }
+        state.places.append(SavedPlace(id: id, name: chosen, latitude: lat, longitude: lon))
+        state.integrations.location = true
+        LocationService.shared.visitsWanted = true
+        LocationService.shared.requestAlways()
+        LocationService.shared.monitor(state.places)
+        placeOffer = nil
+        toast = "\(chosen) saved. Arriving and leaving will be noticed."
+        save()
+    }
+
+    func declinePlaceOffer() {
+        if let o = placeOffer { state.declinedPlaces.insert(o.id) }
+        placeOffer = nil
+        save()
     }
 
     private func handleGeofence(_ place: String, entered: Bool) {

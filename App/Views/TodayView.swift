@@ -20,6 +20,7 @@ struct TodayView: View {
                             .textCase(.uppercase)
                         DumpBox()
                         if let g = model.dueGap { GapQuestionCard(gap: g) }
+                        if let o = model.placeOffer { PlaceOfferCard(offer: o) }
                         if !model.state.proposals.pending.isEmpty { ProposalsCard() }
                         NowCard(now: now, showGap: $showGap)
                         Attention(now: now)
@@ -247,6 +248,33 @@ struct TurnView: View {
                 AICallDetailView(call: c)
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showCall = nil } } }
             }
+        }
+    }
+}
+
+struct PlaceOfferCard: View {
+    @Environment(AppModel.self) private var model
+    let offer: PlaceOffer
+    @State private var name = ""
+
+    var body: some View {
+        Card {
+            CardHeader(title: offer.needsName ? "A place you keep going to" : "Save this as \(offer.name)?",
+                       symbol: "mappin.and.ellipse", color: .blue)
+            Text(offer.reason).font(.subheadline).foregroundStyle(.secondary)
+            if offer.needsName {
+                TextField("Name (e.g. Gym)", text: $name).textFieldStyle(.roundedBorder)
+            }
+            HStack {
+                Button(offer.needsName ? "Save" : "Save \(offer.name)") {
+                    model.acceptPlaceOffer(name: offer.needsName ? name : nil)
+                }
+                .disabled(offer.needsName && name.trimmingCharacters(in: .whitespaces).isEmpty)
+                Spacer()
+                Button("Not Now", role: .cancel) { model.declinePlaceOffer() }.foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .font(.subheadline)
         }
     }
 }
