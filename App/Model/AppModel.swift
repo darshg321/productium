@@ -83,6 +83,7 @@ final class AppModel {
     func refresh(full: Bool = true) async {
         lastRefresh = Date()
         await syncHealth()
+        await syncMotion()
         syncCalendar()
         syncScreen()
         learnFromPastDays()
@@ -391,6 +392,23 @@ final class AppModel {
         if let c = LearnedModel.chronotype(fromFreeDaySleepMidpointsHours: mids) { state.learned.inferredChronotype = c }
     }
 
+    /// The last 7 days of motion (all iOS keeps), merged into the stored spans; walks on school
+    /// mornings and afternoons teach the commute.
+    private func syncMotion() async {
+        guard state.integrations.motion else { return }
+        let now = Date()
+        let from = now.addingTimeInterval(-7 * 86400)
+        let samples = await MotionService.shared.samples(from: from, to: now)
+        guard !samples.isEmpty else { return }
+        let fresh = MotionTimeline.spans(samples, until: now, previous: state.motion)
+        state.motion = MotionTimeline.merge(state.motion, with: fresh, from: samples.map(\.at).min() ?? from)
+        for i in 0...7 {
+            guard let day = cal.date(byAdding: .day, value: -i, to: cal.startOfDay(for: now)) else { continue }
+            state.routines = MotionTimeline.learnRoutines(state.motion, day: day, commitments: state.commitments,
+                                                          exceptions: state.exceptions, routines: state.routines, calendar: cal)
+        }
+    }
+
     private func syncCalendar() {
         guard state.integrations.calendarImport, CalendarService.shared.authorized else { return }
         state.events = CalendarService.shared.events(days: 14)
@@ -446,7 +464,7 @@ final class AppModel {
                          health: state.health.first { cal.isDate($0.day, inSameDayAs: day) },
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
                          screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,
-                         exceptions: state.exceptions)
+                         exceptions: state.exceptions, motion: state.motion)
     }
 
     func dayTotals(last n: Int, includeToday: Bool = false) -> [DayTotals] {

@@ -187,11 +187,14 @@ public struct DayInputs: Sendable {
     public var screen: ScreenDay?
     public var prefs: Preferences
     public var exceptions: [DayException]
+    /// Motion spans (Core Motion): evidence between routine assumptions and check-ins.
+    public var motion: [MotionSpan]
 
     public init(day: Date, events: [TimelineEvent], commitments: [Commitment], fixedEvents: [FixedEvent] = [],
                 routines: [Routine], outcomes: [BlockOutcome], itemsById: [UUID: WorkItem] = [:],
                 health: HealthDay?, nextHealth: HealthDay? = nil, screen: ScreenDay?, prefs: Preferences,
-                exceptions: [DayException] = []) {
+                exceptions: [DayException] = [], motion: [MotionSpan] = []) {
+        self.motion = motion
         self.exceptions = exceptions
         self.day = day
         self.events = events
@@ -250,6 +253,12 @@ public enum TimelineBuilder {
                     paint(w, w.addingTimeInterval(Double(r.minutes) * 60), r.category, r.name, observed: false)
                 }
             }
+        }
+
+        // Layer 1b: motion. Better than an assumed routine, not as good as a check-in.
+        for m in d.motion where m.end > dayStart && m.start < dayEnd {
+            guard let (c, l) = MotionTimeline.segment(m) else { continue }
+            paint(max(m.start, dayStart), min(m.end, dayEnd), c, l, observed: false)
         }
 
         // Layer 2: sleep (HealthKit, or the planned sleep window).

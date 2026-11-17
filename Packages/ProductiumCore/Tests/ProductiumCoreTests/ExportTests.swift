@@ -19,6 +19,7 @@ final class ExportTests: XCTestCase {
         s.moods = [MoodEntry(at: now, mood: 4)]
         s.progress = [ProgressEntry(at: now, itemId: task.id, minutes: 30, from: 0, to: 30, source: .task)]
         s.health = [HealthDay(day: Fx.mon(0), steps: 4000)]
+        s.motion = [MotionSpan(start: Fx.mon(8), end: Fx.mon(8, 14), kind: .walking, confidence: 2)]
         s.screen = [ScreenDay(day: Fx.mon(0), distractingMinutes: 131, totalMinutes: 202)]
         s.events = [FixedEvent(id: "EK:1", title: "CS Club Meeting", start: now, end: now.addingTimeInterval(3000))]
         s.oneOffs = [FixedEvent(id: UUID().uuidString, title: "Dentist", start: now, end: now.addingTimeInterval(3600))]

@@ -610,8 +610,12 @@ struct ConnectionSettings: View {
                     m.state.integrations.calendarExport = on ? await CalendarService.shared.requestAccess() : false
                     model.replan()
                 }
+                toggle("Motion", "figure.walk.motion", .green, model.state.integrations.motion) { on in
+                    m.state.integrations.motion = on ? await MotionService.shared.requestAccess() : false
+                    await model.refresh(full: false)
+                }
             } footer: {
-                Text("Health brings in sleep, steps and daylight. The plan is written to a separate “Productium” calendar.")
+                Text("Health brings in sleep, steps and daylight. Motion notices walks and rides (not where), so your commute is learned and your day fills in by itself. The plan is written to a separate “Productium” calendar.")
             }
             Section {
                 toggle("Notifications", "bell.badge.fill", .red, model.state.integrations.notifications) { on in

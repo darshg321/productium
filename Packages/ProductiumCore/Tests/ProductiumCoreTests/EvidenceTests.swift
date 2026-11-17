@@ -103,3 +103,50 @@ final class EvidenceTests: XCTestCase {
                         "evidence alone is an answer")
     }
 }
+
+final class MotionTests: XCTestCase {
+    let cal = Fx.cal
+
+    func samples(_ list: [(Int, Int, MotionKind)]) -> [MotionSample] {
+        list.map { MotionSample(at: Fx.mon($0.0, $0.1), kind: $0.2, confidence: 2) }
+    }
+
+    /// A fixture of motion spans plus markers gives the expected segments, and a morning walk
+    /// teaches to_school.
+    func testSpansPaintSegmentsAndTeachTheWalk() {
+        let recs = samples([(7, 0, .stationary), (8, 2, .walking), (8, 9, .walking), (8, 16, .stationary),
+                            (12, 0, .walking), (12, 3, .stationary), (15, 5, .automotive), (15, 27, .stationary)])
+        let spans = MotionTimeline.spans(recs, until: Fx.mon(18))
+        let walk = spans.first { $0.kind == .walking }!
+        XCTAssertEqual(walk.start, Fx.mon(8, 2))
+        XCTAssertEqual(walk.end, Fx.mon(8, 16), "records of the same kind merge")
+        // A check-in at 15:00 ("left school") is truth; the ride after it is painted by motion.
+        let markers = [TimelineEvent(at: Fx.mon(15), phrase: "left school", activity: "from_school", category: .commute, phase: .start),
+                       TimelineEvent(at: Fx.mon(15, 30), phrase: "home", activity: "from_school", category: .commute, phase: .end)]
+        let segs = TimelineBuilder.segments(DayInputs(day: Fx.mon(12), events: markers, commitments: [Fx.school], routines: Routine.defaults,
+                                                      outcomes: [], health: nil, screen: nil, prefs: Preferences(), motion: spans),
+                                            calendar: cal, now: Fx.mon(18))
+        XCTAssertEqual(segs.first { $0.label == "Walk" }?.start, Fx.mon(8, 2))
+        XCTAssertEqual(segs.first { $0.label == "Walk" }?.end, Fx.mon(8, 16))
+        XCTAssertFalse(segs.contains { $0.label == "Walk" && $0.start == Fx.mon(12) }, "3 minutes isn't a walk")
+        XCTAssertFalse(segs.contains { $0.label == "In a vehicle" }, "the check-in covers the ride home")
+        XCTAssertTrue(segs.contains { $0.label == "Home from school" && !$0.inferred })
+        XCTAssertFalse(segs.contains { $0.label == "To school" && $0.inferred && $0.start < Fx.mon(8, 16) && $0.end > Fx.mon(8, 2) },
+                       "the walk beats the assumed routine")
+
+        var routines = MotionTimeline.learnRoutines(spans, day: Fx.mon(0), commitments: [Fx.school], routines: Routine.defaults, calendar: cal)
+        XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
+        XCTAssertEqual(routines.first { $0.id == "from_school" }?.samples, [22])
+        // Rebuilt from the same records (ids kept), it isn't learned twice.
+        let again = MotionTimeline.spans(recs, until: Fx.mon(18), previous: spans)
+        routines = MotionTimeline.learnRoutines(again, day: Fx.mon(0), commitments: [Fx.school], routines: routines, calendar: cal)
+        XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
+        XCTAssertEqual(MotionTimeline.summary(spans, on: Fx.mon(0), calendar: cal), "walk 14 min 08:02, in a vehicle 22 min 15:05")
+    }
+
+    func testOvernightStillnessIsFound() {
+        let recs = [MotionSample(at: Fx.mon(0, 30), kind: .stationary, confidence: 2), MotionSample(at: Fx.mon(7, 20), kind: .walking, confidence: 2)]
+        let spans = MotionTimeline.spans(recs, until: Fx.mon(8))
+        XCTAssertEqual(MotionTimeline.overnightStill(spans, morningOf: Fx.mon(0), calendar: cal)?.minutes, 410)
+    }
+}

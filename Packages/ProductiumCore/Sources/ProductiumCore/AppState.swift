@@ -30,8 +30,18 @@ public struct Integrations: Codable, Hashable, Sendable {
     public var alarms = false
     public var liveActivities = true
     public var notifications = false
+    public var motion = false
 
     public init() {}
+
+    /// A switch added in a later build starts off instead of resetting the others.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func v(_ k: CodingKeys, _ d: Bool) -> Bool { (try? c.decodeIfPresent(Bool.self, forKey: k)) ?? d }
+        health = v(.health, false); calendarImport = v(.calendarImport, false); calendarExport = v(.calendarExport, false)
+        screenTime = v(.screenTime, false); location = v(.location, false); alarms = v(.alarms, false)
+        liveActivities = v(.liveActivities, true); notifications = v(.notifications, false); motion = v(.motion, false)
+    }
 }
 
 public struct FocusSession: Codable, Hashable, Sendable {
@@ -64,6 +74,8 @@ public struct AppState: Codable, Sendable {
     public var progress: [ProgressEntry] = []
     public var moods: [MoodEntry] = []
     public var health: [HealthDay] = []
+    /// Core Motion spans (walks, rides, still periods).
+    public var motion: [MotionSpan] = []
     public var screen: [ScreenDay] = []
     public var events: [FixedEvent] = []          // calendar cache
     public var oneOffs: [FixedEvent] = []         // one-off busy time from the brain dump
@@ -126,6 +138,7 @@ public struct AppState: Codable, Sendable {
         progress = v(.progress, d.progress)
         moods = v(.moods, d.moods)
         health = v(.health, d.health)
+        motion = v(.motion, d.motion)
         screen = v(.screen, d.screen)
         events = v(.events, d.events)
         oneOffs = v(.oneOffs, d.oneOffs)

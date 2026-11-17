@@ -68,6 +68,7 @@ targets:
         NSCalendarsFullAccessUsageDescription: Productium reads your calendar so it never plans over events, and can add your study plan to a Productium calendar.
         NSLocationWhenInUseUsageDescription: Productium saves your home and school so it can check you in automatically.
         NSLocationAlwaysAndWhenInUseUsageDescription: Productium notices when you leave home or arrive at school to learn your commute. It keeps no location history.
+        NSMotionUsageDescription: Productium notices walks and rides to learn your commute and fill in your day. Only how long you moved is kept, never where.
         NSAlarmKitUsageDescription: Productium sets your wake-up alarm based on when your first class starts and your usual commute.
         NSUserActivityTypes: [TellProductiumIntent, CheckInIntent, LogMoodIntent, StartFocusIntent]
         CFBundleURLTypes:

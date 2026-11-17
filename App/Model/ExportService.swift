@@ -103,6 +103,7 @@ enum ExportService {
         p["notifications"] = ["notDetermined", "denied", "authorized", "provisional", "ephemeral"][safe: n.authorizationStatus.rawValue] ?? "\(n.authorizationStatus.rawValue)"
         let loc = CLLocationManager().authorizationStatus
         p["location"] = ["notDetermined", "restricted", "denied", "authorizedAlways", "authorizedWhenInUse"][safe: Int(loc.rawValue)] ?? "\(loc.rawValue)"
+        p["motion"] = MotionService.shared.status
         let ek = EKEventStore.authorizationStatus(for: .event)
         p["calendar"] = ["notDetermined", "restricted", "denied", "fullAccess", "writeOnly"][safe: ek.rawValue] ?? "\(ek.rawValue)"
         if HKHealthStore.isHealthDataAvailable() {
