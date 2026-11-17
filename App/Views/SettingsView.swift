@@ -410,11 +410,9 @@ struct ScreenTimeSettings: View {
                 Text("Blocking and measuring apps uses Apple's Screen Time API, which needs a paid developer account. This build was signed with a free one.")
             }
             Section {
-                NavigationLink { RecipeView(recipe: Recipe.scrolling[0]) } label: { RecipeRow(recipe: Recipe.scrolling[0]) }
-                NavigationLink { RecipeView(recipe: Recipe.scrolling[1]) } label: { RecipeRow(recipe: Recipe.scrolling[1]) }
-                NavigationLink { RecipeView(recipe: Recipe.scrolling[2]) } label: { RecipeRow(recipe: Recipe.scrolling[2]) }
+                ForEach(Recipe.scrolling) { r in NavigationLink { RecipeView(recipe: r) } label: { RecipeRow(recipe: r) } }
             } header: { Text("Add a Pause Instead") } footer: {
-                Text("Opening one of those apps brings up a short pause with something better to do. “Go back anyway” skips it for 10 minutes. With the second automation, Productium also counts your minutes.")
+                Text("Opening one of those apps brings up a short pause with something better to do. “Go back anyway” skips it for 10 minutes. With the others, Productium counts your minutes and notices when you stop, even if iOS misses you going Home or locking the phone.")
             }
             let log = Friction.log
             if let d = log.today(Date(), calendar: .current) {
