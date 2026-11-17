@@ -201,9 +201,6 @@ public enum Exporter {
     }
 
     public static func json<T: Encodable>(_ value: T) throws -> Data {
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        enc.dateEncodingStrategy = .iso8601
-        return try enc.encode(value)
+        try ExportBundle.encoder().encode(value)
     }
 }

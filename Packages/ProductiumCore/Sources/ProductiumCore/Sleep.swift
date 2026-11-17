@@ -22,27 +22,19 @@ public struct SleepNight: Hashable, Sendable {
 }
 
 public enum SleepEstimator {
-    static let bedWords: Set<String> = ["sleep", "in_bed", "inbed", "bed", "going_to_bed", "goingtobed", "bedtime", "asleep", "nap_night"]
-    static let wakeWords: Set<String> = ["wake", "woke", "woke_up", "wakeup", "up", "awake", "got_up"]
+    static let bedWords: Set<String> = ["sleep", "inbed", "bed", "goingtobed", "bedtime", "asleep", "nightnap"]
+    static let wakeWords: Set<String> = ["wake", "woke", "wokeup", "wakeup", "up", "awake", "gotup"]
 
-    static func key(_ a: String) -> String { a.lowercased().replacingOccurrences(of: " ", with: "_") }
-
-    public static func isBedtime(_ m: TimelineEvent) -> Bool {
-        let k = key(m.activity)
-        return (bedWords.contains(k) && m.phase != .end) || (k.contains("bed") && m.phase != .end)
-    }
-
-    public static func isWake(_ m: TimelineEvent) -> Bool {
-        let k = key(m.activity)
-        return wakeWords.contains(k) || (bedWords.contains(k) && m.phase == .end)
-    }
-
+    /// "in_bed" start → sleep start, "woke" → sleep end; nil when it isn't about sleep.
     public static func normalised(activity: String, phase: MarkerPhase) -> (String, MarkerPhase)? {
-        let probe = TimelineEvent(at: Date(), phrase: "", activity: activity, category: .sleep, phase: phase)
-        if isWake(probe) { return ("sleep", .end) }
-        if isBedtime(probe) { return ("sleep", .start) }
+        let k = activity.plainKey
+        if wakeWords.contains(k) || (bedWords.contains(k) && phase == .end) { return ("sleep", .end) }
+        if (bedWords.contains(k) || k.contains("bed")) && phase != .end { return ("sleep", .start) }
         return nil
     }
+
+    public static func isBedtime(_ m: TimelineEvent) -> Bool { normalised(activity: m.activity, phase: m.phase)?.1 == .start }
+    public static func isWake(_ m: TimelineEvent) -> Bool { normalised(activity: m.activity, phase: m.phase)?.1 == .end }
 
     public static func night(morningOf day: Date, health: HealthDay?, markers: [TimelineEvent], motion: [MotionSpan] = [],
                              phoneUse: [Date] = [], plannedWake: Date?, sleepNeedMinutes: Int,
