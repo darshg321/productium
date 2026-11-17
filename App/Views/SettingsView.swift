@@ -678,7 +678,7 @@ struct RoutineSettings: View {
                     Toggle(isOn: $r.enabled) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(r.name)
-                            Text(r.isLearned ? "Usually \(r.minutes) min (learned)" : "About \(r.defaultMinutes) min (still learning)")
+                            Text(r.disagreement ?? "\(r.confidence.title) · \(r.minutes) min")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -688,7 +688,7 @@ struct RoutineSettings: View {
             }
             Section {
                 Button("Re-learn Routines", role: .destructive) {
-                    for i in m.state.routines.indices { m.state.routines[i].samples = []; m.state.routines[i].learnedFrom = [] }
+                    for i in m.state.routines.indices { m.state.routines[i].samples = []; m.state.routines[i].stated = nil; m.state.routines[i].learnedFrom = [] }
                     model.replan()
                 }
             }

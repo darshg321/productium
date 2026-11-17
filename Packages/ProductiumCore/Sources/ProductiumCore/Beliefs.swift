@@ -169,9 +169,9 @@ public struct Beliefs: Codable, Hashable, Sendable {
 
     public static func routines(_ rs: [Routine]) -> [Belief] {
         rs.map { r in
-            Belief(group: "routines", key: r.id, label: r.name, value: Double(r.minutes), unit: "min",
-                   samples: r.samples.count, evidence: r.samples.suffix(5).map { "Took \($0) min" },
-                   source: r.samples.isEmpty ? "prior" : "check-ins", prior: Double(r.defaultMinutes))
+            Belief(group: "routines", key: r.id, label: r.name, value: Double(r.samples.median ?? r.stated ?? r.defaultMinutes), unit: "min",
+                   stated: r.stated.map(Double.init), samples: r.samples.count, evidence: r.samples.suffix(5).map { "Took \($0) min" },
+                   source: r.samples.isEmpty ? (r.stated == nil ? "prior" : "you") : "check-ins", prior: Double(r.defaultMinutes))
         }
     }
 

@@ -501,7 +501,7 @@ public enum DumpApplier {
                 missing("routine", a, &rep); return
             }
             if let m = a.minutes, m > 0, m < 240 {
-                s.routines[i].samples = Array(repeating: m, count: 3)
+                s.routines[i].stated = m
                 rep.changes.append("\(s.routines[i].name) is \(m) min")
             }
             if let e = a.enabled {

@@ -14,6 +14,7 @@ public struct Routine: Codable, Identifiable, Hashable, Sendable {
     public var category: TimeCategory
     public var defaultMinutes: Int
     public var samples: [Int]
+    public var stated: Int?
     public var enabled: Bool
     @SortedSet public var learnedFrom: Set<UUID>
 
@@ -32,15 +33,39 @@ public struct Routine: Codable, Identifiable, Hashable, Sendable {
         self.learnedFrom = []
     }
 
-    public var minutes: Int { samples.median ?? defaultMinutes }
+    public static let samplesToTrust = 3
+
+    /// What you said is the prior until three real samples exist; then the median takes over.
+    public var minutes: Int {
+        if samples.count >= Self.samplesToTrust { return samples.median ?? defaultMinutes }
+        return stated ?? samples.median ?? defaultMinutes
+    }
+
+    public var confidence: BeliefConfidence {
+        if let s = stated {
+            guard samples.count >= Self.samplesToTrust, let m = samples.median else { return .stated }
+            return Double(abs(s - m)) <= max(Double(s) * 0.15, 10) ? .confirmed : .learned
+        }
+        switch samples.count {
+        case 0: return .assumed
+        case 1, 2: return .learning
+        default: return .learned
+        }
+    }
+
+    public var disagreement: String? {
+        guard let s = stated, samples.count >= Self.samplesToTrust, confidence == .learned, let m = samples.median else { return nil }
+        return "You said \(s) min, it's been \(m) min lately"
+    }
 
     public var safeMinutes: Int {
-        guard samples.count >= 3 else { return Int(Double(minutes) * 1.15) + 2 }
+        guard samples.count >= Self.samplesToTrust else { return Int(Double(minutes) * 1.15) + 2 }
         let s = samples.sorted()
         return s[min(s.count - 1, Int(Double(s.count) * 0.8))]
     }
 
     public var isLearned: Bool { !samples.isEmpty }
+    public var isKnown: Bool { stated != nil || !samples.isEmpty }
 
     @discardableResult
     public mutating func observe(_ m: Int) -> Bool {

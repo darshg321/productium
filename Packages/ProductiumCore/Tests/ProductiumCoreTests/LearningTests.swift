@@ -160,3 +160,38 @@ final class MarkerCategoryTests: XCTestCase {
         XCTAssertEqual(s.markers.map(\.category), [.commute, .sleep])
     }
 }
+
+final class StatedRoutineTests: XCTestCase {
+    func testStatedIsThePriorUntilThreeSamplesThenTheMedianTakesOver() {
+        var r = Routine(id: "to_school", name: "To school", anchor: .beforeFirstCommitment, category: .commute, defaultMinutes: 20)
+        XCTAssertEqual(r.confidence, .assumed)
+        r.stated = 25
+        XCTAssertEqual(r.minutes, 25)
+        XCTAssertEqual(r.confidence, .stated)
+        r.observe(14)
+        XCTAssertEqual(r.minutes, 25, "one real sample doesn't override what you said")
+        r.observe(14); r.observe(15)
+        XCTAssertEqual(r.minutes, 14)
+        XCTAssertEqual(r.confidence, .learned)
+        XCTAssertEqual(r.disagreement, "You said 25 min, it's been 14 min lately")
+    }
+
+    func testStatedAndLearnedAgreeIsConfirmed() {
+        var r = Routine(id: "get_ready", name: "Get ready", anchor: .afterWake, category: .routine, defaultMinutes: 40, samples: [34, 35, 36])
+        XCTAssertEqual(r.confidence, .learned)
+        r.stated = 35
+        XCTAssertEqual(r.confidence, .confirmed)
+        XCTAssertNil(r.disagreement)
+    }
+
+    func testStatingARoutineThroughTheBoxWritesNoFakeSamples() {
+        var s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [],
+                          routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpApplier.apply(DumpResult(ops: [.upsert("routine", id: "to_school", ["minutes": .number(25)])], reply: ""),
+                          to: &s, now: Fx.mon(14), calendar: Fx.cal)
+        let r = s.routines.first { $0.id == "to_school" }!
+        XCTAssertEqual(r.stated, 25)
+        XCTAssertTrue(r.samples.isEmpty)
+        XCTAssertEqual(Beliefs.routines(s.routines).first { $0.key == "to_school" }?.confidence, .stated)
+    }
+}
