@@ -32,6 +32,50 @@ final class AppModel {
         aboutMe = AboutMeStore.load()
     }
 
+    // The Inbox draft survives tab changes, backgrounding and relaunch: text in state, images as files.
+    static var draftsURL: URL { SharedConfig.containerURL.appendingPathComponent("drafts", isDirectory: true) }
+    @ObservationIgnored private var draftImageCache: [String: (UIImage, AIImage)] = [:]
+
+    var draftText: String {
+        get { state.draft.text }
+        set { state.draft.text = newValue; save() }
+    }
+
+    var draftImages: [(file: String, image: UIImage, ai: AIImage)] {
+        state.draft.imageFiles.compactMap { file in
+            if let c = draftImageCache[file] { return (file, c.0, c.1) }
+            guard let data = try? Data(contentsOf: Self.draftsURL.appendingPathComponent(file)), let img = UIImage(data: data) else { return nil }
+            let ai = AIImage(mediaType: "image/jpeg", base64: data.base64EncodedString())
+            draftImageCache[file] = (img, ai)
+            return (file, img, ai)
+        }
+    }
+
+    func addDraftImages(_ jpegs: [Data]) {
+        try? FileManager.default.createDirectory(at: Self.draftsURL, withIntermediateDirectories: true)
+        for data in jpegs {
+            let file = UUID().uuidString + ".jpg"
+            guard (try? data.write(to: Self.draftsURL.appendingPathComponent(file), options: .atomic)) != nil else { continue }
+            state.draft.imageFiles.append(file)
+        }
+        Persistence.save(state)
+    }
+
+    func removeDraftImage(_ file: String) {
+        state.draft.imageFiles.removeAll { $0 == file }
+        draftImageCache[file] = nil
+        try? FileManager.default.removeItem(at: Self.draftsURL.appendingPathComponent(file))
+        save()
+    }
+
+    /// Only after a successful send.
+    func clearDraft() {
+        for f in state.draft.imageFiles { try? FileManager.default.removeItem(at: Self.draftsURL.appendingPathComponent(f)) }
+        draftImageCache = [:]
+        state.draft = Draft()
+        save()
+    }
+
     func save() {
         saveTask?.cancel()
         let snapshot = state
@@ -209,6 +253,14 @@ final class AppModel {
         guard state.focus == nil else { return }
         if let b = state.plan.blocks.first(where: { $0.id == blockId }), b.isStudy, b.end > Date() { startFocus(b) }
         else { startNowOrNext() }
+    }
+
+    func resetRoutine(_ id: String) {
+        guard let i = state.routines.firstIndex(where: { $0.id == id }) else { return }
+        state.routines[i].samples = []
+        state.routines[i].stated = nil
+        state.routines[i].learnedFrom = []
+        replan()
     }
 
     func recordMissedBlocks() {

@@ -93,11 +93,17 @@ struct BeliefDetail: View {
                 ForEach(b.evidence, id: \.self) { Text($0).font(.subheadline) }
             }
             Section {
+                Button("Correct…") {
+                    model.draftText = "\(b.label) is actually about "
+                    model.deepLink = "productium://now"
+                }
                 if model.state.beliefs[id] != nil {
                     Button("Reset to the Starting Assumption", role: .destructive) { model.state.beliefs.reset(id) }
+                } else if b.group == "routines" {
+                    Button("Reset to the Starting Assumption", role: .destructive) { model.resetRoutine(b.key) }
                 }
             } footer: {
-                Text("To correct it, tell the Inbox, e.g. “\(b.label.lowercased()) is about \(b.display)”.")
+                Text("Correct… opens the Inbox with this filled in, so you only add the number.")
             }
         }
         .listStyle(.insetGrouped)

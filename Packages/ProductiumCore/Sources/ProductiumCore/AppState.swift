@@ -54,6 +54,19 @@ public struct FocusSession: Codable, Hashable, Sendable {
     }
 }
 
+/// What's typed in the Inbox but not sent yet. Images live as files under drafts/ in the container.
+public struct Draft: Codable, Hashable, Sendable {
+    public var text: String
+    public var imageFiles: [String]
+
+    public init(text: String = "", imageFiles: [String] = []) {
+        self.text = text
+        self.imageFiles = imageFiles
+    }
+
+    public var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && imageFiles.isEmpty }
+}
+
 public struct AppState: Codable, Sendable {
     public var onboarded = false
     public var prefs = Preferences()
@@ -86,6 +99,7 @@ public struct AppState: Codable, Sendable {
     public var reviewAt: Date?
     public var conversation = Conversation(startedAt: Date())
     public var archive = ConversationArchive()
+    public var draft = Draft()
     public var focus: FocusSession?
     @SortedSet public var dismissed: Set<String> = []
     public var proposals = ProposalBook()
@@ -157,6 +171,7 @@ public struct AppState: Codable, Sendable {
         reviewAt = v(.reviewAt, d.reviewAt)
         conversation = v(.conversation, d.conversation)
         archive = v(.archive, d.archive)
+        draft = v(.draft, d.draft)
         focus = v(.focus, d.focus)
         dismissed = v(.dismissed, d.dismissed)
         proposals = v(.proposals, d.proposals)

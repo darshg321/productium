@@ -46,28 +46,28 @@ struct TodayView: View {
 
 struct DumpBox: View {
     @Environment(AppModel.self) private var model
-    @State private var text = ""
     @State private var picks: [PhotosPickerItem] = []
-    @State private var images: [(UIImage, AIImage)] = []
     @FocusState private var focused: Bool
 
     var body: some View {
         Card {
             CardHeader(title: "Inbox", symbol: "tray.and.arrow.down.fill", color: .blue,
                        detail: model.busy.contains("dump") ? "Reading…" : nil)
-            TextField("What's due, what happened, what changed?", text: $text, axis: .vertical)
+            TextField("What's due, what happened, what changed?", text: Binding(get: { model.draftText }, set: { model.draftText = $0 }),
+                      axis: .vertical)
                 .font(.body)
                 .lineLimit(2...8)
                 .focused($focused)
+            let images = model.draftImages
             if !images.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(images.indices, id: \.self) { i in
-                            Image(uiImage: images[i].0).resizable().scaledToFill()
+                        ForEach(images, id: \.file) { pic in
+                            Image(uiImage: pic.image).resizable().scaledToFill()
                                 .frame(width: 54, height: 72)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 .overlay(alignment: .topTrailing) {
-                                    Button { images.remove(at: i) } label: {
+                                    Button { model.removeDraftImage(pic.file) } label: {
                                         Image(systemName: "xmark.circle.fill")
                                             .symbolRenderingMode(.palette)
                                             .foregroundStyle(.white, .black.opacity(0.6))
@@ -103,22 +103,21 @@ struct DumpBox: View {
         .onChange(of: picks) { _, items in Task { await load(items) } }
     }
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty }
+    private var canSend: Bool { !model.state.draft.isEmpty }
 
     private func send() {
-        let t = text, imgs = images.map(\.1)
+        let t = model.draftText, imgs = model.draftImages.map(\.ai)
         focused = false
         Task {
             if await model.dump(t, images: imgs) {
-                text = ""
-                images = []
+                model.clearDraft()
                 picks = []
             }
         }
     }
 
     private func load(_ items: [PhotosPickerItem]) async {
-        var out: [(UIImage, AIImage)] = []
+        var out: [Data] = []
         for item in items {
             guard let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) else { continue }
             let scale = min(1, 1280 / max(img.size.width, img.size.height))
@@ -126,11 +125,10 @@ struct DumpBox: View {
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
             let small = UIGraphicsImageRenderer(size: size, format: format).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
-            if let jpg = small.jpegData(compressionQuality: 0.75) {
-                out.append((small, AIImage(mediaType: "image/jpeg", base64: jpg.base64EncodedString())))
-            }
+            if let jpg = small.jpegData(compressionQuality: 0.75) { out.append(jpg) }
         }
-        images = out
+        model.addDraftImages(out)
+        picks = []
     }
 }
 
