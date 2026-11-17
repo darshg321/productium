@@ -124,6 +124,17 @@ jobs:
           gh release create "v${{ steps.version.outputs.version }}" Productium-free.ipa source.json \
             --target "${{ github.sha }}" --title "v${{ steps.version.outputs.version }}" \
             --generate-notes --latest
+      - name: Keep the repo's source.json in step (SideStore checks the version against the IPA)
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          cp source.json "$RUNNER_TEMP/source.json"
+          git fetch origin main
+          git checkout -f -B main origin/main
+          cp "$RUNNER_TEMP/source.json" source.json
+          git add source.json
+          git commit -m "Update source.json for v${{ steps.version.outputs.version }}" || exit 0
+          git push origin main
 
   ios-device:
     if: github.event_name == 'workflow_dispatch' && inputs.device_build

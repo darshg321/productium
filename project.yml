@@ -57,6 +57,8 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Productium
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         AppGroup: $(APP_GROUP)
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
