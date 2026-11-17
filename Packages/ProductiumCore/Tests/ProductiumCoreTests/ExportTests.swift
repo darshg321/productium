@@ -1,9 +1,7 @@
 import XCTest
 @testable import ProductiumCore
 
-/// The export holds every byte the app keeps, and importing it gives back exactly what was there.
 final class ExportTests: XCTestCase {
-    /// A state with every property set to something that isn't its default.
     static func populated() -> AppState {
         var s = AppState()
         let now = Fx.mon(12)
@@ -68,14 +66,11 @@ final class ExportTests: XCTestCase {
                             permissions: ["location": "authorizedWhenInUse"])
     }
 
-    /// Every stored property of AppState is in the export (a property that's nil or forgotten in the
-    /// decoder would be lost on import).
     func testEveryStoredPropertyIsExported() throws {
         let s = Self.populated()
         let data = try ExportBundle.encoder().encode(s)
         let keys = Set((try JSONSerialization.jsonObject(with: data) as! [String: Any]).keys)
         for child in Mirror(reflecting: s).children {
-            // A property wrapper's storage is "_name"; it's encoded as "name".
             guard let label = child.label.map({ $0.hasPrefix("_") ? String($0.dropFirst()) : $0 }) else { continue }
             XCTAssertTrue(keys.contains(label), "AppState.\(label) isn't in the export (set it in populated() if it's new)")
         }
@@ -85,7 +80,6 @@ final class ExportTests: XCTestCase {
         }
     }
 
-    /// Export, wipe, import, export again: the same file.
     func testRoundTripIsIdentical() throws {
         let first = try ExportBundle.encoder().encode(bundle(Self.populated()))
         let imported = try ExportBundle.read(first)

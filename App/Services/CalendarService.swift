@@ -2,8 +2,6 @@ import Foundation
 import EventKit
 import ProductiumCore
 
-/// Imports calendar events as busy time (and as deadlines when titled like one), and
-/// can write the plan into a "Productium" calendar so it shows on the Watch, etc.
 final class CalendarService {
     static let shared = CalendarService()
     let store = EKEventStore()
@@ -27,7 +25,6 @@ final class CalendarService {
         }
     }
 
-    /// Events like "Bio test" or "Essay due" (timed or all-day) become work items, with no typing.
     func deadlineCandidates(days: Int) -> [WorkItem] {
         guard authorized else { return [] }
         let start = Calendar.current.startOfDay(for: Date())
@@ -65,7 +62,6 @@ final class CalendarService {
         do { try store.saveCalendar(c, commit: true); return c } catch { return nil }
     }
 
-    /// Replaces future events in the Productium calendar with the next 7 days of study blocks.
     func export(plan: Plan) {
         guard authorized, let cal = productiumCalendar() else { return }
         let now = Date()

@@ -1,13 +1,6 @@
 import SwiftUI
 import ProductiumCore
 
-/// Productium looks like the system, in the way Health and Settings do: grouped
-/// backgrounds, inset cards with a tinted category header and one big number, and
-/// SF Symbols on coloured rounded squares for lists. All colours are system colours,
-/// so dark mode, Increase Contrast and Liquid Glass come for free. Each means one thing:
-///   blue    focus work          orange  free time
-///   indigo  sleep               gray    fixed time (school, travel, routines, meals)
-///   purple  screen time         red     something actually needs attention
 enum Theme {
     static let focus = Color.blue
     static let free = Color.orange
@@ -53,7 +46,6 @@ enum Theme {
         }
     }
 
-    /// A stored colour string (`Palette` name or #RRGGBB) as a system colour.
     static func named(_ s: String?) -> Color? {
         guard let s = Palette.normalise(s) else { return nil }
         switch s {
@@ -76,10 +68,8 @@ enum Theme {
         }
     }
 
-    /// A block's colour: its own (the planner resolves task, activity and category colours), else its kind's.
     static func color(for block: PlannedBlock) -> Color { named(block.color) ?? color(for: block.kind) }
 
-    /// A task's colour: its own, its project's, its subject's or its type's override, else the type's default.
     static func color(for item: WorkItem, in state: AppState) -> Color {
         let parent = item.parentId.flatMap { id in state.items.first { $0.id == id } }
         return named(Palette.color(for: item, parent: parent, colors: state.prefs.colors)) ?? color(for: item.kind)
@@ -119,15 +109,11 @@ enum Theme {
         }
     }
 
-    /// Meter colour: calm until most of the day's budget is gone.
     static func meter(_ fraction: Double) -> Color {
         fraction >= 1 ? .red : fraction >= 0.8 ? .orange : .green
     }
 }
 
-// MARK: - Building blocks
-
-/// The Settings-app icon: a white symbol on a coloured, continuous-corner square.
 struct IconTile: View {
     let symbol: String
     let color: Color
@@ -143,7 +129,6 @@ struct IconTile: View {
     }
 }
 
-/// A Settings-style row label: icon tile, then the title.
 struct SettingsLabel: View {
     let title: String
     let symbol: String
@@ -158,7 +143,6 @@ struct SettingsLabel: View {
     }
 }
 
-/// A Health-style card on the grouped background.
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -170,8 +154,6 @@ struct Card<Content: View>: View {
     }
 }
 
-/// The tinted category line at the top of a card: symbol and name in colour,
-/// a quiet detail and (optionally) a chevron on the right.
 struct CardHeader: View {
     let title: String
     let symbol: String
@@ -195,7 +177,6 @@ struct CardHeader: View {
     }
 }
 
-/// The one big number with its unit beside it, as Health shows a reading.
 struct BigValue: View {
     let value: String
     var unit: String?
@@ -211,7 +192,6 @@ struct BigValue: View {
     }
 }
 
-/// A bold section title between cards ("Schedule", "Highlights").
 struct SectionTitle: View {
     let text: String
     init(_ text: String) { self.text = text }
@@ -223,7 +203,6 @@ struct SectionTitle: View {
     }
 }
 
-/// Banner for short confirmations, above the tab bar.
 struct Notice: View {
     let text: String
     var body: some View {
@@ -238,14 +217,12 @@ struct Notice: View {
     }
 }
 
-/// "1 hr 20 min", the way Health writes durations.
 func durationLabel(_ m: Int) -> String {
     let h = m / 60, r = m % 60
     if h == 0 { return "\(r) min" }
     return r == 0 ? "\(h) hr" : "\(h) hr \(r) min"
 }
 
-/// A duration as Health shows one: big numbers, small units ("7 hr 32 min").
 struct DurationValue: View {
     let minutes: Int
     var body: some View {
@@ -279,7 +256,6 @@ extension Date {
     }
 }
 
-/// A horizontal bar of the day, each block its own width: the app's one chart.
 struct DayStrip: View {
     let blocks: [PlannedBlock]
     let start: Date
@@ -306,7 +282,6 @@ struct DayStrip: View {
     }
 }
 
-/// Toolbar button for the token meter, top right on every tab.
 struct UsageToolbar: ViewModifier {
     @Environment(AppModel.self) private var model
     @State private var showUsage = false
@@ -327,7 +302,6 @@ extension View {
     func usageMeter() -> some View { modifier(UsageToolbar()) }
 }
 
-/// A small ring that fills toward today's budget, with today's output-token count.
 struct TokenMeter: View {
     @Environment(AppModel.self) private var model
 
@@ -350,11 +324,9 @@ struct TokenMeter: View {
     }
 }
 
-/// Pick a colour: Auto (nil) or one of the palette's. Stored as the palette name.
 struct ColorChoice: View {
     var label: String = "Colour"
     @Binding var color: String?
-    /// What Auto looks like here (the type's or category's default).
     var automatic: Color = .secondary
 
     var body: some View {
@@ -386,7 +358,6 @@ struct ColorChoice: View {
     }
 }
 
-/// Settings → Colours: the category defaults the planner paints blocks with.
 struct ColorSettings: View {
     @Environment(AppModel.self) private var model
 

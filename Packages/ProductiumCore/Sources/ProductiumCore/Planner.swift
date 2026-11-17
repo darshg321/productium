@@ -10,16 +10,11 @@ public struct PlannerInput: Sendable {
     public var learned: LearnedModel
     public var health: [HealthDay]
     public var moods: [MoodEntry]
-    /// Blocks already in progress. They stay as they are and count as busy time.
     public var locked: [PlannedBlock]
-    /// Learned routines (commute, getting ready), filled in automatically.
     public var routines: [Routine]
-    /// One-day changes ("no school today", "practice moved to 5").
     public var exceptions: [DayException]
     public var horizonDays: Int
-    /// Tier 2 behaviour knobs (approved changes only).
     public var policy: BehaviourPolicy
-    /// Learned capacities (study per day type, free time, break, dinner, chronotype).
     public var beliefs: Beliefs
 
     public init(now: Date, calendar: Calendar = .current, items: [WorkItem], commitments: [Commitment] = [],
@@ -46,33 +41,10 @@ public struct PlannerInput: Sendable {
     }
 }
 
-/// Deterministic planner. It runs on the device in milliseconds and gives the
-/// same answer for the same inputs. The LLM never places blocks: it parses input,
-/// breaks large goals into steps, and explains. The constraint solving stays here,
-/// where it can be tested.
-///
-/// Steps:
-///  1. Build each day's awake window (sleep need + wake time), minus classes,
-///     activities, calendar events, dinner and wind-down.
-///  2. Turn every unfinished item into chunks:
-///     – tests/quizzes become spaced retrieval sessions on expanding days before the test
-///       (distributed practice + testing effect, Cepeda et al. 2006/2008; Dunlosky et al. 2013);
-///     – production work becomes focus-length chunks paced evenly up to a buffered target
-///       date (planning fallacy buffer; brief regular sessions, Boice 1989).
-///  3. Place chunks earliest-deadline-first into the best-scoring slot: hard work at
-///     the student's alertness peaks, spread across days, under a daily load cap
-///     that adapts to how much they really complete.
-///  4. If something doesn't fit: squeeze free time (crunch), then borrow sleep only
-///     under `SleepPolicy`, then take time from low-stakes items (triage). Whatever
-///     still doesn't fit is reported honestly as a shortfall.
-///  5. The rest of the time is left as free time; short windows become "gaps" for
-///     micro-review instead of scrolling.
 public enum Planner {
     static let step: TimeInterval = 5 * 60
     static let morningRoutineMinutes = 40
     static let minChunk = 15
-
-    // MARK: Public entry
 
     public static func plan(_ input: PlannerInput) -> Plan {
         var ctx = Context(input: input)
@@ -85,8 +57,6 @@ public enum Planner {
         return plan
     }
 
-    /// Keeps today's past blocks from the previous plan (so "Today" shows history)
-    /// and swaps in the freshly computed future.
     public static func merge(previous: Plan, new: Plan, now: Date, calendar: Calendar) -> Plan {
         let keep = previous.blocks.filter { $0.end <= now && calendar.isDate($0.start, inSameDayAs: now) }
         let keptIds = Set(keep.map(\.id))
@@ -95,8 +65,6 @@ public enum Planner {
             .sorted { $0.start < $1.start }
         return merged
     }
-
-    // MARK: Internals
 
     struct Interval: Hashable {
         var start: Date
@@ -109,8 +77,8 @@ public enum Planner {
         let start: Date
         let isSchoolDay: Bool
         let wake: Date
-        var workEnd: Date          // wind-down begins here (moves later if sleep is borrowed)
-        let bedtime: Date          // planned lights-out with no borrowing
+        var workEnd: Date
+        let bedtime: Date
         let nextWake: Date
         var free: [Interval]
         var fixed: [PlannedBlock]
@@ -118,7 +86,7 @@ public enum Planner {
         let freeFloor: Int
         let freeTotal: Int
         var studyUsed = 0
-        var consumed = 0           // study + breaks
+        var consumed = 0
         var borrowed = 0
         var itemCounts: [UUID: Int] = [:]
     }
@@ -160,8 +128,6 @@ public enum Planner {
             self.nowRounded = Date(timeIntervalSinceReferenceDate: (t / Planner.step).rounded(.up) * Planner.step)
         }
 
-        // MARK: 1. Days
-
         func at(_ day: Date, _ tod: TimeOfDay) -> Date {
             cal.date(bySettingHour: tod.hour, minute: tod.minute, second: 0, of: day) ?? day
         }
@@ -175,7 +141,6 @@ public enum Planner {
                              routines: input.routines, prefs: prefs, calendar: cal, exceptions: input.exceptions)
         }
 
-        /// Most study a day of this type holds: the learned capacity.
         func capacity(_ school: Bool) -> Int {
             input.beliefs.minutes(school ? "study.schoolDayCapacity" : "study.freeDayCapacity")
         }
@@ -209,7 +174,6 @@ public enum Planner {
                     fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: wakeT,
                                               end: wakeT.addingTimeInterval(Double(r.minutes) * 60), title: r.name))
                 }
-                // Commute routines attach to the first/last commitment of their kind (after exceptions).
                 let todays = Commitment.occurrences(input.commitments, on: day, exceptions: input.exceptions, calendar: cal)
                 for r in input.routines where r.enabled && r.anchor != .afterWake {
                     let anchored = todays.filter { r.anchorKind == nil || $0.commitment.kind == r.anchorKind }
@@ -268,7 +232,6 @@ public enum Planner {
             }
         }
 
-        /// Today's plan reacts to last night's sleep and today's mood check-in.
         mutating func computeTodayModifiers(today: Date) {
             if let h = input.health.first(where: { cal.isDate($0.day, inSameDayAs: today) }),
                let slept = h.sleepMinutes {
@@ -292,14 +255,11 @@ public enum Planner {
             }
         }
 
-        // MARK: 2. Demands
-
         func remainingMinutes(_ item: WorkItem) -> Int {
             let corrected = Int((Double(item.estimateMinutes) * input.learned.estimateFactor(for: item.kind)).rounded())
             let lockedMinutes = input.locked.filter { $0.itemId == item.id }
                 .reduce(0) { $0 + Int(max(0, $1.end.timeIntervalSince(input.now)) / 60) }
             let left = corrected - item.completedMinutes - lockedMinutes
-            // Underestimated and not yet marked done: plan a short finishing block.
             return left > 0 ? max(left, 10) : (item.isDone ? 0 : 15)
         }
 
@@ -314,7 +274,7 @@ public enum Planner {
             for item in input.items where !item.isDone && !parents.contains(item.id) {
                 let left = remainingMinutes(item)
                 guard left > 0 else { continue }
-                if item.due <= input.now { continue } // overdue: shown in UI, not planned
+                if item.due <= input.now { continue }
                 if item.kind.isMemoryBased {
                     out += spacedSessions(item, minutes: left)
                 } else {
@@ -324,9 +284,6 @@ public enum Planner {
             return out
         }
 
-        /// Spaced retrieval sessions placed on expanding offsets before the test.
-        /// The optimal gap grows with how long you need to remember (Cepeda et al. 2008),
-        /// so sessions are spread back from the test date instead of crammed the night before.
         func spacedSessions(_ item: WorkItem, minutes: Int) -> [Demand] {
             let dueDay = dayIndex(of: item.due)
             let latest = item.due.addingTimeInterval(-30 * 60)
@@ -334,14 +291,12 @@ public enum Planner {
             var n = Int((Double(minutes) / Double(session)).rounded(.up))
             let offsets = [1, 2, 3, 5, 7, 10, 14, 21].filter { $0 <= dueDay }
             if offsets.isEmpty {
-                // Test is today: one focused retrieval session if anything fits.
                 return [Demand(item: item, minutes: min(minutes, 45), earliest: input.now, latest: latest,
                                preferredDay: 0, isReview: true, title: item.title,
                                hint: "Quick self-test: answer practice questions from memory, then check only the ones you missed.")]
             }
             n = max(1, n)
             let per = max(Planner.minChunk, Int((Double(minutes) / Double(n)).rounded(.up)))
-            // Pick n offsets spread across the available ones (always include 1 = day before).
             var picked: [Int] = []
             if n >= offsets.count {
                 picked = offsets
@@ -351,13 +306,12 @@ public enum Planner {
                     picked.append(offsets[idx])
                 }
             }
-            picked = Array(Set(picked)).sorted(by: >)  // furthest first
-            // If more minutes than sessions × per (few days left), the extra goes into the last two sessions.
+            picked = Array(Set(picked)).sorted(by: >)
             let sessionsMinutes = distribute(minutes, over: picked.count, maxEach: max(per, 75))
             var out: [Demand] = []
             for (k, off) in picked.enumerated() {
                 let target = dueDay - off
-                guard target < input.horizonDays else { continue }   // planned on a later run
+                guard target < input.horizonDays else { continue }
                 guard let dayDate = cal.date(byAdding: .day, value: target, to: cal.startOfDay(for: input.now)) else { continue }
                 let windowStart = cal.date(byAdding: .day, value: -1, to: dayDate) ?? dayDate
                 let windowEnd = min(latest, cal.date(byAdding: .day, value: 2, to: dayDate) ?? latest)
@@ -379,13 +333,11 @@ public enum Planner {
             return out
         }
 
-        /// Production work: focus-length chunks paced evenly to a buffered target.
         func pacedChunks(_ item: WorkItem, minutes: Int) -> [Demand] {
             let focus = Int(input.learned.focusMinutes.rounded())
             let chunks = split(minutes, focus: max(20, min(60, input.policy.maxBlockMinutes, focus)))
             let bufferDays = minutes > 240 ? 2 : (minutes > 90 ? 1 : 0)
             var target = cal.date(byAdding: .day, value: -bufferDays, to: item.due) ?? item.due
-            // Not enough room for the buffer: use the real deadline.
             if target.timeIntervalSince(input.now) < Double(minutes) * 60 * 3 { target = item.due }
             let span = max(0, dayIndex(of: target))
             let hint: String
@@ -398,7 +350,6 @@ public enum Planner {
                 hint = "Phone in another room. Start with the easiest part to get going."
             }
             return chunks.enumerated().compactMap { i, len in
-                // Even pacing: chunk i becomes available on day ⌊i·span/n⌋ (Boice 1989: regular brief sessions).
                 let releaseDay = span >= 2 && chunks.count >= 2 ? (i * span) / chunks.count : 0
                 guard releaseDay < input.horizonDays else { return nil }
                 let earliest = releaseDay == 0 ? input.now
@@ -409,14 +360,11 @@ public enum Planner {
             }
         }
 
-        /// Even split into blocks close to `focus` minutes (65 → 33 + 32, not 50 + 15).
-        /// No block is longer than the policy's `maxBlockMinutes`.
         func split(_ minutes: Int, focus: Int) -> [Int] {
             guard minutes > 0 else { return [] }
             let longest = max(Planner.minChunk, min(focus + 15, input.policy.maxBlockMinutes))
             let n = max(1, Int((Double(minutes) / Double(longest)).rounded(.up)))
             let base = minutes / n
-            // Round each block up to 5 min so the plan reads 19:00–19:55, not 19:00–19:52.
             return (0..<n).map { i in
                 let m = base + (i < minutes - base * n ? 1 : 0)
                 return max(Planner.minChunk, Int((Double(m) / 5).rounded(.up)) * 5)
@@ -431,8 +379,6 @@ public enum Planner {
             return arr
         }
 
-        // MARK: 3. Allocation
-
         mutating func allocate(_ demandsIn: [Demand]) {
             let demands = demandsIn.sorted {
                 if $0.latest != $1.latest { return $0.latest < $1.latest }
@@ -444,20 +390,16 @@ public enum Planner {
                     unplaced.append(leftover)
                 }
             }
-            // Crunch: borrow free time above a 30-min floor, in priority order.
             var stillUnplaced: [Demand] = []
             for d in unplaced.sorted(by: { $0.value > $1.value }) {
                 if let leftover = placeWithFallbacks(d, modes: [.crunch]) { stillUnplaced.append(leftover) }
             }
-            // Sleep, only under SleepPolicy.
             var afterSleep: [Demand] = []
             for d in stillUnplaced {
                 if let leftover = borrowSleep(for: d) { afterSleep.append(leftover) }
             }
-            // Triage: high-stakes work takes slots from low-stakes work.
             let horizonEnd = days.last.flatMap { cal.date(byAdding: .day, value: 1, to: $0.start) } ?? input.now
             for d in afterSleep {
-                // Due after the horizon: not a shortfall, the next replan will place it.
                 if d.latest >= horizonEnd { continue }
                 if let leftover = displace(for: d) {
                     shortfalls[leftover.item.id, default: 0] += leftover.minutes
@@ -465,10 +407,8 @@ public enum Planner {
             }
         }
 
-        /// Try the full chunk, then a half chunk (keeping the rest as a new demand).
         mutating func placeWithFallbacks(_ d: Demand, modes: [Mode]) -> Demand? {
             var demand = d
-            // Remainders under a minimum block round up instead of becoming 5-min blocks.
             if demand.minutes < Planner.minChunk { demand.minutes = Planner.minChunk }
             for mode in modes {
                 while demand.minutes > 0 {
@@ -482,7 +422,6 @@ public enum Planner {
             return demand.minutes > 0 ? demand : nil
         }
 
-        /// Places `length` minutes of `d` into the best slot. Reduces d.minutes on success.
         mutating func place(_ d: inout Demand, length: Int, mode: Mode) -> Bool {
             let earliestDay = max(0, dayIndex(of: d.earliest))
             let latestDay = min(days.count - 1, dayIndex(of: d.latest))
@@ -509,7 +448,6 @@ public enum Planner {
                         let sc = score(start: s, length: length, day: day, demand: d, earliestDay: earliestDay,
                                        atIntervalStart: s == iv.start, intervalEnd: iv.end)
                         if best == nil || sc > best!.score { best = (sc, di, ii, s) }
-                        // Next candidate aligned to the quarter hour.
                         let t = s.timeIntervalSinceReferenceDate
                         s = Date(timeIntervalSinceReferenceDate: (floor(t / 900) + 1) * 900)
                         tries += 1
@@ -532,12 +470,12 @@ public enum Planner {
             if let p = demand.preferredDay {
                 s -= Double(abs(day.index - p)) * 0.7
             } else {
-                s -= Double(day.index - earliestDay) * 0.12      // do production work early: less risk
+                s -= Double(day.index - earliestDay) * 0.12
             }
-            s -= Double(day.itemCounts[demand.item.id] ?? 0) * 0.45  // spread one item across days
-            s -= Double(day.studyUsed) / Double(max(1, day.studyCap)) * 0.35  // balance load
+            s -= Double(day.itemCounts[demand.item.id] ?? 0) * 0.45
+            s -= Double(day.studyUsed) / Double(max(1, day.studyCap)) * 0.35
             if day.workEnd.timeIntervalSince(start.addingTimeInterval(Double(length) * 60)) < 45 * 60 { s -= 0.15 }
-            if atIntervalStart { s += 0.05 }       // less fragmentation
+            if atIntervalStart { s += 0.05 }
             if intervalEnd.timeIntervalSince(start) / 60 - Double(length) < 10 { s += 0.03 }
             return s
         }
@@ -545,8 +483,6 @@ public enum Planner {
         mutating func commit(demand d: Demand, length: Int, dayIndex di: Int, intervalIndex ii: Int,
                              start: Date, usesFreeTime: Bool, borrowsSleep: Bool) {
             let end = start.addingTimeInterval(Double(length) * 60)
-            // Deterministic id: same item at the same time keeps its id across replans, so
-            // notification replies ("Done" on the lock screen) still find their block.
             let block = PlannedBlock(id: Planner.stableUUID("b|\(d.item.id)|\(Int(start.timeIntervalSince1970))"),
                                      kind: d.isReview ? .review : .work, start: start, end: end, title: d.title,
                                      itemId: d.item.id, hint: d.hint, borrowsSleep: borrowsSleep, usesFreeTime: usesFreeTime)
@@ -559,7 +495,6 @@ public enum Planner {
                 let iv = day.free[ii]
                 var pieces: [Interval] = []
                 if start > iv.start { pieces.append(Interval(start: iv.start, end: start)) }
-                // Systematic short break after each block (Biwer et al. 2023).
                 var after = end
                 if iv.end.timeIntervalSince(end) >= Double(breakMinutes + 5) * 60 {
                     let bEnd = end.addingTimeInterval(Double(breakMinutes) * 60)
@@ -580,7 +515,6 @@ public enum Planner {
             let latestDay = min(days.count - 1, dayIndex(of: d.latest))
             let earliestDay = max(0, dayIndex(of: d.earliest))
             guard earliestDay <= latestDay else { return demand }
-            // Latest night first: a night already in the plan is better than a new one.
             for di in stride(from: latestDay, through: earliestDay, by: -1) where demand.minutes > 0 {
                 let day = days[di]
                 let borrowedNights = Set(days.filter { $0.borrowed > 0 }.map(\.index))
@@ -608,7 +542,6 @@ public enum Planner {
             return demand.minutes > 0 ? demand : nil
         }
 
-        /// Swap a low-stakes block's slot to a high-stakes chunk that can't fit.
         mutating func displace(for d: Demand) -> Demand? {
             var demand = d
             let itemsById = Dictionary(uniqueKeysWithValues: input.items.map { ($0.id, $0) })
@@ -628,7 +561,6 @@ public enum Planner {
                 blocks[idx].hint = d.hint
                 blocks[idx].kind = d.isReview ? .review : .work
                 if take < old.minutes {
-                    // Leftover of the old block keeps its original task.
                     blocks[idx].end = old.start.addingTimeInterval(Double(take) * 60)
                     var rest = old
                     rest.id = Planner.stableUUID("r|\(old.id)")
@@ -645,10 +577,7 @@ public enum Planner {
             return demand.minutes > 0 ? demand : nil
         }
 
-        // MARK: 4–5. Output
-
         mutating func finish() -> Plan {
-            // Number multi-part work in time order ("Essay · 2/5").
             let itemsByIdForTitles = Dictionary(uniqueKeysWithValues: input.items.map { ($0.id, $0) })
             let grouped = Dictionary(grouping: blocks.indices.filter { blocks[$0].kind == .work }, by: { blocks[$0].itemId })
             for (id, idxs) in grouped {
@@ -661,7 +590,6 @@ public enum Planner {
             var all = blocks
             for day in days {
                 all += day.fixed
-                // Wind-down + sleep (shifted if sleep was borrowed).
                 let windStart = day.workEnd
                 let sleepStart = day.bedtime.addingTimeInterval(Double(day.borrowed) * 60)
                 if sleepStart > windStart {
@@ -708,8 +636,6 @@ public enum Planner {
         }
     }
 
-    // MARK: Helpers
-
     static func subtract(_ base: [Interval], _ busy: [Interval]) -> [Interval] {
         var result = base
         for b in busy {
@@ -724,7 +650,6 @@ public enum Planner {
         return result.sorted { $0.start < $1.start }
     }
 
-    /// Deterministic UUID from a string (FNV-1a), so fixed blocks keep their ids across replans.
     public static func stableUUID(_ s: String) -> UUID {
         var h1: UInt64 = 0xcbf29ce484222325, h2: UInt64 = 0x84222325cbf29ce4
         for b in s.utf8 {

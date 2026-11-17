@@ -1,9 +1,6 @@
 import SwiftUI
 import ProductiumCore
 
-/// A focus session, laid out like the Clock app's timer: the title, a ring that empties
-/// as time passes with the time left inside it, and two buttons. Distracting apps are
-/// shielded where Screen Time is available.
 struct FocusView: View {
     @Environment(AppModel.self) private var model
     @State private var confirmStop = false

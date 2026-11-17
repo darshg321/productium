@@ -21,13 +21,11 @@ final class ReflectionTests: XCTestCase {
         let low = (1...3).map { DayRecord(day: Fx.mon(0, plusDays: -$0), isSchoolDay: true, planned: 120, done: 30) }
         XCTAssertEqual(t(days: low), .lowFollowThrough)
         XCTAssertEqual(t(weekly: true), .weekly)
-        // Skipped blocks count as put off.
         let outs = (0..<3).map { i in BlockOutcome(blockId: UUID(), itemId: essay.id, kind: .application, plannedStart: Fx.mon(19, plusDays: -i),
                                                    plannedMinutes: 40, actualMinutes: 0, status: .skipped) }
         XCTAssertEqual(Reflection.deferrals(items: [essay], outcomes: outs, since: Fx.mon(0, plusDays: -14)).first?.count, 3)
     }
 
-    /// A recorded Opus reply, through every guard: all of it waits for approval.
     func testRecordedReplyBecomesProposals() throws {
         let ref = Ref.task(essay.id)
         let reply = """
@@ -59,7 +57,6 @@ final class ReflectionTests: XCTestCase {
         XCTAssertEqual(s.policy.maxBlockMinutes, 45, "bounded: 55 → 30 asked, -10 applied")
         XCTAssertEqual(s.policy.intentions.first?.itemId, essay.id)
         XCTAssertEqual(s.aboutMe[.patterns].first?.text, "puts off university essays: deferred 3× this week")
-        // The request carries what it needs, and the call is Opus at medium effort.
         let text = Reflection.request(now: Fx.mon(9), aboutMe: s.aboutMe, beliefs: Beliefs(), routines: Routine.defaults,
                                       deferrals: [Deferral(itemId: essay.id, title: essay.title, count: 3, lastAt: nil, reasons: [])],
                                       days: [], policy: s.policy, feedback: ["Rejected: x"], conversations: ["Waterloo drafts"],

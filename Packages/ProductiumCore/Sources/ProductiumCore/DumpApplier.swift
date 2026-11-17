@@ -1,11 +1,5 @@
 import Foundation
 
-// MARK: - Short references
-//
-// The Inbox context lists every task, activity, event and day change with a short reference
-// ("t3f9a2"), and actions name what they change by it. Titles still work as a fallback, but an
-// id can't match the wrong "Period 2" or miss "School" because the model called it "classes".
-
 public enum Ref {
     public static func task(_ id: UUID) -> String { "t" + short(id.uuidString) }
     public static func activity(_ id: UUID) -> String { "a" + short(id.uuidString) }
@@ -14,13 +8,12 @@ public enum Ref {
 
     static func short(_ s: String) -> String {
         if UUID(uuidString: s) != nil { return String(s.lowercased().filter(\.isHexDigit).prefix(6)) }
-        // Not a UUID (a calendar event id): a stable FNV-1a hash, since `hashValue` changes every launch.
+        // FNV-1a: `hashValue` changes every launch.
         var h: UInt64 = 0xcbf29ce484222325
         for b in s.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
         return String(String(h, radix: 16).prefix(6))
     }
 
-    /// True when `ref` (with or without its letter, or a full UUID) names `full`.
     static func matches(_ ref: String, prefix: Character, full: String) -> Bool {
         let r = ref.trimmingCharacters(in: .whitespaces).lowercased()
         guard !r.isEmpty else { return false }
@@ -32,15 +25,11 @@ public enum Ref {
     }
 }
 
-/// What applying a reply did: the lines for the receipt, and what it couldn't do (so the reply
-/// can't claim a change that didn't happen).
 public struct DumpReport: Hashable, Sendable {
     public var changes: [String] = []
     public var problems: [String] = []
     public init(changes: [String] = [], problems: [String] = []) { self.changes = changes; self.problems = problems }
 }
-
-// MARK: - Applying a reply
 
 public enum DumpApplier {
     static func timeOfDay(_ v: String?) -> TimeOfDay? {
@@ -56,15 +45,12 @@ public enum DumpApplier {
         return TimeOfDay(h, m)
     }
 
-    /// Applies every operation it can, in order. Later operations see earlier ones (a task added
-    /// first can be changed next). `writer` decides which tiers are allowed (see Capabilities).
     @discardableResult
     public static func apply(_ r: DumpResult, to s: inout DumpState, now: Date, calendar cal: Calendar,
                              writer: Writer = .box, turnId: UUID? = nil) -> DumpReport {
         var rep = DumpReport()
         let before = Dictionary(s.items.map { ($0.id, $0.completedMinutes) }, uniquingKeysWith: { a, _ in a })
         for op in r.ops { apply(op, to: &s, now: now, calendar: cal, writer: writer, report: &rep) }
-        // Every change to a task's minutes done is work logged now (or a correction of it).
         var touched: Set<UUID> = []
         for item in s.items {
             let was = before[item.id] ?? 0
@@ -77,7 +63,6 @@ public enum DumpApplier {
         return rep
     }
 
-    /// The entity an operation is about: named, or read off its id's letter ("t3f9a2" is a task).
     static func entity(of op: DumpOp, _ s: DumpState) -> EntitySpec? {
         if let e = Registry.entity(op.entity) { return e }
         guard let id = op.id?.lowercased(), let first = id.first, id.count >= 5, id.dropFirst().allSatisfy(\.isHexDigit) else {
@@ -133,7 +118,6 @@ public enum DumpApplier {
         }
     }
 
-    /// One handler per entity and operation. They share the lookups.
     struct Handlers {
         let now: Date
         let cal: Calendar
@@ -146,7 +130,6 @@ public enum DumpApplier {
         }
         func when(_ v: String?) -> Date {
             guard let v, let d = AIMapper.parseDate(v, timeZone: tz) else { return now }
-            // A bare date parses to 23:59, and a moment in the future isn't a log. Keep it sane.
             return min(d, now)
         }
         func weekdays(_ w: [Int]?) -> Set<Int>? {
@@ -155,7 +138,6 @@ public enum DumpApplier {
             return set.isEmpty ? nil : set
         }
         func colour(_ raw: String?) -> String?? {
-            // nil = not mentioned, .some(nil) = back to default
             guard let raw else { return nil }
             let l = raw.trimmingCharacters(in: .whitespaces).lowercased()
             if ["", "default", "none", "reset", "auto", "clear"].contains(l) { return .some(nil) }
@@ -164,7 +146,6 @@ public enum DumpApplier {
         }
         func ref(_ a: DumpFields) -> String? {
             if let id = a.id, !id.isEmpty { return id }
-            // A model sometimes puts the reference in `target`.
             if let t = a.target, t.count <= 8, t.count >= 5, t.dropFirst().allSatisfy(\.isHexDigit) { return t }
             return nil
         }
@@ -194,11 +175,7 @@ public enum DumpApplier {
             return DumpApplier.match(name(a), s.oneOffs.indices.filter { s.oneOffs[$0].end > now }.map { ($0, s.oneOffs[$0].title) })
         }
 
-        // MARK: Tasks
-
         func upsertTask(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
-            // An id names an existing task. Without one, a target name, or a title with no due date
-            // that matches an open task, is a change to it; anything else is new.
             if ref(a) != nil {
                 guard let i = taskIndex(a, s, includeDone: true) else { missing("task", a, &rep); return }
                 updateTask(i, a, &s, &rep, rename: true)
@@ -222,7 +199,6 @@ public enum DumpApplier {
             if case .some(let c)? = colour(a.color) { item.color = c }
             if let parent { item.due = min(item.due, parent.due); item.subject = item.subject ?? parent.subject }
             if let i = s.items.firstIndex(where: { !$0.isDone && norm($0.title) == norm(item.title) && $0.parentId == item.parentId }) {
-                // Already there: an update, never a second copy.
                 s.items[i].due = item.due
                 if a.estimateMinutes != nil { s.items[i].estimateMinutes = item.estimateMinutes }
                 if a.color != nil { s.items[i].color = item.color }
@@ -243,7 +219,6 @@ public enum DumpApplier {
             if let m = a.estimateMinutes { s.items[i].estimateMinutes = max(5, min(3000, m)); changed = true }
             if let m = a.importance { s.items[i].importance = max(1, min(5, m)); changed = true }
             if let m = a.difficulty { s.items[i].difficulty = max(1, min(3, m)); changed = true }
-            // Absolute, so saying "200 minutes so far" twice leaves 200.
             if let m = a.doneMinutes { s.items[i].completedMinutes = max(0, m); changed = true }
             if let t = a.topics { s.items[i].topics = t; changed = true }
             if let n = a.notes { s.items[i].notes = n.isEmpty ? nil : n; changed = true }
@@ -277,8 +252,6 @@ public enum DumpApplier {
             s.items.removeAll { $0.id == id || $0.parentId == id }
         }
 
-        // MARK: Activities
-
         func upsertActivity(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
             if ref(a) != nil {
                 guard let i = activityIndex(a, s) else { missing("activity", a, &rep); return }
@@ -302,7 +275,6 @@ public enum DumpApplier {
             if case .some(let col)? = colour(a.color) { c.color = col }
             c.validFrom = a.validFrom.flatMap { AIMapper.parseDate($0, timeZone: tz) }.map { cal.startOfDay(for: $0) }
             c.validUntil = a.validUntil.flatMap { AIMapper.parseDate($0, timeZone: tz) }
-            // Same name on overlapping days is the same activity: update it instead of adding a twin.
             if let i = s.commitments.firstIndex(where: { norm($0.title) == norm(c.title) && !$0.weekdays.isDisjoint(with: c.weekdays) }) {
                 let id = s.commitments[i].id
                 c.id = id
@@ -328,7 +300,7 @@ public enum DumpApplier {
             if let v = a.validFrom { c.validFrom = AIMapper.parseDate(v, timeZone: tz).map { cal.startOfDay(for: $0) } }
             if let v = a.validUntil { c.validUntil = AIMapper.parseDate(v, timeZone: tz) }
             guard c.end > c.start else { rep.problems.append("\(c.title) would end before it starts, so it wasn't changed"); return }
-            guard c != s.commitments[i] else { return }   // already like that
+            guard c != s.commitments[i] else { return }
             s.commitments[i] = c
             rep.changes.append("Changed \(c.title)")
         }
@@ -341,8 +313,6 @@ public enum DumpApplier {
             s.exceptions.removeAll { $0.commitmentId == id }
         }
 
-        /// The `split` macro: one activity into parts (school into periods). Expands into
-        /// upserts of the parts and a delete (or narrowing) of the original.
         func splitActivity(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
             guard let i = activityIndex(a, s) else { missing("activity", a, &rep); return }
             let original = s.commitments[i]
@@ -358,7 +328,6 @@ public enum DumpApplier {
                 made.append(c)
             }
             guard !made.isEmpty else { rep.problems.append("Couldn't split \(original.title): no usable parts"); return }
-            // Days none of the parts cover keep the original as it was.
             let covered = made.reduce(into: Set<Int>()) { $0.formUnion($1.weekdays) }
             let left = original.weekdays.subtracting(covered)
             if left.isEmpty {
@@ -366,7 +335,6 @@ public enum DumpApplier {
             } else {
                 s.commitments[i].weekdays = left
             }
-            // Replace any earlier parts with the same names (re-splitting never doubles up).
             for c in made {
                 if let j = s.commitments.firstIndex(where: { $0.id != original.id && norm($0.title) == norm(c.title)
                     && !$0.weekdays.isDisjoint(with: c.weekdays) }) {
@@ -377,7 +345,6 @@ public enum DumpApplier {
                     s.commitments.append(c)
                 }
             }
-            // A cancelled day for the whole thing cancels every part; changed times can't be split.
             let partIds = s.commitments.filter { c in made.contains { norm($0.title) == norm(c.title) } }.map(\.id)
             let old = s.exceptions.filter { $0.commitmentId == original.id }
             if left.isEmpty { s.exceptions.removeAll { $0.commitmentId == original.id } }
@@ -393,8 +360,6 @@ public enum DumpApplier {
             rep.changes.append("Split \(original.title) into \(made.count) parts"
                                + (left.isEmpty ? "" : " (\(left.sorted().map { dayNames[$0] }.joined(separator: "/")) unchanged)"))
         }
-
-        // MARK: Events
 
         func upsertEvent(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
             if ref(a) != nil || a.target != nil {
@@ -412,7 +377,7 @@ public enum DumpApplier {
                   let ed0 = cal.date(bySettingHour: en.hour, minute: en.minute, second: 0, of: d) else {
                 rep.problems.append("Couldn't add “\(a.title ?? "an event")”: it needs a date, start and end"); return
             }
-            let ed = ed0 > sd ? ed0 : ed0.addingTimeInterval(86400)   // 22:00-01:00 runs past midnight
+            let ed = ed0 > sd ? ed0 : ed0.addingTimeInterval(86400)
             let title = a.title ?? "Busy"
             if let i = s.oneOffs.firstIndex(where: { norm($0.title) == norm(title) && cal.isDate($0.start, inSameDayAs: sd) }) {
                 s.oneOffs[i].start = sd
@@ -451,10 +416,7 @@ public enum DumpApplier {
             s.oneOffs.remove(at: i)
         }
 
-        // MARK: Day changes
-
         func changeDay(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
-            // An existing day change by id: edit it in place.
             if let r = ref(a), let i = s.exceptions.firstIndex(where: { Ref.matches(r, prefix: "d", full: $0.id.uuidString) }) {
                 if let v = a.date { s.exceptions[i].day = day(v) }
                 if let c = a.cancelled { s.exceptions[i].cancelled = c }
@@ -468,7 +430,6 @@ public enum DumpApplier {
             let d = day(a.date)
             var ex = DayException(day: d, cancelled: a.cancelled ?? false, start: tod(a.start), end: tod(a.end),
                                   wake: tod(a.wake), note: a.note)
-            // What it's about: an activity id, an activity's name, a kind ("school"), or nothing (wake only).
             let about = (a.activity ?? a.target ?? (a.id.flatMap { $0.lowercased().hasPrefix("a") ? $0 : nil }))?
                 .trimmingCharacters(in: .whitespaces)
             if let t = about, !t.isEmpty {
@@ -482,7 +443,6 @@ public enum DumpApplier {
                     ex.kind = .school
                 } else { rep.problems.append("Couldn't find activity “\(t)”"); return }
             } else if ex.wake == nil { rep.problems.append("A day change needs an activity, or a wake time"); return }
-            // Replace an earlier change for the same thing on the same day.
             s.exceptions.removeAll { cal.isDate($0.day, inSameDayAs: d) && $0.commitmentId == ex.commitmentId
                 && $0.kind == ex.kind && ($0.wake != nil) == (ex.wake != nil) }
             s.exceptions.append(ex)
@@ -508,13 +468,10 @@ public enum DumpApplier {
             else { missing("day change", a, &rep) }
         }
 
-        // MARK: Markers, moods, screen time, routines
-
         func log(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
             guard var act = a.activity?.lowercased(), !act.isEmpty else { rep.problems.append("A marker needs an activity"); return }
             var phase = MarkerPhase(rawValue: a.phase ?? "end") ?? .end
             var category = TimeCategory(rawValue: a.category ?? "") ?? .free
-            // "in_bed", "woke": the sleep vocabulary, so the night can be measured from them.
             if let (k, p) = SleepEstimator.normalised(activity: act, phase: phase) { act = k; phase = p; category = .sleep }
             s.markers.append(TimelineEvent(at: when(a.at), phrase: a.note ?? act, activity: act,
                                            category: category, phase: phase, source: .voice))
@@ -544,7 +501,6 @@ public enum DumpApplier {
                 missing("routine", a, &rep); return
             }
             if let m = a.minutes, m > 0, m < 240 {
-                // Stated durations replace learned samples: the student knows best.
                 s.routines[i].samples = Array(repeating: m, count: 3)
                 rep.changes.append("\(s.routines[i].name) is \(m) min")
             }
@@ -555,7 +511,6 @@ public enum DumpApplier {
         }
     }
 
-    /// Best fuzzy match of a spoken name against existing names (exact > contains > shared words).
     static func match(_ target: String?, _ candidates: [(Int, String)]) -> Int? {
         guard let target, !target.isEmpty else { return nil }
         func norm(_ s: String) -> String {

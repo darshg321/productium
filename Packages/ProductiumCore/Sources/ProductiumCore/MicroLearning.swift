@@ -1,16 +1,11 @@
 import Foundation
 
-/// Gap mode: short, useful things to do in a few spare minutes instead of
-/// opening a feed. Retrieval practice and spacing have the strongest evidence of
-/// common study techniques (Dunlosky et al. 2013), and they work in small doses.
-
 public struct Flashcard: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var itemId: UUID?
     public var subject: String?
     public var front: String
     public var back: String
-    /// Leitner box 1…5. Higher boxes come back less often.
     public var box: Int
     public var due: Date
     public var createdAt: Date
@@ -33,7 +28,6 @@ public struct Flashcard: Codable, Hashable, Identifiable, Sendable {
 }
 
 public enum Leitner {
-    /// Days until next review for each box (expanding intervals).
     public static let intervals = [0, 1, 2, 4, 8, 16]
 
     public static func review(_ card: Flashcard, correct: Bool, now: Date, testDate: Date? = nil) -> Flashcard {
@@ -41,8 +35,7 @@ public enum Leitner {
         c.reviews += 1
         if correct { c.box = min(5, c.box + 1) } else { c.box = 1; c.lapses += 1 }
         var next = now.addingTimeInterval(Double(intervals[c.box]) * 86400)
-        if c.box == 1 { next = now.addingTimeInterval(10 * 60) } // missed: see it again soon
-        // Don't schedule past the test; review again the day before.
+        if c.box == 1 { next = now.addingTimeInterval(10 * 60) }
         if let t = testDate, next > t { next = max(now, t.addingTimeInterval(-86400)) }
         c.due = next
         return c
@@ -58,7 +51,6 @@ public struct ReadPiece: Codable, Hashable, Identifiable, Sendable {
     public var title: String
     public var body: String
     public var subject: String?
-    /// One question to answer after reading. Generating an answer beats rereading (elaborative interrogation).
     public var question: String?
     public var minutes: Int
     public var source: String
@@ -98,8 +90,6 @@ public enum GapActivity: Hashable, Sendable {
 }
 
 public enum GapPlanner {
-    /// Picks up to three options that fit `minutes`. It offers options rather than
-    /// one assigned task, to keep autonomy (Ryan & Deci 2000) and few choices (Iyengar & Lepper 2000).
     public static func options(minutes: Int, cards: [Flashcard], reads: [ReadPiece], items: [WorkItem],
                                mood: Int?, now: Date) -> [GapActivity] {
         var out: [GapActivity] = []
@@ -119,7 +109,5 @@ public enum GapPlanner {
         return Array(out.prefix(3))
     }
 
-    /// Physiological sigh (double inhale, long exhale). Five minutes a day of cyclic
-    /// sighing improved mood more than mindfulness meditation (Balban et al. 2023).
     public static let breathingSteps = ["Inhale through your nose", "Short second inhale on top", "Long, slow exhale through your mouth"]
 }

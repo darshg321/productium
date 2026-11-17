@@ -2,8 +2,6 @@ import Foundation
 import HealthKit
 import ProductiumCore
 
-/// Reads sleep, steps, daylight and resting heart rate. Data stays on device.
-/// Only daily totals are ever summarised for the AI.
 final class HealthService {
     static let shared = HealthService()
     let store = HKHealthStore()
@@ -20,7 +18,6 @@ final class HealthService {
         try await store.requestAuthorization(toShare: [HKCategoryType(.mindfulSession)], read: readTypes)
     }
 
-    /// One `HealthDay` per calendar day; `sleep*` describe the night that ended that morning.
     func days(back n: Int, calendar cal: Calendar = .current) async -> [HealthDay] {
         guard available else { return [] }
         let today = cal.startOfDay(for: Date())
@@ -67,8 +64,6 @@ final class HealthService {
 
     struct Night { var minutes: Int; var bed: Date; var wake: Date }
 
-    /// Night ending on day D = asleep samples between D-1 18:00 and D 15:00. Overlapping
-    /// samples from several sources (Watch + iPhone) are merged so nothing counts twice.
     private func sleepNights(from: Date, to: Date, cal: Calendar) async -> [Date: Night] {
         let type = HKCategoryType(.sleepAnalysis)
         let windowStart = from.addingTimeInterval(-6 * 3600)
@@ -99,7 +94,6 @@ final class HealthService {
         return out
     }
 
-    /// Wakes the app when new sleep data arrives (i.e. on waking) so the day is replanned early.
     func observeSleep(_ handler: @escaping () -> Void) {
         guard available else { return }
         let type = HKCategoryType(.sleepAnalysis)
@@ -117,7 +111,6 @@ final class HealthService {
         store.save(s) { _, _ in }
     }
 
-    /// Sleep midpoints (hours after midnight) on nights before free days, for chronotype (MCTQ).
     static func freeDayMidpoints(_ days: [HealthDay], prefs: Preferences, cal: Calendar) -> [Double] {
         days.compactMap { d in
             guard let bed = d.bedtime, let wake = d.wake, !prefs.schoolDays.contains(cal.component(.weekday, from: d.day)) else { return nil }

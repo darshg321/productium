@@ -1,15 +1,5 @@
 import Foundation
 
-// MARK: - The export: every byte the app keeps, in one file
-//
-// One JSON file holds everything: the whole state, about-me.md, the active conversation and the
-// archive (every prompt verbatim, with its images), the whole AI call log, usage, the App Group and
-// app defaults, the other files the app writes, and, for debugging, the notifications, permissions
-// and device at export time. Space doesn't matter: it doubles as the debugging dump. The only thing
-// left out is the API key, which stays in the Keychain.
-//
-// Format 3. Earlier formats aren't read (the one-off repair script converts an old backup).
-
 public struct ExportBundle: Codable, Sendable {
     public static let formatID = "productium-export"
     public static let currentVersion = 3
@@ -30,7 +20,6 @@ public struct ExportBundle: Codable, Sendable {
         }
     }
 
-    /// A notification as iOS had it at export time.
     public struct Notification: Codable, Hashable, Sendable {
         public var id: String
         public var title: String
@@ -53,26 +42,16 @@ public struct ExportBundle: Codable, Sendable {
     public var exportedAt: Date
     public var device: Device
 
-    /// state.json.
     public var state: AppState
-    /// about-me.md, as written.
     public var aboutMe: String
-    /// ai-calls.json: every request and reply.
     public var callLog: AICallLog
-    /// UserDefaults the app keeps outside the state: the App Group (scroll log, friction, check-ins,
-    /// alarm ids, widget snapshot…) and the app's own (server address…). Plist values as JSON
-    /// (`{"$data": base64}`, `{"$date": iso}` for the types JSON doesn't have).
     public var sharedDefaults: [String: JSONValue]
     public var appDefaults: [String: JSONValue]
-    /// Every other file the app wrote (last-ai-error.txt, state-before-restore.json, drafts…), base64.
     public var files: [String: String]
 
-    // Read-only snapshots for debugging; import doesn't restore these.
     public var pendingNotifications: [Notification]
     public var deliveredNotifications: [Notification]
-    /// "health.sleep" → "notDetermined", "location" → "authorizedWhenInUse"…
     public var permissions: [String: String]
-    /// The server's usage and subscription answers at export time (raw JSON).
     public var serverSnapshots: [String: JSONValue]
 
     public init(exportedAt: Date, device: Device, state: AppState, aboutMe: String = "", callLog: AICallLog = AICallLog(),
@@ -95,8 +74,6 @@ public struct ExportBundle: Codable, Sendable {
         self.serverSnapshots = serverSnapshots
     }
 
-    /// The stores outside state.json that an export must hold (checked by a test, so a new store
-    /// can't be forgotten).
     public static let nonStateStores = ["aboutMe", "callLog", "sharedDefaults", "appDefaults", "files"]
 
     public static func encoder() -> JSONEncoder {
@@ -122,7 +99,6 @@ public struct ExportBundle: Codable, Sendable {
         }
     }
 
-    /// Reads an export. Only this format: older backups are refused, not half-read.
     public static func read(_ data: Data) throws -> ExportBundle {
         struct Head: Decodable { var format: String?; var version: Int? }
         let head = try? decoder().decode(Head.self, from: data)
@@ -131,7 +107,6 @@ public struct ExportBundle: Codable, Sendable {
         return try decoder().decode(ExportBundle.self, from: data)
     }
 
-    /// One line for the import preview.
     public var summary: String {
         let s = state
         let prompts = s.conversation.turns.count + s.archive.conversations.reduce(0) { $0 + $1.turns.count }
@@ -202,7 +177,6 @@ public enum Exporter {
             m.map { [iso($0.at), $0.phrase, $0.activity, $0.category.rawValue, $0.phase.rawValue, $0.source.rawValue] })
     }
 
-    /// The plan as an .ics file (import into Google Calendar, etc.).
     public static func ics(_ plan: Plan, includeKinds: Set<BlockKind> = [.work, .review, .windDown]) -> String {
         func stamp(_ d: Date) -> String {
             let f = DateFormatter()

@@ -1,10 +1,6 @@
 import SwiftUI
 import ProductiumCore
 
-// MARK: - Subscription
-
-/// How much of the Claude subscription behind the server is used: one bar per limit (the
-/// 5-hour session and the weekly ones), with when each resets.
 struct SubscriptionSection: View {
     @Environment(AppModel.self) private var model
 
@@ -69,8 +65,6 @@ struct SubscriptionSection: View {
     }
 }
 
-// MARK: - Calls
-
 struct AICallRow: View {
     let call: AICall
 
@@ -98,7 +92,6 @@ struct AICallRow: View {
 
     private var seconds: String { String(format: "%.1f s", Double(call.durationMs) / 1000) }
 
-    /// What the student typed (after the context), or the first line of the request.
     private var preview: String {
         let last = call.messages.last?.content ?? ""
         if let r = last.range(of: "\nStudent:\n") { return String(last[r.upperBound...]).replacingOccurrences(of: "\n", with: " ") }
@@ -106,7 +99,6 @@ struct AICallRow: View {
     }
 }
 
-/// Every call this phone made, newest first.
 struct AICallListView: View {
     @Environment(AppModel.self) private var model
     @State private var feature: AIFeature?
@@ -144,7 +136,6 @@ struct AICallListView: View {
     }
 }
 
-/// One request in full: what was sent (system prompt, each message, the schema) and the raw reply.
 struct AICallDetailView: View {
     let call: AICall
     @State private var prettyReply = true
@@ -210,7 +201,6 @@ struct AICallDetailView: View {
     }
 }
 
-/// Long monospaced text that can be selected. Very long text is shown in pieces so the list stays fast.
 struct CodeText: View {
     let text: String
 

@@ -1,12 +1,7 @@
 import Foundation
 
-// MARK: - The app's whole persisted state
-//
-// Kept in ProductiumCore (pure Foundation) so it can be tested on Linux: the export test checks
-// that every stored property is in the export and survives a round trip.
-
 public struct SavedPlace: Codable, Hashable, Identifiable, Sendable {
-    public var id: String          // "home", "school", or a custom id
+    public var id: String
     public var name: String
     public var latitude: Double
     public var longitude: Double
@@ -34,7 +29,6 @@ public struct Integrations: Codable, Hashable, Sendable {
 
     public init() {}
 
-    /// A switch added in a later build starts off instead of resetting the others.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         func v(_ k: CodingKeys, _ d: Bool) -> Bool { (try? c.decodeIfPresent(Bool.self, forKey: k)) ?? d }
@@ -60,8 +54,6 @@ public struct FocusSession: Codable, Hashable, Sendable {
     }
 }
 
-/// Everything the app persists in state.json. Every field decodes with a default, so a build
-/// that adds a field never wipes the student's data (the export test checks every field round-trips).
 public struct AppState: Codable, Sendable {
     public var onboarded = false
     public var prefs = Preferences()
@@ -70,20 +62,16 @@ public struct AppState: Codable, Sendable {
     public var routines: [Routine] = Routine.defaults
     public var markers: [TimelineEvent] = []
     public var outcomes: [BlockOutcome] = []
-    /// Work logged outside study blocks (box progress, evidence).
     public var progress: [ProgressEntry] = []
     public var moods: [MoodEntry] = []
     public var health: [HealthDay] = []
-    /// Core Motion spans (walks, rides, still periods).
     public var motion: [MotionSpan] = []
     public var screen: [ScreenDay] = []
-    public var events: [FixedEvent] = []          // calendar cache
-    public var oneOffs: [FixedEvent] = []         // one-off busy time from the brain dump
-    public var exceptions: [DayException] = []    // one-day changes ("no school today")
+    public var events: [FixedEvent] = []
+    public var oneOffs: [FixedEvent] = []
+    public var exceptions: [DayException] = []
     public var learned = LearnedModel()
-    /// What the app believes about the student (capacities, dinner, chronotype…).
     public var beliefs = Beliefs()
-    /// Tier 2: how the app behaves. Changed only by approved proposals.
     public var policy = BehaviourPolicy()
     public var taper = ScreenTaper()
     public var flashcards: [Flashcard] = []
@@ -93,23 +81,17 @@ public struct AppState: Codable, Sendable {
     public var integrations = Integrations()
     public var review: WeeklyReview?
     public var reviewAt: Date?
-    /// The Inbox box: one ongoing AI session until it's cleared.
     public var conversation = Conversation(startedAt: Date())
-    /// Cleared conversations ("Past prompts").
     public var archive = ConversationArchive()
     public var focus: FocusSession?
     @SortedSet public var learnedDays: Set<String> = []
     @SortedSet public var dismissed: Set<String> = []
-    /// Behaviour changes the reflection suggested, and what the student decided.
     public var proposals = ProposalBook()
-    /// When the reflection last ran.
     public var reflectionAt: Date?
-    /// "What were you doing?" questions and their answers.
     public var gaps = GapLog()
-    /// When Productium was opened (phone-use evidence for gaps and sleep).
     public var appOpens: [Date] = []
-    public var usage = UsageLedger()              // AI token meter
-    public var snoozed: [UUID: Date] = [:]        // block → when its snooze reminder fires
+    public var usage = UsageLedger()
+    public var snoozed: [UUID: Date] = [:]
 
     public var dumpState: DumpState {
         get {
@@ -135,6 +117,7 @@ public struct AppState: Codable, Sendable {
 
     public init() {}
 
+    // Lenient so a build that adds a field never wipes stored data.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AppState()
@@ -178,15 +161,10 @@ public struct AppState: Codable, Sendable {
         snoozed = v(.snoozed, d.snoozed)
     }
 
-    /// Nothing the student might want in an export is thrown away: only expired snoozes go.
-    /// (If the file ever gets genuinely big, old data moves to an archive file instead.)
     public mutating func prune(now: Date) {
         snoozed = snoozed.filter { $0.value > now.addingTimeInterval(-3600) }
     }
 
-    /// Restore from an export. Permissions (integrations) belong to this phone, not the export,
-    /// so they're kept, and a focus session from another time is dropped. With `keepingDevice`
-    /// off it's an exact copy (for tests and the repair script).
     public mutating func restore(full s: AppState, keepingDevice: Bool = true) {
         let device = integrations
         self = s
@@ -196,4 +174,3 @@ public struct AppState: Codable, Sendable {
         onboarded = true
     }
 }
-

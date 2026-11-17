@@ -36,15 +36,12 @@ final class AboutMeTests: XCTestCase {
         let r = me.apply(AboutMeFact(text: "CS club moved to Fridays", replaces: "CS club is Thursdays at lunch"), by: .box)
         XCTAssertEqual(r, .failure(.studentLine))
         XCTAssertTrue(me[.stated].contains { $0.text == "CS club is Thursdays at lunch" })
-        // The box only appends to Stated; inferences are reflection's.
         XCTAssertEqual(me.apply(AboutMeFact(section: "Inferred", text: "Avoids essays"), by: .box), .failure(.notAllowed(.inferred)))
         XCTAssertEqual(me.apply(AboutMeFact(section: "Stated", text: "Stated things"), by: .reflection), .failure(.notAllowed(.stated)))
         XCTAssertNoThrow(try me.apply(AboutMeFact(text: "Waterloo drafts 1-2 done"), by: .box).get())
         XCTAssertEqual(me[.stated].last?.text, "Waterloo drafts 1-2 done")
-        // An AI line can be replaced by a newer AI line.
         me.apply(AboutMeFact(text: "Waterloo drafts 1-3 done", replaces: "Waterloo drafts 1-2 done"), by: .box)
         XCTAssertEqual(me[.stated].filter { $0.text.hasPrefix("Waterloo") }.map(\.text), ["Waterloo drafts 1-3 done"])
-        // Saying it twice doesn't add it twice.
         me.apply(AboutMeFact(text: "waterloo drafts 1-3 done."), by: .box)
         XCTAssertEqual(me[.stated].filter { $0.text.hasPrefix("Waterloo") }.count, 1)
     }

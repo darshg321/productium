@@ -1,27 +1,10 @@
 import Foundation
 
-// MARK: - The Inbox box is one ongoing AI session
-//
-// Every prompt continues the same conversation until the student clears it. The whole active
-// conversation is sent every time, byte-for-byte as it went the first time, and only the new user
-// turn is appended (claude-server's rule 3). The server then continues the same live session and
-// reads the prompt cache instead of rebuilding it.
-//
-// The box answers through one forced client tool (`apply`), not `output_config.format`: claude-server
-// parks a live session after a tool call, but never after a json_schema answer. Each later user turn
-// starts with the tool's result, which is what the app applied for the previous answer, so the model
-// learns what really happened without anyone editing history.
-//
-// App context: the full context goes in the first user turn only. Later turns carry a delta
-// ("since your last message: …") so the history stays stable and the cache stays valid.
-
-/// What the app did with one answer: the receipt's lines.
 public struct AppliedReport: Codable, Hashable, Sendable {
     public var changes: [String]
     public var problems: [String]
     public init(changes: [String] = [], problems: [String] = []) { self.changes = changes; self.problems = problems }
 
-    /// The tool result sent back at the start of the next turn.
     public var toolResultText: String {
         var out: [String] = []
         out.append(changes.isEmpty ? "Applied: nothing" : "Applied: " + changes.joined(separator: "; "))
@@ -33,24 +16,16 @@ public struct AppliedReport: Codable, Hashable, Sendable {
 public struct ConversationTurn: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var at: Date
-    /// Exactly what the student typed.
     public var text: String
-    /// Exactly the images that were sent with it.
     public var images: [AIImage]
-    /// The user message's `content` as sent, kept so history replays byte-for-byte.
     public var userContent: JSONValue
-    /// The assistant message's `content` exactly as it came back. Nil when the request failed
-    /// (a failed turn stays in the thread but isn't part of the history that's sent).
     public var assistantContent: JSONValue?
-    /// The reply shown to the student.
     public var reply: String
     public var applied: AppliedReport
     public var callId: UUID?
     public var tokens: TokenCount?
     public var failed: Bool
-    /// Why it failed, in full (for Details).
     public var detail: String?
-    /// The full context this turn's message was built against (the baseline for the next delta).
     public var context: String
 
     public init(id: UUID = UUID(), at: Date, text: String, images: [AIImage] = [], userContent: JSONValue,
@@ -72,10 +47,8 @@ public struct ConversationTurn: Codable, Hashable, Identifiable, Sendable {
         self.context = context
     }
 
-    /// True when this turn is part of the history that's sent.
     public var isInHistory: Bool { !failed && assistantContent != nil }
 
-    /// The id of the `apply` call in the answer, which the next turn's tool result points at.
     public var toolUseId: String? {
         guard case .array(let blocks)? = assistantContent else { return nil }
         for b in blocks {
@@ -86,9 +59,7 @@ public struct ConversationTurn: Codable, Hashable, Identifiable, Sendable {
 }
 
 public struct ConversationTokenStats: Codable, Hashable, Sendable {
-    /// The latest request's usage: what the next prompt carries is input + cacheRead + cacheWrite.
     public var last: TokenCount?
-    /// Everything the model wrote in this conversation.
     public var outputTotal: Int
     public var cacheReadTotal: Int
     public var requests: Int
@@ -100,7 +71,6 @@ public struct ConversationTokenStats: Codable, Hashable, Sendable {
         self.requests = requests
     }
 
-    /// The conversation's size: what the next prompt will carry.
     public var size: Int { last.map { $0.input + $0.cacheRead + $0.cacheWrite } ?? 0 }
 
     public mutating func add(_ t: TokenCount) {
@@ -117,7 +87,6 @@ public struct Conversation: Codable, Hashable, Identifiable, Sendable {
     public var lastRequestAt: Date?
     public var turns: [ConversationTurn]
     public var tokenStats: ConversationTokenStats
-    /// Set when it's archived: a one-line title.
     public var title: String?
     public var archivedAt: Date?
 
@@ -134,37 +103,31 @@ public struct Conversation: Codable, Hashable, Identifiable, Sendable {
 
     public var isEmpty: Bool { turns.isEmpty }
 
-    /// Adds a finished turn (answered or failed) and counts its tokens.
     public mutating func add(_ turn: ConversationTurn) {
         turns.append(turn)
         if let t = turn.tokens { tokenStats.add(t) }
         if !turn.failed { lastRequestAt = turn.at }
     }
 
-    /// The request for a new prompt: the whole history unchanged, then the new user turn.
     public func request(system: String, tool: AITool, userContent: JSONValue, maxTokens: Int,
                         model: String = AIModel.sonnet, effort: String? = nil) -> AIRequest {
         AIRequest(model: model, system: system, messages: messages + [AIMessage(role: "user", raw: userContent)],
                   tool: tool, maxTokens: maxTokens, effort: effort)
     }
 
-    /// The turns that are sent as history, oldest first.
     public var history: [ConversationTurn] { turns.filter(\.isInHistory) }
 
-    /// The messages that go before a new user turn, exactly as they went the first time.
     public var messages: [AIMessage] {
         history.flatMap { t -> [AIMessage] in
             [AIMessage(role: "user", raw: t.userContent), AIMessage(role: "assistant", raw: t.assistantContent ?? .array([]))]
         }
     }
 
-    /// When the prompt cache behind this conversation has expired (see `ConversationPolicy.cacheTTL`).
     public func cacheExpired(now: Date) -> Bool {
         guard let last = lastRequestAt, !history.isEmpty else { return false }
         return now.timeIntervalSince(last) >= ConversationPolicy.cacheTTL
     }
 
-    /// A one-line title: the first prompt, shortened.
     public var suggestedTitle: String {
         let first = turns.first { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?.text
             ?? (turns.first.map { _ in "Screenshots" } ?? "Empty")
@@ -173,7 +136,6 @@ public struct Conversation: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-/// Cleared conversations, newest last.
 public struct ConversationArchive: Codable, Hashable, Sendable {
     public var conversations: [Conversation]
     public init(conversations: [Conversation] = []) { self.conversations = conversations }
@@ -187,13 +149,11 @@ public struct ConversationArchive: Codable, Hashable, Sendable {
         conversations.append(c)
     }
 
-    /// Takes one back out (to resume it).
     public mutating func remove(_ id: UUID) -> Conversation? {
         guard let i = conversations.firstIndex(where: { $0.id == id }) else { return nil }
         return conversations.remove(at: i)
     }
 
-    /// Newest first, optionally only those whose prompts or replies contain `query`.
     public func search(_ query: String) -> [Conversation] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         let all = conversations.sorted { ($0.archivedAt ?? $0.startedAt) > ($1.archivedAt ?? $1.startedAt) }
@@ -205,18 +165,14 @@ public struct ConversationArchive: Codable, Hashable, Sendable {
     }
 }
 
+// claude-server only keeps a live session (and its prompt cache) when history is resent byte-for-byte
+// and the last answer was a tool call: a json_schema answer is never parked, so the box uses a forced tool.
 public enum ConversationPolicy {
-    /// The box's one tool. Forced, so every answer is a tool call claude-server can park a session on.
     public static let toolName = "apply"
 
-    /// How long the conversation stays cached. Requests carry the 1-hour prompt-cache marker, but
-    /// claude-server keeps a live session waiting for a tool result for 15 minutes
-    /// (`CLAUDE_SERVER_SESSION_TOOL_TTL`, default 900 s). After that the history is replayed as a
-    /// transcript, which re-reads every token, so 15 minutes is when the Clear button turns red.
+    // The server drops a session waiting on a tool result after 15 min (CLAUDE_SERVER_SESSION_TOOL_TTL).
     public static let cacheTTL: TimeInterval = 15 * 60
 
-    /// The block marker that asks for the 1-hour prompt cache. It's in the first user turn, so it
-    /// is in every request of the conversation and the session signature never changes.
     public static let cacheControl: JSONValue = .object(["type": .string("ephemeral"), "ttl": .string("1h")])
 
     public static func tool(schema: JSONValue) -> AITool {
@@ -240,12 +196,6 @@ public enum ConversationPolicy {
         return "Student:\n" + (t.isEmpty ? (images.isEmpty ? "(empty)" : "(screenshots only)") : t)
     }
 
-    /// The content of the next user turn, and the full context it was built against.
-    ///
-    /// First turn: [full context (cache marker), images…, the student's words].
-    /// Later turns: [tool result for the last answer (what was applied, plus the images), the
-    /// context delta, images…, the student's words]. Images are in both places because the live
-    /// session only reads the tool result's images and a replayed one only reads the top-level ones.
     public static func userContent(for c: Conversation, text: String, images: [AIImage],
                                    fullContext: String) -> JSONValue {
         let student = textBlock(studentText(text, images: images))
@@ -255,6 +205,7 @@ public enum ConversationPolicy {
         }
         var blocks: [JSONValue] = []
         if let toolId = last.toolUseId {
+            // Images go in the tool result (read by a live session) and top-level (read when history is replayed).
             blocks.append(.object(["type": .string("tool_result"), "tool_use_id": .string(toolId),
                                    "content": .array([textBlock(last.applied.toolResultText)] + pics)]))
         } else {
@@ -264,8 +215,6 @@ public enum ConversationPolicy {
         return .array(blocks + pics + [student])
     }
 
-    /// What changed in the app's context since the last turn, line by line. When that's longer
-    /// than the context itself, the whole context is sent again instead.
     public static func delta(from old: String, to new: String) -> String {
         let a = old.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let b = new.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)

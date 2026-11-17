@@ -1,10 +1,6 @@
 import SwiftUI
 import ProductiumCore
 
-/// Every task in one list, the way Reminders shows a smart list: a summary on top, sections by
-/// when it's due (or by subject or type), search, and swipes for the common things. Adding and
-/// editing happen on the phone in a form, so they cost no tokens. The Inbox still works for
-/// anything typed in plain words.
 struct TasksView: View {
     @Environment(AppModel.self) private var model
     @AppStorage("tasks.grouping") private var grouping: TaskGrouping = .due
@@ -90,7 +86,6 @@ struct TasksView: View {
     }
 }
 
-/// Open tasks, what's left and how much of it already has a slot, in the Health card style.
 struct TaskSummaryCard: View {
     @Environment(AppModel.self) private var model
     let now: Date
@@ -232,7 +227,6 @@ struct TaskRow: View {
     }
 }
 
-/// Add or change a task on the phone. No tokens: the planner just makes room for it.
 struct TaskEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss

@@ -2,9 +2,6 @@ import SwiftUI
 import Charts
 import ProductiumCore
 
-/// The last seven days as Health-style highlight cards: Claude's weekly note, then sleep,
-/// work and scrolling (one number, one comparison, one small chart each), then the week
-/// drawn as it actually went.
 struct ReviewView: View {
     @Environment(AppModel.self) private var model
 
@@ -43,8 +40,6 @@ struct ReviewView: View {
 
     private func avg(_ xs: [Int]) -> Int? { xs.isEmpty ? nil : xs.reduce(0, +) / xs.count }
 
-    // MARK: Cards
-
     @ViewBuilder private var note: some View {
         Card {
             CardHeader(title: "Weekly Note", symbol: "sparkles", color: .teal,
@@ -63,7 +58,6 @@ struct ReviewView: View {
         }
     }
 
-    /// Where last week's nights came from, e.g. "from your check-ins".
     private var sleepSource: String? {
         let week = model.state.health.filter { $0.sleepMinutes != nil && $0.day > Date().addingTimeInterval(-8 * 86400) }
         let sources = Set(week.map { $0.sleepSource ?? .health })
@@ -147,8 +141,6 @@ struct ReviewView: View {
     }
 }
 
-/// Seven strips, one per day, showing what the time actually went to (observed or
-/// assumed), with a legend.
 struct WeekAsLived: View {
     @Environment(AppModel.self) private var model
     let days: [Date]

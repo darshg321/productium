@@ -19,14 +19,12 @@ final class DumpTests: XCTestCase {
         run(&s, [.upsert("day_change", ["activity": "school", "date": "2026-11-16", "cancelled": true])], now: Fx.mon(11))
         XCTAssertEqual(s.exceptions.count, 1)
         XCTAssertEqual(s.exceptions[0].kind, .school)
-        // Planner: no school block or commute today, but tomorrow still has school.
         let input = PlannerInput(now: Fx.mon(11), calendar: cal, items: [], commitments: s.commitments,
                                  routines: s.routines, exceptions: s.exceptions)
         let plan = Planner.plan(input)
         XCTAssertFalse(plan.blocks.contains { $0.title == "School" && cal.isDate($0.start, inSameDayAs: Fx.mon(12)) })
         XCTAssertFalse(plan.blocks.contains { $0.title == "Home from school" && cal.isDate($0.start, inSameDayAs: Fx.mon(12)) })
         XCTAssertTrue(plan.blocks.contains { $0.title == "School" && cal.isDate($0.start, inSameDayAs: Fx.mon(12, plusDays: 1)) })
-        // Timeline: the day isn't assumed to be school, and the wake-up is a free-day one.
         let segs = TimelineBuilder.segments(DayInputs(day: Fx.mon(12), events: [], commitments: s.commitments, routines: s.routines,
                                                       outcomes: [], health: nil, screen: nil, prefs: s.prefs, exceptions: s.exceptions),
                                             calendar: cal)
@@ -65,7 +63,6 @@ final class DumpTests: XCTestCase {
         XCTAssertEqual(log.problems.count, 1, "the missing task is reported, not silently dropped")
     }
 
-    /// B9: progress is absolute, so re-stating a total doesn't add it again.
     func testRestatedProgressIsNotDoubleCounted() {
         let apps = WorkItem(title: "University applications", kind: .application, due: Fx.mon(23, plusDays: 40))
         var s = state(items: [apps])
@@ -109,7 +106,6 @@ final class DumpTests: XCTestCase {
         XCTAssertEqual(s.commitments.count, 3)
         XCTAssertEqual(s.commitments.first { $0.title == "Soccer practice" }?.start, TimeOfDay(16, 30))
         XCTAssertEqual(s.oneOffs.first?.start, Fx.mon(16, plusDays: 2))
-        // Images go out as content blocks; text-only stays a string.
         let withImage = String(data: try JSONEncoder().encode(AIMessage(role: "user", content: "hi", images: [AIImage(mediaType: "image/png", base64: "AA==")])), encoding: .utf8)!
         XCTAssertTrue(withImage.contains("\"type\":\"image\"") && withImage.contains("media_type"))
         let back = try JSONDecoder().decode(AIMessage.self, from: Data(withImage.utf8))

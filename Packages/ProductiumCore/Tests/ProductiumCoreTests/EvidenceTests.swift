@@ -1,7 +1,6 @@
 import XCTest
 @testable import ProductiumCore
 
-/// Every prompt teaches the app: facts go to about-me.md, evidence to check-ins, routines and work done.
 final class EvidenceTests: XCTestCase {
     let cal = Fx.cal
 
@@ -15,7 +14,6 @@ final class EvidenceTests: XCTestCase {
         DumpApplier.apply(r, to: &s, now: now, calendar: cal)
     }
 
-    /// "i left at 8:02 and got to school 8:16": one routine sample and one Travel segment.
     func testTravelEvidenceTeachesTheRoutineAndPaintsTravel() {
         var s = state()
         let answer = DumpResult(ops: [], reply: "Nice, 14 minutes.", evidence: [
@@ -32,13 +30,11 @@ final class EvidenceTests: XCTestCase {
         XCTAssertEqual(travel.count, 1)
         XCTAssertEqual(travel.first?.start, Fx.mon(8, 2))
         XCTAssertEqual(travel.first?.end, Fx.mon(8, 16))
-        // Said again: no second sample, no second pair of markers.
         run(&s, answer)
         XCTAssertEqual(s.routines.first { $0.id == "to_school" }!.samples, [14])
         XCTAssertEqual(s.markers.count, 2)
     }
 
-    /// "i've written two drafts": work done today, even without a study block.
     func testWorkWithoutABlockCountsAsWorkDone() {
         let drafts = WorkItem(title: "Waterloo AIF drafts", kind: .application, due: Fx.mon(23, plusDays: 20))
         var s = state(items: [drafts])
@@ -50,8 +46,6 @@ final class EvidenceTests: XCTestCase {
         XCTAssertEqual(s.progress.first?.itemId, drafts.id)
     }
 
-    /// Minutes set on a task are logged once; evidence for the same work isn't counted again, and a
-    /// correction counts against the day.
     func testTaskMinutesAreLoggedOnceAndCorrectionsCount() {
         let apps = WorkItem(title: "University applications", kind: .application, due: Fx.mon(23, plusDays: 40))
         var s = state(items: [apps])
@@ -77,8 +71,6 @@ final class EvidenceTests: XCTestCase {
         XCTAssertEqual(rep.problems.count, 1)
     }
 
-    /// B1: voice start 13:02, two geofence starts, voice end 13:16. One 14-minute sample, learned the
-    /// same day, and replaying the day (or learning it again tomorrow) doesn't add it twice.
     func testDuplicateStartsGiveOneSampleOnce() {
         let day = Fx.mon(0)
         func at(_ h: Int, _ m: Int, _ sec: Int = 0) -> Date { day.addingTimeInterval(Double(h * 3600 + m * 60 + sec)) }
@@ -111,8 +103,6 @@ final class MotionTests: XCTestCase {
         list.map { MotionSample(at: Fx.mon($0.0, $0.1), kind: $0.2, confidence: 2) }
     }
 
-    /// A fixture of motion spans plus markers gives the expected segments, and a morning walk
-    /// teaches to_school.
     func testSpansPaintSegmentsAndTeachTheWalk() {
         let recs = samples([(7, 0, .stationary), (8, 2, .walking), (8, 9, .walking), (8, 16, .stationary),
                             (12, 0, .walking), (12, 3, .stationary), (15, 5, .automotive), (15, 27, .stationary)])
@@ -120,7 +110,6 @@ final class MotionTests: XCTestCase {
         let walk = spans.first { $0.kind == .walking }!
         XCTAssertEqual(walk.start, Fx.mon(8, 2))
         XCTAssertEqual(walk.end, Fx.mon(8, 16), "records of the same kind merge")
-        // A check-in at 15:00 ("left school") is truth; the ride after it is painted by motion.
         let markers = [TimelineEvent(at: Fx.mon(15), phrase: "left school", activity: "from_school", category: .commute, phase: .start),
                        TimelineEvent(at: Fx.mon(15, 30), phrase: "home", activity: "from_school", category: .commute, phase: .end)]
         let segs = TimelineBuilder.segments(DayInputs(day: Fx.mon(12), events: markers, commitments: [Fx.school], routines: Routine.defaults,
@@ -137,7 +126,6 @@ final class MotionTests: XCTestCase {
         var routines = MotionTimeline.learnRoutines(spans, day: Fx.mon(0), commitments: [Fx.school], routines: Routine.defaults, calendar: cal)
         XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
         XCTAssertEqual(routines.first { $0.id == "from_school" }?.samples, [22])
-        // Rebuilt from the same records (ids kept), it isn't learned twice.
         let again = MotionTimeline.spans(recs, until: Fx.mon(18), previous: spans)
         routines = MotionTimeline.learnRoutines(again, day: Fx.mon(0), commitments: [Fx.school], routines: routines, calendar: cal)
         XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
@@ -154,8 +142,6 @@ final class MotionTests: XCTestCase {
 final class SleepTests: XCTestCase {
     let cal = Fx.cal
 
-    /// B2: in_bed 00:59 + sleep end 07:25 is 6 h 26 for that night, and the planner's short-night
-    /// logic uses it.
     func testCheckInsMeasureTheNight() {
         var s = DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [],
                           routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
@@ -189,7 +175,6 @@ final class SleepTests: XCTestCase {
                                             sleepNeedMinutes: 540, calendar: cal)?.source, .health)
         XCTAssertEqual(SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], plannedWake: Fx.mon(7),
                                             sleepNeedMinutes: 540, calendar: cal)?.source, .plan)
-        // An assumed night is never stored as if it were measured.
         XCTAssertNil(SleepEstimator.fill([], days: [Fx.mon(0)], markers: [], motion: [], phoneUse: [], sleepNeedMinutes: 540,
                                          calendar: cal).first?.sleepMinutes)
     }
@@ -198,7 +183,6 @@ final class SleepTests: XCTestCase {
 final class BeliefTests: XCTestCase {
     let cal = Fx.cal
 
-    /// 3 weeks of fixture days move the caps toward what happened, within bounds.
     func testThreeWeeksMoveCapsTowardObservedBehaviour() {
         let now = Fx.mon(9)
         var days: [DayRecord] = []
@@ -227,10 +211,8 @@ final class BeliefTests: XCTestCase {
         XCTAssertGreaterThan(b.value("study.schoolDayFreeTime"), 60, "they keep more free time than the prior")
         XCTAssertEqual(b.value("study.focusMinutes"), (40 * 5 + 30 * 8) / 13.0, accuracy: 0.1)
         XCTAssertEqual(b.minutes("routines.dinnerTime"), 18 * 60 + 46, "from the 18:30 prior toward 19:00")
-        // A week of nothing done can't drop below the bound.
         let lazy = (1...21).map { DayRecord(day: Fx.mon(0, plusDays: -$0), isSchoolDay: true, planned: 100, done: 1) }
         XCTAssertGreaterThanOrEqual(CapacityLearner.learn(Beliefs(), days: lazy, now: now, calendar: cal).value("study.schoolDayCapacity"), 30)
-        // The planner reads the learned cap.
         let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 4), estimateMinutes: 900)
         func monday(_ beliefs: Beliefs) -> Int {
             Planner.plan(PlannerInput(now: Fx.mon(6), calendar: cal, items: [essay], commitments: [Fx.school], beliefs: beliefs))

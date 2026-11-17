@@ -1,7 +1,6 @@
 import Foundation
 import ProductiumCore
 
-/// What an export file holds, shown before it replaces anything.
 struct RestorePreview: Identifiable {
     let id = UUID()
     var exportedAt: Date?
@@ -27,7 +26,6 @@ enum Persistence {
     }
 }
 
-/// about-me.md: what the app knows about the student, as a markdown file they can edit.
 enum AboutMeStore {
     static var url: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -44,8 +42,6 @@ enum AboutMeStore {
     }
 }
 
-/// The full AI call log (prompts and replies) lives in its own file: it's for reading when
-/// something looks off, and keeping it out of state.json keeps every save small.
 enum CallLogStore {
     static var url: URL { SharedConfig.containerURL.appendingPathComponent("ai-calls.json") }
 

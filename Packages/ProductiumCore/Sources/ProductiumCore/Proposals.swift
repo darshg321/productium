@@ -1,29 +1,12 @@
 import Foundation
 
-// MARK: - Bounded behaviour changes, approved by the student
-//
-// Only the reflection job (Opus) may suggest how the app behaves, and nothing changes until the
-// student taps Approve. Every suggestion is a proposal: what, from, to, why, with evidence.
-//   - Tier 2 knobs have a hard range and a largest step per change.
-//   - At most 3 proposals per reflection run; at most one change to the same knob per 7 days.
-//   - "Never change this" pins a knob. A rejected or reverted proposal is fed back as evidence
-//     and the same change isn't proposed again for 30 days.
-//   - Pending proposals expire after 7 days. Approved ones can be reverted.
-//   - Two runs rejected in a row pause reflection for a week.
-
 public enum ProposalChange: Codable, Hashable, Sendable {
-    /// A tier 2 knob to a new value (bounded on the way in).
     case knob(key: String, to: Double)
-    /// A small first step for a task they keep putting off (a new step, never a change to theirs).
     case starterStep(parent: UUID, title: String, minutes: Int, due: Date)
-    /// An if-then reminder.
     case intention(IntentionNudge)
-    /// A new group on What Productium Thinks.
     case beliefGroup(BeliefGroup, evidence: [String])
-    /// An Inferred or Patterns line for about-me.md.
     case aboutMe(section: AboutMeSection, text: String)
 
-    /// What it's about, for the one-change-per-week rule and pinning.
     public var target: String {
         switch self {
         case .knob(let k, _): return k
@@ -41,7 +24,6 @@ public struct BehaviourProposal: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var runId: UUID
     public var change: ProposalChange
-    /// The value before and after, as text ("55 min" → "45 min").
     public var from: String
     public var to: String
     public var reason: String
@@ -50,9 +32,7 @@ public struct BehaviourProposal: Codable, Hashable, Identifiable, Sendable {
     public var at: Date
     public var status: ProposalStatus
     public var decidedAt: Date?
-    /// What approving it created (the step's id), so Revert can take it back.
     public var created: UUID?
-    /// The knob's value before approval, for Revert.
     public var previous: Double?
 
     public init(id: UUID = UUID(), runId: UUID, change: ProposalChange, from: String, to: String, reason: String,
@@ -84,7 +64,6 @@ extension String {
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }
 
-/// A run's note for the proposal card ("You've put off the Waterloo revision 3 times…").
 public struct ReflectionRun: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var at: Date
@@ -96,9 +75,7 @@ public struct ReflectionRun: Codable, Hashable, Identifiable, Sendable {
 public struct ProposalBook: Codable, Hashable, Sendable {
     public var proposals: [BehaviourProposal]
     public var runs: [ReflectionRun]
-    /// Knobs (targets) the student never wants changed.
     @SortedSet public var pinned: Set<String>
-    /// Reflection doesn't run before this (two runs rejected in a row).
     public var pausedUntil: Date?
 
     public static let maxPerRun = 3
@@ -114,7 +91,6 @@ public struct ProposalBook: Codable, Hashable, Sendable {
     }
 
     public var pending: [BehaviourProposal] { proposals.filter { $0.status == .pending } }
-    /// Approved and reverted, newest first (Settings → Changes).
     public var history: [BehaviourProposal] {
         proposals.filter { $0.status == .approved || $0.status == .reverted }.sorted { ($0.decidedAt ?? $0.at) > ($1.decidedAt ?? $1.at) }
     }
@@ -127,17 +103,12 @@ public struct ProposalBook: Codable, Hashable, Sendable {
         }
     }
 
-    /// Lines for the next reflection: what the student turned down or took back.
     public var feedback: [String] {
         proposals.filter { $0.status == .rejected || $0.status == .reverted }.suffix(10).map {
             "\($0.status == .rejected ? "Rejected" : "Reverted"): \($0.title) (\($0.reason))"
         }
     }
 
-    // MARK: Submitting a run
-
-    /// Checks a run's proposals against every guard and keeps the ones that pass (at most 3).
-    /// Returns why the others were dropped.
     @discardableResult
     public mutating func submit(_ run: ReflectionRun, _ drafts: [BehaviourProposal], state s: DumpState, now: Date) -> [String] {
         expire(now: now)
@@ -145,7 +116,6 @@ public struct ProposalBook: Codable, Hashable, Sendable {
         var accepted: [BehaviourProposal] = []
         for var p in drafts {
             if case .aboutMe(let section, let text) = p.change {
-                // About-me lines don't count toward the 3 behaviour changes, but still wait for approval.
                 guard section == .inferred || section == .patterns, !text.isEmpty,
                       accepted.filter({ if case .aboutMe = $0.change { return true }; return false }).count < 3 else {
                     problems.append("About-me line refused: \(text.prefix(40))"); continue
@@ -209,9 +179,6 @@ public struct ProposalBook: Codable, Hashable, Sendable {
         return problems
     }
 
-    // MARK: Deciding
-
-    /// Approve: the change is applied (bounded again, in case things moved since).
     public mutating func approve(_ id: UUID, in s: inout DumpState, now: Date, calendar cal: Calendar) -> Bool {
         guard let i = proposals.firstIndex(where: { $0.id == id && $0.status == .pending }) else { return false }
         var p = proposals[i]
@@ -249,14 +216,12 @@ public struct ProposalBook: Codable, Hashable, Sendable {
         checkPause(now: now)
     }
 
-    /// "Never change this": rejected, and the knob is pinned.
     public mutating func neverChange(_ id: UUID, now: Date) {
         guard let p = proposals.first(where: { $0.id == id }) else { return }
         pinned.insert(p.change.target)
         reject(id, now: now)
     }
 
-    /// Takes an approved change back exactly.
     public mutating func revert(_ id: UUID, in s: inout DumpState, now: Date) -> Bool {
         guard let i = proposals.firstIndex(where: { $0.id == id && $0.status == .approved }) else { return false }
         let p = proposals[i]
@@ -279,7 +244,6 @@ public struct ProposalBook: Codable, Hashable, Sendable {
         return true
     }
 
-    /// Two runs in a row with everything rejected: reflection pauses for a week.
     mutating func checkPause(now: Date) {
         let decided = runs.filter { r in !proposals.contains { $0.runId == r.id && $0.status == .pending } }.suffix(2)
         guard decided.count == 2 else { return }

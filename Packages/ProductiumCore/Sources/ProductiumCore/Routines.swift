@@ -1,30 +1,20 @@
 import Foundation
 
-// MARK: - Routines the app learns (commute, getting ready…)
-
 public enum RoutineAnchor: String, Codable, Sendable {
-    /// Starts at wake-up (getting ready).
     case afterWake
-    /// Ends when the day's first commitment of `anchorKind` starts (walk to school).
     case beforeFirstCommitment
-    /// Starts when the day's last commitment of `anchorKind` ends (walk home).
     case afterLastCommitment
 }
 
-/// A repeated activity whose duration the app learns from a few check-ins and
-/// then fills in by itself, so the student never logs "walked to school" again.
 public struct Routine: Codable, Identifiable, Hashable, Sendable {
-    public var id: String          // stable key: "get_ready", "to_school", "from_school"
+    public var id: String
     public var name: String
     public var anchor: RoutineAnchor
     public var anchorKind: CommitmentKind?
     public var category: TimeCategory
     public var defaultMinutes: Int
-    /// The most recent observed durations (newest last), capped at `maxSamples`.
     public var samples: [Int]
     public var enabled: Bool
-    /// The check-ins already learned from (the marker that ended each pair), so replaying the
-    /// same day, or learning it again tomorrow, never counts it twice.
     @SortedSet public var learnedFrom: Set<UUID>
 
     public static let maxSamples = 15
@@ -42,15 +32,12 @@ public struct Routine: Codable, Identifiable, Hashable, Sendable {
         self.learnedFrom = []
     }
 
-    /// Median: robust to the one day you stopped for coffee.
     public var minutes: Int {
         guard !samples.isEmpty else { return defaultMinutes }
         let s = samples.sorted()
         return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
     }
 
-    /// Upper estimate (~80th percentile) for planning "leave by": arriving late costs
-    /// more than arriving a few minutes early.
     public var safeMinutes: Int {
         guard samples.count >= 3 else { return Int(Double(minutes) * 1.15) + 2 }
         let s = samples.sorted()
@@ -59,8 +46,6 @@ public struct Routine: Codable, Identifiable, Hashable, Sendable {
 
     public var isLearned: Bool { !samples.isEmpty }
 
-    /// Adds an observation. Obvious outliers (forgot to tap "at school" until lunch)
-    /// are rejected once there's enough history to know what's normal.
     @discardableResult
     public mutating func observe(_ m: Int) -> Bool {
         guard m >= 1, m <= 240 else { return false }
@@ -80,8 +65,6 @@ public struct Routine: Codable, Identifiable, Hashable, Sendable {
     ]
 }
 
-// MARK: - Wake-up planning
-
 public struct WakePlan: Codable, Hashable, Sendable {
     public var day: Date
     public var wake: Date
@@ -91,9 +74,6 @@ public struct WakePlan: Codable, Hashable, Sendable {
 }
 
 public enum WakePlanner {
-    /// Work back from the first commitment: start − commute (safe estimate) −
-    /// getting ready − 5 min slack. Without a morning commitment, use the free-day wake
-    /// time. Keeping that close to school days limits social jet lag (Wittmann et al. 2006).
     public static func plan(for day: Date, commitments: [Commitment], events: [FixedEvent], routines: [Routine],
                             prefs: Preferences, calendar cal: Calendar, exceptions: [DayException] = []) -> WakePlan {
         let isSchool = SchoolDay.isSchoolDay(day, prefs: prefs, commitments: commitments, exceptions: exceptions, calendar: cal)

@@ -1,15 +1,5 @@
 import Foundation
 
-// MARK: - Brain dump: one box for everything
-//
-// The student types (or pastes a screenshot of) anything: new deadlines, what they did,
-// what changed, how they feel, a question. Claude returns a list of operations plus a reply.
-// There are only three operations over a registry of what the AI may change (see
-// Capabilities.swift): `upsert` an entity, `delete` one, or `set` a knob. Compound changes,
-// like splitting an activity into periods, are registered macros. `DumpApplier` turns them
-// into state changes on the device, deterministically and testably, and reports what it
-// changed so the UI can show it with an Undo.
-
 public struct DumpApp: Codable, Hashable, Sendable {
     public var name: String
     public var minutes: Int
@@ -22,7 +12,6 @@ public struct DumpApp: Codable, Hashable, Sendable {
     }
 }
 
-/// One piece of a `split`: "Period 1 8:30-9:20".
 public struct DumpPart: Codable, Hashable, Sendable {
     public var title: String
     public var start: String
@@ -39,17 +28,11 @@ public struct DumpPart: Codable, Hashable, Sendable {
     }
 }
 
-/// One operation from the model.
 public struct DumpOp: Codable, Hashable, Sendable {
-    /// upsert | delete | set | a macro name (split).
     public var op: String
     public var entity: String?
-    /// A reference from the context ("t3f9a2", "a81c0d", "e…", "d…"; a routine's key), exact, so
-    /// nothing gets duplicated. Omitted to create.
     public var id: String?
-    /// The entity's fields (see the registry). Free-form: unknown names are ignored.
     public var fields: [String: JSONValue]?
-    /// For `set`: the knob and its new value as text.
     public var knob: String?
     public var value: String?
 
@@ -70,20 +53,13 @@ public struct DumpOp: Codable, Hashable, Sendable {
     public static func set(_ knob: String, _ value: String) -> DumpOp { DumpOp("set", knob: knob, value: value) }
 }
 
-/// What the model may say besides operations: lines for about-me.md, and timestamped observations.
 public struct DumpEvidence: Codable, Hashable, Sendable {
-    /// "left home", "arrived at school", "worked on Waterloo drafts", "at CS club"…
     public var what: String
-    /// Local date-times (YYYY-MM-DDTHH:mm). One, or a start and an end.
     public var start: String?
     public var end: String?
-    /// Minutes, when they said a duration rather than times ("worked ~200 min").
     public var minutes: Int?
-    /// The task it was about (an id), for work done.
     public var task: String?
-    /// "travel" | "study" | "activity" | "sleep" | "other": what kind of time it was.
     public var kind: String?
-    /// True when `minutes` is the model's estimate ("two drafts"), not something they said.
     public var estimated: Bool?
 
     public init(what: String, start: String? = nil, end: String? = nil, minutes: Int? = nil, task: String? = nil, kind: String? = nil,
@@ -101,9 +77,7 @@ public struct DumpEvidence: Codable, Hashable, Sendable {
 public struct DumpResult: Codable, Hashable, Sendable {
     public var ops: [DumpOp]
     public var reply: String
-    /// New or changed lines for about-me.md (only what the student literally said).
     public var facts: [AboutMeFact]
-    /// Timestamped observations, routed to markers, routines and work done.
     public var evidence: [DumpEvidence]
 
     public init(ops: [DumpOp], reply: String, facts: [AboutMeFact] = [], evidence: [DumpEvidence] = []) {
@@ -115,8 +89,6 @@ public struct DumpResult: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey { case ops, reply, facts, evidence }
 
-    /// Lenient: a reply with no operations, or operations with no reply, still counts. One
-    /// malformed operation is dropped rather than losing the whole message.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         reply = (try? c.decodeIfPresent(String.self, forKey: .reply)) ?? ""
@@ -133,10 +105,6 @@ public struct DumpResult: Codable, Hashable, Sendable {
 }
 
 extension DumpResult {
-    /// Reads the Inbox answer out of a reply, whatever shape it came back in: the schema's
-    /// `{ops, reply}`, a list of operations, one operation on its own, the reply under another name,
-    /// or plain prose (shown as the reply, changing nothing). Nil only when there's nothing to
-    /// show and nothing to do.
     public static func read(_ res: AIResponse) -> DumpResult? {
         for c in res.candidates {
             let fitted = StructuredRepair.coerce(normalise(c), to: Schemas.dump)
@@ -145,7 +113,6 @@ extension DumpResult {
                 return r
             }
         }
-        // No JSON at all, just sentences: the model answered in words. That's a reply.
         let prose = res.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard res.candidates.isEmpty, prose.filter(\.isLetter).count >= 3, !prose.contains("{"), !prose.contains("```"),
               !["null", "none", "undefined"].contains(prose.lowercased()) else { return nil }
@@ -154,7 +121,6 @@ extension DumpResult {
 
     static let opKeys: Set<String> = ["op", "entity", "id", "fields", "knob", "value"]
 
-    /// An operation with its fields beside it instead of under `fields`: move them under.
     static func normaliseOp(_ v: JSONValue) -> JSONValue {
         guard case .object(var o) = v else { return v }
         let plainKeys = Dictionary(o.keys.map { (StructuredRepair.plain($0), $0) }, uniquingKeysWith: { a, _ in a })
@@ -187,7 +153,6 @@ extension DumpResult {
             if let a = value(["operations", "actions", "action", "changes"]) {
                 o["ops"] = a
             } else if case .string(let t)? = value(["op", "operation"]), DumpOpKind(loose: t) != nil {
-                // One operation on its own, with the reply (if any) beside its fields.
                 var single = o
                 single["reply"] = nil
                 o = ["ops": .array([.object(single)]), "reply": o["reply"] ?? .string("")]
@@ -203,11 +168,9 @@ extension DumpResult {
     }
 }
 
-/// The three operations, plus the registered macros.
 public enum DumpOpKind: String, CaseIterable, Sendable {
     case upsert, delete, set, split
 
-    /// The schema's names plus the near misses a model produces ("create", "update", "remove").
     public init?(loose raw: String) {
         let w = raw.lowercased().filter(\.isLetter)
         if let exact = DumpOpKind(rawValue: w) { self = exact; return }
@@ -221,7 +184,6 @@ public enum DumpOpKind: String, CaseIterable, Sendable {
     }
 }
 
-/// The slice of app state the brain dump may change.
 public struct DumpState: Sendable {
     public var items: [WorkItem]
     public var commitments: [Commitment]
@@ -232,13 +194,9 @@ public struct DumpState: Sendable {
     public var moods: [MoodEntry]
     public var screen: [ScreenDay]
     public var prefs: Preferences
-    /// Tier 2: how the app behaves. Only the reflection may propose changes (see Capabilities).
     public var policy: BehaviourPolicy
-    /// Work logged outside study blocks.
     public var progress: [ProgressEntry]
-    /// about-me.md.
     public var aboutMe: AboutMe
-    /// What the app believes (capacities, dinner, chronotype). Tier 1: stated or learned.
     public var beliefs: Beliefs
 
     public init(items: [WorkItem], commitments: [Commitment], exceptions: [DayException], oneOffs: [FixedEvent],
@@ -261,7 +219,6 @@ public struct DumpState: Sendable {
     }
 }
 
-/// An entity's fields, read from an operation. Internal: the applier's handlers read these.
 struct DumpFields: Codable, Hashable, Sendable {
     var target: String?
     var title: String?
@@ -300,7 +257,6 @@ struct DumpFields: Codable, Hashable, Sendable {
     var distractingMinutes: Int?
     var apps: [DumpApp]?
 
-    /// The id of the thing (from the op) and its name when there's no id.
     var id: String?
 
     init() {}
@@ -320,7 +276,6 @@ struct DumpFields: Codable, Hashable, Sendable {
         ], required: [])
     }()
 
-    /// Fields fitted to their types ("90" → 90, "2, 4" → [2, 4]); unknown names are dropped.
     static func read(_ op: DumpOp) -> DumpFields {
         let raw: JSONValue = .object(op.fields ?? [:])
         var f = (try? StructuredRepair.coerce(raw, to: schema).decode(DumpFields.self)) ?? DumpFields()

@@ -1,7 +1,6 @@
 import XCTest
 @testable import ProductiumCore
 
-/// Every behaviour change is proposed, bounded, and waits for the student.
 final class ProposalTests: XCTestCase {
     let cal = Fx.cal
     let essay = WorkItem(title: "Waterloo AIF revision", kind: .application, due: Fx.mon(23, plusDays: 10))
@@ -37,17 +36,14 @@ final class ProposalTests: XCTestCase {
         XCTAssertEqual(s.policy.maxBlockMinutes, 45)
         XCTAssertTrue(book.approve(book.pending[1].id, in: &s, now: Fx.mon(10), calendar: cal), "intention")
         XCTAssertEqual(s.policy.intentions.count, 1)
-        // The planner and nudges read the approved policy.
         let nudges = NudgePlanner.plan(NudgeInput(now: Fx.mon(18), calendar: cal, plan: .empty, items: [], settings: NudgeSettings(),
                                                   policy: s.policy))
         XCTAssertTrue(nudges.contains { $0.kind == .intention && $0.at == Fx.mon(15, 30, plusDays: 1) })
 
-        // Same knob again within 7 days: refused.
         book.submit(ReflectionRun(at: Fx.mon(9, plusDays: 2), note: "", model: "opus"),
                     [draft(.knob(key: "planner.maxBlockMinutes", to: 35))], state: s, now: Fx.mon(9, plusDays: 2))
         XCTAssertTrue(book.pending.allSatisfy { $0.change.target != "planner.maxBlockMinutes" })
 
-        // Revert puts it back exactly.
         XCTAssertTrue(book.revert(block.id, in: &s, now: Fx.mon(11)))
         XCTAssertEqual(s.policy.maxBlockMinutes, 55)
         XCTAssertEqual(book.history.first?.status, .reverted)
@@ -60,12 +56,10 @@ final class ProposalTests: XCTestCase {
         let r1 = ReflectionRun(at: Fx.mon(9), note: "", model: "opus")
         book.submit(r1, [draft(.knob(key: "planner.freeTimeMultiplier", to: 1.3))], state: s, now: Fx.mon(9))
         book.reject(book.pending[0].id, now: Fx.mon(10))
-        // The same change isn't suggested again for 30 days.
         let again = book.submit(ReflectionRun(at: Fx.mon(9, plusDays: 8), note: "", model: "opus"),
                                 [draft(.knob(key: "planner.freeTimeMultiplier", to: 1.1))], state: s, now: Fx.mon(9, plusDays: 8))
         XCTAssertEqual(again.count, 1)
         XCTAssertTrue(book.feedback.first?.hasPrefix("Rejected") ?? false)
-        // Second run rejected too: reflection pauses for a week.
         let r2 = ReflectionRun(at: Fx.mon(9, plusDays: 9), note: "", model: "opus")
         book.submit(r2, [draft(.knob(key: "planner.capacityMultiplier", to: 0.9))], state: s, now: Fx.mon(9, plusDays: 9))
         book.neverChange(book.pending[0].id, now: Fx.mon(10, plusDays: 9))
@@ -75,7 +69,6 @@ final class ProposalTests: XCTestCase {
         let pinned = book.submit(ReflectionRun(at: Fx.mon(9, plusDays: 40), note: "", model: "opus"),
                                  [draft(.knob(key: "planner.capacityMultiplier", to: 0.9))], state: s, now: Fx.mon(9, plusDays: 40))
         XCTAssertEqual(pinned, ["planner.capacityMultiplier is pinned"])
-        // Pending proposals expire after 7 days.
         book.submit(ReflectionRun(at: Fx.mon(9, plusDays: 40), note: "", model: "opus"),
                     [draft(.knob(key: "planner.maxBlockMinutes", to: 45))], state: s, now: Fx.mon(9, plusDays: 40))
         book.expire(now: Fx.mon(9, plusDays: 48))

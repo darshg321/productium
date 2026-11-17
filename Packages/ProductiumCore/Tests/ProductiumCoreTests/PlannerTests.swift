@@ -22,7 +22,6 @@ final class PlannerTests: XCTestCase {
         let plan = Planner.plan(Fx.input(now: Fx.mon(7, 0), items: [essay]))
         let corrected = Int((200 * LearnedModel.priorRatio).rounded())
         XCTAssertGreaterThanOrEqual(plan.minutes(for: essay.id), corrected)
-        // > 240 min of work: target finish is 2 days early.
         let last = plan.study(for: essay.id).map(\.end).max()!
         XCTAssertLessThanOrEqual(last, cal.date(byAdding: .day, value: -2, to: essay.due)!)
     }
@@ -32,7 +31,6 @@ final class PlannerTests: XCTestCase {
         let plan = Planner.plan(Fx.input(now: Fx.mon(7, 0), items: [test]))
         let days = Set(plan.study(for: test.id).map { cal.startOfDay(for: $0.start) })
         XCTAssertGreaterThanOrEqual(days.count, 3, "spaced over ≥3 days")
-        // Something happens the day before the test.
         let dayBefore = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: test.due))!
         XCTAssertTrue(days.contains(dayBefore))
         XCTAssertTrue(plan.study(for: test.id).allSatisfy { $0.kind == .review && !$0.borrowsSleep })
@@ -55,7 +53,6 @@ final class PlannerTests: XCTestCase {
     }
 
     func testSleepNeverBorrowedForTests() {
-        // Way more test prep than fits tonight.
         let test = WorkItem(title: "Physics final", kind: .test, due: Fx.mon(9, 0, plusDays: 1), estimateMinutes: 600, importance: 5)
         let plan = Planner.plan(Fx.input(now: Fx.mon(15, 30), items: [test]))
         XCTAssertEqual(plan.sleepTradeoffMinutes, 0)
@@ -71,7 +68,6 @@ final class PlannerTests: XCTestCase {
         XCTAssertLessThanOrEqual(plan.sleepTradeoffMinutes, SleepPolicy.maxBorrowPerNight)
         let sleep = plan.blocks.first { $0.kind == .sleep && cal.isDate($0.start, inSameDayAs: Fx.mon(12)) }!
         XCTAssertGreaterThanOrEqual(sleep.minutes, Preferences().sleepFloorMinutes)
-        // Low-stakes production work doesn't get to borrow.
         var low = essay; low.importance = 2
         XCTAssertEqual(Planner.plan(Fx.input(now: Fx.mon(15, 30), items: [low])).sleepTradeoffMinutes, 0)
     }
@@ -123,13 +119,10 @@ final class PlannerTests: XCTestCase {
         for m in [25, 27, 26, 25] { routines[i].observe(m) }
         let plan = Planner.plan(Fx.input(now: Fx.mon(5, 0), items: [], routines: routines))
         let mondayWake = plan.wakePlans.first { cal.isDate($0.day, inSameDayAs: Fx.mon(12)) }!
-        // 8:30 − 27 (80th pct) − 5 slack − 40 ready = 7:18 → rounded down to 7:15.
         XCTAssertEqual(cal.component(.hour, from: mondayWake.wake), 7)
         XCTAssertEqual(cal.component(.minute, from: mondayWake.wake), 15)
         XCTAssertEqual(mondayWake.leaveBy, Fx.mon(7, 58))
-        // Commute block sits right before school.
         XCTAssertTrue(plan.blocks.contains { $0.kind == .routine && $0.title == "To school" && $0.end == Fx.mon(8, 30) })
-        // Sleep block ends at the next wake time and is ≥ sleep need.
         let sunNightSleep = plan.blocks.first { $0.kind == .sleep && cal.isDate($0.start, inSameDayAs: Fx.mon(12)) }!
         XCTAssertGreaterThanOrEqual(sunNightSleep.minutes, Preferences().sleepNeedMinutes)
     }
@@ -137,7 +130,6 @@ final class PlannerTests: XCTestCase {
     func testHardWorkPrefersPeakHours() {
         let hard = WorkItem(title: "Calc problem set", kind: .assignment, due: Fx.mon(23, 0, plusDays: 5), estimateMinutes: 45, difficulty: 3)
         var prefs = Preferences(); prefs.freeDayWake = TimeOfDay(8, 0)
-        // Saturday: whole day free.
         let plan = Planner.plan(Fx.input(now: Fx.mon(8, 0, plusDays: 5), items: [hard], prefs: prefs))
         let h = cal.component(.hour, from: plan.study(for: hard.id).first!.start)
         XCTAssertTrue((9...19).contains(h), "hour \(h)")

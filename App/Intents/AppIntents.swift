@@ -1,8 +1,6 @@
 import AppIntents
 import ProductiumCore
 
-/// Siri / Shortcuts / Action button: "Hey Siri, Productium left home",
-/// "Tell Productium bio quiz thursday". Input in a few seconds, app unopened.
 struct TellProductiumIntent: AppIntent {
     static var title: LocalizedStringResource = "Tell Productium"
     static var description = IntentDescription("Add a deadline, check in, or log how you feel, in plain words.")
@@ -52,7 +50,6 @@ struct LogMoodIntent: AppIntent {
     }
 }
 
-/// Also an AlarmKit button ("Start" on a missed-start alarm), which needs a LiveActivityIntent.
 struct StartFocusIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Start focus"
     static var description = IntentDescription("Start the block that's on now, or the next one. Try it from an NFC tag on your desk, or when a Focus turns on.")
@@ -65,13 +62,6 @@ struct StartFocusIntent: LiveActivityIntent {
     }
 }
 
-// MARK: - Scrolling (free build: Shortcuts instead of the Screen Time API)
-
-/// Friction without the Screen Time API (works with free signing). On iOS 26 and later this is a
-/// single-action automation: "When Instagram or TikTok is opened → Pause Before Scrolling".
-/// The intent runs in the background, and only brings Productium forward when a pause is due.
-/// After "Go back anyway" there's a 10-minute grace window, so going back doesn't loop.
-/// Same design as one sec's pause and opt-out (Grüning et al. 2023).
 struct PauseBeforeScrollingIntent: AppIntent {
     static var title: LocalizedStringResource = "Pause Before Scrolling"
     static var description = IntentDescription("Opens a short pause in Productium, unless you chose to continue in the last few minutes. Use it in an “App is opened” automation, one per app, with the app's name filled in. Returns whether it paused.")
@@ -84,7 +74,6 @@ struct PauseBeforeScrollingIntent: AppIntent {
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
         guard Friction.opened(app) else { return .result(value: false) }
         if #available(iOS 26.0, *), systemContext.currentMode.canContinueInForeground {
-            // Declined or not allowed right now: no error banner over the app they opened.
             if (try? await continueInForeground(alwaysConfirm: false)) != nil {
                 AppModel.shared.deepLink = "productium://gap"
             }
@@ -93,7 +82,6 @@ struct PauseBeforeScrollingIntent: AppIntent {
     }
 }
 
-/// The older two-step version, for iOS 17–18: "If [Should I pause?] is true → Open URLs productium://gap".
 struct ShouldPauseIntent: AppIntent {
     static var title: LocalizedStringResource = "Should I pause?"
     static var description = IntentDescription("True unless you chose to continue in the last few minutes. Use it with If and Open URLs (productium://gap) in an “App is opened” automation.")
@@ -104,9 +92,6 @@ struct ShouldPauseIntent: AppIntent {
     }
 }
 
-/// "When Instagram or TikTok is closed → Closed a Distracting App": ends the session, cancels the
-/// "still scrolling?" check-ins, and counts the minutes, so the weekly limit has real numbers
-/// without screenshots.
 struct ClosedDistractingAppIntent: AppIntent {
     static var title: LocalizedStringResource = "Closed a Distracting App"
     static var description = IntentDescription("Use it in an “App is closed” automation with the same apps as the pause, and in an “App is opened” automation for the other apps you use (Messages, Safari, Camera…): opening any other app ends the session. Productium counts the minutes and stops the check-ins.")
@@ -128,8 +113,6 @@ enum StopSignal: String, AppEnum {
     var source: ScrollSession.EndSource { self == .otherApp ? .otherApp : .lockProxy }
 }
 
-/// The extra end signals "is closed" misses (it doesn't fire on Home or lock): charger connected,
-/// an alarm stopped, a Sleep/Work/Driving Focus turning on, or a non-scrolling app opening.
 struct StoppedScrollingIntent: AppIntent {
     static var title: LocalizedStringResource = "Probably Stopped Scrolling"
     static var description = IntentDescription("Ends a scrolling session that's still open. Use it in “Charger is connected”, “Alarm is stopped” and “Sleep/Work/Driving Focus turns on” automations.")
@@ -150,8 +133,6 @@ enum PlanMomentEnum: String, AppEnum {
     ]
 }
 
-/// What the plan says this minute, for automations that branch: "if Wind-down or Sleep, turn on
-/// grayscale", "if Focus, turn on the Work Focus". Those are things only Shortcuts can do.
 struct CurrentPlanIntent: AppIntent {
     static var title: LocalizedStringResource = "What's the Plan Now?"
     static var description = IntentDescription("Returns Focus, Break, Busy, Free, Wind-down or Sleep, from today's plan.")
@@ -164,7 +145,6 @@ struct CurrentPlanIntent: AppIntent {
     }
 }
 
-/// A yes/no version for If actions: true during wind-down and sleep.
 struct ScreensOffIntent: AppIntent {
     static var title: LocalizedStringResource = "Is It Screens-Off Time?"
     static var description = IntentDescription("True during wind-down and sleep in today's plan. Use it with If to turn on grayscale or log bedtime.")
@@ -176,8 +156,6 @@ struct ScreensOffIntent: AppIntent {
     }
 }
 
-/// Scroll sessions, shared between the intents (which may run with the app in the background)
-/// and the app. Stored in the shared defaults. The session model is `ScrollLog` (ProductiumCore).
 enum Friction {
     static let graceMinutes = 10
 
@@ -185,7 +163,6 @@ enum Friction {
         Date().timeIntervalSince1970 < SharedConfig.defaults.double(forKey: SharedConfig.Key.frictionGraceUntil)
     }
 
-    /// A distracting app opened. Returns whether to pause.
     static func opened(_ app: String) -> Bool {
         let pause = !inGrace
         var log = self.log
@@ -196,13 +173,11 @@ enum Friction {
             let key = SharedConfig.Key.frictionPrefix + SharedConfig.dayKey()
             SharedConfig.defaults.set(SharedConfig.defaults.integer(forKey: key) + 1, forKey: key)
         } else if log.measuresClosing && !wasOpen {
-            // Back in within the grace window after closing: a new session, so a new check-in.
             scheduleNextCheckIn()
         }
         return pause
     }
 
-    /// "Go back anyway": no pause for a while, and a check-in if you stay.
     static func grant(minutes: Int = graceMinutes) {
         SharedConfig.defaults.set(Date().addingTimeInterval(Double(minutes) * 60).timeIntervalSince1970,
                                   forKey: SharedConfig.Key.frictionGraceUntil)
@@ -219,7 +194,6 @@ enum Friction {
         return mins
     }
 
-    /// Productium came forward, an intent ran, or another end signal arrived.
     static func ended(by source: ScrollSession.EndSource) {
         var log = self.log
         guard log.open != nil else { return }
@@ -228,9 +202,6 @@ enum Friction {
         NotificationService.cancelScrollCheckIns()
     }
 
-    /// Only one check-in is ever pending. It's marked as sent when it's scheduled for (the log
-    /// resolves it as unanswered ten minutes after that time), and the next one is scheduled only
-    /// when the student taps Yes, so unanswered check-ins stop on a locked phone.
     static func scheduleNextCheckIn() {
         let steps = checkInMinutes
         let i = SharedConfig.defaults.integer(forKey: SharedConfig.Key.scrollCheckInIndex)
@@ -243,7 +214,6 @@ enum Friction {
         SharedConfig.defaults.set(i + 1, forKey: SharedConfig.Key.scrollCheckInIndex)
     }
 
-    /// The check-in's Yes / No, I stopped.
     static func answered(stillScrolling: Bool) {
         var log = self.log
         let open = log.checkInAnswered(stillScrolling: stillScrolling, at: Date())

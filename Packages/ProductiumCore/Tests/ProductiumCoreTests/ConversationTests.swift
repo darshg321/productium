@@ -1,7 +1,6 @@
 import XCTest
 @testable import ProductiumCore
 
-/// The box is one ongoing session: history goes back byte-for-byte, only the new turn is appended.
 final class ConversationTests: XCTestCase {
     let tool = ConversationPolicy.tool(schema: Schemas.dump)
 
@@ -10,7 +9,6 @@ final class ConversationTests: XCTestCase {
         return try m.map { try enc.encode($0) }
     }
 
-    /// A claude-server reply: one forced `apply` call, with cache reads after the first turn.
     func reply(_ n: Int) throws -> AIResponse {
         let json = """
         {"id":"msg_\(n)","type":"message","role":"assistant","model":"claude-sonnet-5-5","stop_reason":"tool_use",
@@ -32,7 +30,6 @@ final class ConversationTests: XCTestCase {
             let content = ConversationPolicy.userContent(for: c, text: "prompt \(n)", images: image, fullContext: ctx)
             let req = c.request(system: Prompts.dump(), tool: tool, userContent: content, maxTokens: 3000)
             let sent = try encoded(req.messages)
-            // Everything sent before is sent again, unchanged, and in the same place.
             XCTAssertEqual(Array(sent.prefix(previous.count)), previous, "turn \(n) rewrote history")
             XCTAssertEqual(sent.count, previous.count + 1)
             XCTAssertEqual(req.tool_choice?.name, "apply")
@@ -53,7 +50,6 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(c.tokenStats.requests, 20)
         XCTAssertEqual(c.tokenStats.size, 40 + 120 + 3000 + 20 * 150)
         XCTAssertEqual(c.tokenStats.outputTotal, 20 * 90)
-        // The thread shows every prompt verbatim.
         XCTAssertEqual(c.turns.map(\.text), (1...20).map { "prompt \($0)" })
     }
 

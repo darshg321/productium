@@ -2,8 +2,6 @@ import SwiftUI
 import FamilyControls
 import ProductiumCore
 
-/// Setup, once. Each page asks for one thing. Your week goes in through the same box
-/// you'll use every day, so there are no forms.
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model
     @State private var page: Page = .welcome
@@ -28,7 +26,6 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Progress: one segment per page, filled up to here.
             HStack(spacing: 4) {
                 ForEach(pages, id: \.self) { p in
                     Capsule().fill(p.rawValue <= page.rawValue ? Color.accentColor : Color(.tertiarySystemFill)).frame(height: 4)
@@ -99,8 +96,6 @@ struct OnboardingView: View {
         case .keepAlive: keepAlive
         }
     }
-
-    // MARK: Pages
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -263,8 +258,6 @@ struct OnboardingView: View {
             }
         }
     }
-
-    // MARK: Pieces
 
     private func field(_ prompt: String, text: Binding<String>, secure: Bool) -> some View {
         Group {

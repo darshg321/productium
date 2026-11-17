@@ -4,8 +4,6 @@ import UniformTypeIdentifiers
 import Charts
 import ProductiumCore
 
-/// Settings, laid out like the iOS Settings app: the account-style Claude row on top,
-/// then coloured icon rows that each open one page.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
 
@@ -83,8 +81,6 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Claude
-
 struct ClaudeSettings: View {
     @Environment(AppModel.self) private var model
     @State private var serverURL = ClaudeClient.shared.baseURL?.absoluteString ?? ClaudeClient.defaultURL.absoluteString
@@ -146,10 +142,6 @@ struct ClaudeSettings: View {
     }
 }
 
-// MARK: - AI usage
-
-/// The detail behind the toolbar meter: today against the budget, where tokens went,
-/// the last week, and what the server itself counted.
 struct UsageView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -287,7 +279,6 @@ struct UsageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.refreshServerUsage() }
         .task {
-            // The subscription moves while you watch (other apps use it too): poll while open.
             while !Task.isCancelled {
                 await model.refreshSubscription()
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
@@ -297,8 +288,6 @@ struct UsageView: View {
         .onChange(of: model.state.usage.pauseBackgroundOverBudget) { _, _ in model.save() }
     }
 }
-
-// MARK: - Schedule, sleep, study
 
 struct ScheduleSettings: View {
     @Environment(AppModel.self) private var model
@@ -380,8 +369,6 @@ struct SleepSettings: View {
     }
 }
 
-/// Only what's truly the student's choice. How much they can study, how much free time they keep,
-/// focus and break length are learned (Settings → What Productium Thinks).
 struct StudySettings: View {
     @Environment(AppModel.self) private var model
 
@@ -476,9 +463,6 @@ struct ScreenTimeSettings: View {
     }
 }
 
-// MARK: - Notifications
-
-/// How much the phone interrupts, what with, and a preview of what's actually coming.
 struct NudgeSettingsView: View {
     @Environment(AppModel.self) private var model
 
@@ -583,8 +567,6 @@ struct NudgeSettingsView: View {
         return false
     }
 }
-
-// MARK: - Connections, places, routines
 
 struct ConnectionSettings: View {
     @Environment(AppModel.self) private var model
@@ -717,9 +699,6 @@ struct RoutineSettings: View {
     }
 }
 
-// MARK: - Backup & restore
-
-/// The backup as a document, so the system save sheet can put it anywhere (Files, iCloud Drive…).
 struct BackupDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
     var data: Data
@@ -826,8 +805,6 @@ struct BackupSettings: View {
     }
 }
 
-/// about-me.md in a plain text editor. Whatever the student writes or changes is marked "(you)"
-/// and the AI never overwrites it.
 struct AboutYouView: View {
     @Environment(AppModel.self) private var model
     @State private var text = ""

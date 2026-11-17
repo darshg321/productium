@@ -1,12 +1,5 @@
 import Foundation
 
-// MARK: - Token accounting
-//
-// Every reply from claude-server carries a `usage` block. The app keeps a small local ledger
-// of them and counts output tokens only, so the student can see at a glance how much the AI
-// is costing today, and so background AI (flashcards, reads, project breakdowns) can stand down once the
-// daily budget is spent. The box always works: it's the one thing that must never stop.
-
 public struct TokenCount: Codable, Hashable, Sendable {
     public var input: Int
     public var output: Int
@@ -20,8 +13,6 @@ public struct TokenCount: Codable, Hashable, Sendable {
         self.cacheWrite = cacheWrite
     }
 
-    /// What the meter and the budget count: the tokens the model wrote, including its hidden
-    /// thinking. Prompt and cache tokens are kept on the record but never counted.
     public var counted: Int { output }
 
     public static func + (a: TokenCount, b: TokenCount) -> TokenCount {
@@ -30,7 +21,6 @@ public struct TokenCount: Codable, Hashable, Sendable {
     }
 }
 
-/// What a request was for, so the meter can say where tokens went.
 public enum AIFeature: String, Codable, CaseIterable, Sendable {
     case box, flashcards, reads, breakdown, review, reflection
 
@@ -45,7 +35,6 @@ public enum AIFeature: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// Background features stand down when the day's budget is spent. The box doesn't.
     public var isBackground: Bool { self != .box }
 }
 
@@ -54,7 +43,6 @@ public struct UsageRecord: Codable, Hashable, Sendable {
     public var feature: AIFeature
     public var model: String
     public var tokens: TokenCount
-    /// The full call in `AICallLog`, while it's still kept there.
     public var callId: UUID?
 
     public init(at: Date, feature: AIFeature, model: String, tokens: TokenCount, callId: UUID? = nil) {
@@ -78,13 +66,10 @@ public struct FeatureTokens: Hashable, Sendable {
 }
 
 public struct UsageLedger: Codable, Hashable, Sendable {
-    /// Output tokens a day. A typical Inbox message is a few hundred.
     public static let defaultBudget = 10_000
 
     public var records: [UsageRecord] = []
-    /// Daily token budget the meter fills against.
     public var dailyBudget: Int = UsageLedger.defaultBudget
-    /// When on, background AI pauses for the rest of the day once the budget is spent.
     public var pauseBackgroundOverBudget = true
 
     public init() {}
@@ -96,7 +81,6 @@ public struct UsageLedger: Codable, Hashable, Sendable {
         pauseBackgroundOverBudget = (try? c.decodeIfPresent(Bool.self, forKey: .pauseBackgroundOverBudget)) ?? true
     }
 
-    /// Every record is kept (the export holds all of them).
     public mutating func record(_ r: UsageRecord) {
         records.append(r)
     }
@@ -114,7 +98,6 @@ public struct UsageLedger: Codable, Hashable, Sendable {
         return records.filter { $0.at >= start }.reduce(TokenCount()) { $0 + $1.tokens }
     }
 
-    /// Per-day totals for the last `n` days, oldest first (today last).
     public func daily(lastDays n: Int, now: Date, calendar: Calendar) -> [DailyTokens] {
         let today = calendar.startOfDay(for: now)
         return (0..<n).reversed().compactMap { i in
@@ -132,7 +115,6 @@ public struct UsageLedger: Codable, Hashable, Sendable {
         .sorted { $0.tokens > $1.tokens }
     }
 
-    /// Fraction of today's budget used (can exceed 1).
     public func fractionUsed(now: Date, calendar: Calendar) -> Double {
         guard dailyBudget > 0 else { return 0 }
         return Double(total(on: now, calendar: calendar).counted) / Double(dailyBudget)
@@ -143,7 +125,6 @@ public struct UsageLedger: Codable, Hashable, Sendable {
     }
 }
 
-/// "840", "12.4k", "1.2M": short enough for a toolbar.
 public func tokensLabel(_ n: Int) -> String {
     switch n {
     case ..<1000: return "\(n)"
@@ -152,12 +133,6 @@ public func tokensLabel(_ n: Int) -> String {
     default: return String(format: "%.1fM", Double(n) / 1_000_000)
     }
 }
-
-// MARK: - Every call, in full
-//
-// The ledger above keeps numbers. This keeps the words: the exact request the app sent (system
-// prompt, messages, schema) and the exact body that came back, so a strange reply can be read
-// rather than guessed at. Images are kept as a note of their size, not their bytes.
 
 public struct AICall: Codable, Hashable, Identifiable, Sendable {
     public struct Message: Codable, Hashable, Sendable {
@@ -170,24 +145,19 @@ public struct AICall: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var at: Date
     public var feature: AIFeature
-    /// What was asked for, and what answered (the reply's `model`).
     public var requestedModel: String
     public var model: String?
     public var system: String
     public var messages: [Message]
-    /// The JSON schema, pretty-printed, when the request asked for structured output.
     public var schema: String?
     public var maxTokens: Int
     public var cacheTTL: Int?
-    /// `output_config.effort`, when the request set one.
     public var effort: String?
     public var status: Int?
     public var durationMs: Int
-    /// The response body exactly as received (trimmed only if enormous).
     public var response: String
     public var tokens: TokenCount?
     public var error: String?
-    /// 2 when this was the automatic second try after an unusable reply.
     public var attempt: Int
 
     public init(id: UUID = UUID(), at: Date, feature: AIFeature, requestedModel: String, model: String? = nil, system: String,
@@ -223,7 +193,6 @@ public struct AICall: Codable, Hashable, Identifiable, Sendable {
 
     public var ok: Bool { error == nil && status == 200 }
 
-    /// The reply pretty-printed when it's JSON, as-is otherwise.
     public var prettyResponse: String {
         guard let data = response.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: data),
               let out = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
@@ -231,7 +200,6 @@ public struct AICall: Codable, Hashable, Identifiable, Sendable {
         return s
     }
 
-    /// The whole exchange as one text file, for Share / Copy.
     public var transcript: String {
         var out = ["\(feature.title) · \(ISO8601DateFormatter().string(from: at)) · \(model ?? requestedModel) · attempt \(attempt)",
                    "HTTP \(status.map(String.init) ?? "-") · \(durationMs) ms · max_tokens \(maxTokens)"
@@ -247,8 +215,6 @@ public struct AICall: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-/// Every call, newest last. Kept in its own file so the main state stays small, and nothing is
-/// dropped: the export is also the debugging dump.
 public struct AICallLog: Codable, Hashable, Sendable {
     public var calls: [AICall] = []
 

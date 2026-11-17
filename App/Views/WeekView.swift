@@ -1,8 +1,6 @@
 import SwiftUI
 import ProductiumCore
 
-/// The plan, two ways: one day as a to-scale timeline (the Calendar app's day view), or the
-/// next seven days as a list. Day chips along the top pick the day.
 struct ScheduleView: View {
     enum Mode: String, CaseIterable { case day = "Day", week = "Week" }
     @Environment(AppModel.self) private var model
@@ -52,8 +50,6 @@ struct ScheduleView: View {
     }
 }
 
-// MARK: - Day chips
-
 struct DayChips: View {
     @Environment(AppModel.self) private var model
     @Binding var selected: Date
@@ -102,8 +98,6 @@ struct DayChips: View {
     }
 }
 
-// MARK: - One day, to scale
-
 struct DayTimelinePage: View {
     @Environment(AppModel.self) private var model
     let day: Date
@@ -129,7 +123,6 @@ struct DayTimelinePage: View {
         }
     }
 
-    /// From the planned wake-up (or the first thing planned) to bedtime, on the hour.
     private func window(_ cal: Calendar) -> (start: Date, end: Date) {
         let dayStart = cal.startOfDay(for: day)
         let plan = model.state.plan
@@ -155,7 +148,6 @@ struct DayTimelinePage: View {
     }
 }
 
-/// Wake, leave, work, bed for the day, and what's due.
 struct DaySummaryCard: View {
     @Environment(AppModel.self) private var model
     let day: Date
@@ -209,7 +201,6 @@ struct DaySummaryCard: View {
     }
 }
 
-/// Hours down the side, blocks to scale, overlapping things side by side, and a red line at now.
 struct DayTimeline: View {
     let day: Date
     let start: Date
@@ -272,7 +263,6 @@ struct DayTimeline: View {
         .frame(height: height)
     }
 
-    /// One fixed-height row per hour, so each hour has a real position to scroll to.
     private var hourGrid: some View {
         let cal = Calendar.current
         let count = max(1, Int((end.timeIntervalSince(start) / 3600).rounded()))
@@ -340,10 +330,6 @@ struct TimelineBlock: View {
     }
 }
 
-// MARK: - The week as a list
-
-/// The next seven days as an inset-grouped list: one section per day, the day drawn as
-/// a strip, and what's due that day under it. Tapping a day opens it as a timeline.
 struct WeekList: View {
     @Environment(AppModel.self) private var model
     var open: (Date) -> Void

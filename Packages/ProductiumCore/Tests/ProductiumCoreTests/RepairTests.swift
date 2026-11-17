@@ -1,8 +1,6 @@
 import XCTest
 @testable import ProductiumCore
 
-/// A reply should be understood however it comes back. These cover each way one can be bent, and
-/// then fuzz the whole pipeline: whatever goes in, it never crashes and never fails to decode.
 final class RepairTests: XCTestCase {
     func response(_ text: String, stop: String? = nil) -> AIResponse { AIResponse(model: "sonnet", text: text, usage: nil, stopReason: stop) }
 
@@ -12,21 +10,16 @@ final class RepairTests: XCTestCase {
         try XCTUnwrap(DumpResult.read(response(text)), "not understood: \(text)", file: file, line: line)
     }
 
-    /// A real Sonnet reply to an assignment sheet, as claude-server returned it.
     static let real = #"{"ops": [{"op": "upsert", "entity": "task", "fields": {"title": "Macbeth Act 1 reading quiz", "kind": "quiz", "subject": "English", "due": "2026-11-19T08:00", "estimateMinutes": 45, "importance": 3, "difficulty": 2, "topics": ["Macbeth Act 1"]}}, {"op": "upsert", "entity": "task", "fields": {"title": "Soliloquy annotation (submit on Teams)", "kind": "assignment", "subject": "English", "due": "2026-11-23T23:59", "estimateMinutes": 60, "importance": 3, "difficulty": 2}}, {"op": "upsert", "entity": "day_change", "fields": {"date": "2026-11-21", "wake": "10:00"}}, {"op": "upsert", "entity": "mood", "fields": {"mood": 2, "energy": 2, "note": "tired, \"kinda\" stressed"}}], "reply": "Added 2 tasks. I read \"5-630\" as 17:00-18:30, so tell me if that's off."}"#
-
-    // MARK: The envelope
 
     func testMessageShapes() throws {
         func message(_ json: String) throws -> AIResponse { try JSONDecoder().decode(AIResponse.self, from: Data(json.utf8)) }
         let text = try message(#"{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5-5","stop_reason":"end_turn","content":[{"type":"text","text":"{\"ops\":[],\"reply\":\"ok\"}"}],"usage":{"input_tokens":900,"output_tokens":80}}"#)
         XCTAssertEqual(DumpResult.read(text)?.reply, "ok")
         XCTAssertEqual(text.tokens.counted, 80)
-        // The answer as a tool call's arguments, after a thinking block.
         let tool = try message(#"{"content":[{"type":"thinking","thinking":"hmm","signature":"x"},{"type":"tool_use","id":"toolu_1","name":"structured_output","input":{"ops":[{"op":"upsert","entity":"mood","fields":{"mood":4}}],"reply":"Nice."}}],"stop_reason":"tool_use"}"#)
         XCTAssertEqual(fields(DumpResult.read(tool)?.ops.first).mood, 4)
         XCTAssertEqual(tool.text, "")
-        // Content as a bare string, as blocks of bare strings, absent, null, or with odd usage.
         XCTAssertEqual(DumpResult.read(try message(#"{"content":"{\"ops\":[],\"reply\":\"s\"}"}"#))?.reply, "s")
         XCTAssertEqual(DumpResult.read(try message(#"{"content":["{\"ops\":[],", "\"reply\":\"parts\"}"]}"#))?.reply, "parts")
         XCTAssertNil(DumpResult.read(try message(#"{"type":"message"}"#)))
@@ -34,8 +27,6 @@ final class RepairTests: XCTestCase {
         XCTAssertEqual(try message(#"{"content":[{"type":"text","text":"hi"},{"type":"text"},7,null]}"#).text, "hi")
         XCTAssertTrue(try message(#"{"content":[],"stop_reason":"max_tokens"}"#).isTruncated)
     }
-
-    // MARK: Finding the JSON
 
     func testCleanReply() throws {
         let r = try dump(Self.real)
@@ -56,7 +47,6 @@ final class RepairTests: XCTestCase {
     }
 
     func testSloppyJSON() throws {
-        // Trailing commas, comments, single quotes, unquoted keys, Python literals.
         let r = try dump("""
         {
           // what changed
@@ -69,10 +59,8 @@ final class RepairTests: XCTestCase {
         XCTAssertEqual(fields(r.ops.first).cancelled, true)
         XCTAssertNil(fields(r.ops.first).note)
         XCTAssertEqual(r.reply, "Got it.")
-        // Curly quotes, a missing comma, and a real line break inside a string.
         let s = try dump("{“ops”: [] “reply”: “Line one\nline two”}")
         XCTAssertEqual(s.reply, "Line one\nline two")
-        // Escapes survive the forgiving reader too.
         let e = try dump(#"{"ops":[],"reply":"café 😀 a\\b \"q\" \/ tab\there",}"#)
         XCTAssertEqual(e.reply, "café 😀 a\\b \"q\" / tab\there")
     }
@@ -84,8 +72,6 @@ final class RepairTests: XCTestCase {
         XCTAssertEqual(r.reply, #"I read "5-630" as 17:00, so tell me if that's off."#)
     }
 
-    /// Cut the real reply off at every length. Once the first action is complete, a prefix always
-    /// yields whole actions only (never half of one), and never more than were sent.
     func testTruncatedAtEveryLength() throws {
         let full = try dump(Self.real)
         let chars = Array(Self.real)
@@ -101,8 +87,6 @@ final class RepairTests: XCTestCase {
             }
         }
     }
-
-    // MARK: Fitting the schema
 
     func testStringifiedActionsArray() throws {
         let r = try dump(#"{"ops":"[{\"op\":\"upsert\",\"entity\":\"task\",\"fields\":{\"title\":\"Essay\",\"estimateMinutes\":\"90\"}}]","reply":"ok"}"#)
@@ -188,9 +172,6 @@ final class RepairTests: XCTestCase {
         XCTAssertNil(response(#"{"cards":[]}"#).decoded(CardBatch.self, schema: Schemas.cards) { !$0.usable.isEmpty }, "empty: ask again")
     }
 
-    // MARK: Fuzzing
-
-    /// Deterministic, so a failure reproduces.
     struct Rng: RandomNumberGenerator {
         var state: UInt64
         mutating func next() -> UInt64 {
@@ -207,7 +188,6 @@ final class RepairTests: XCTestCase {
     func decodes(_ v: JSONValue, _ schema: JSONValue) -> Bool {
         let fitted = StructuredRepair.coerce(v, to: schema)
         if schema == Schemas.dump {
-            // DumpResult alone turns down an answer with no operations and no reply.
             guard case .object(let o) = fitted, case .array(let ops)? = o["ops"], case .string? = o["reply"] else { return false }
             return ops.allSatisfy { (try? $0.decode(DumpOp.self)) != nil }
         }
@@ -217,7 +197,6 @@ final class RepairTests: XCTestCase {
         return (try? fitted.decode(ReadBatch.self)) != nil
     }
 
-    /// Any JSON value at all, fitted to any of the app's schemas, decodes into its Swift type.
     func testAnyValueFitsEverySchema() {
         var rng = Rng(state: 42)
         let keys = ["ops", "op", "entity", "fields", "knob", "value", "actions", "reply", "type", "title", "due", "estimateMinutes", "topics", "weekdays", "apps", "name", "minutes",
@@ -244,8 +223,6 @@ final class RepairTests: XCTestCase {
         }
     }
 
-    /// Damage a real reply every way text can be damaged. Reading it never crashes, and whatever
-    /// is found always decodes.
     func testDamagedRepliesNeverBreakTheReader() {
         var rng = Rng(state: 7)
         let junk = Array("{}[]\",:'\\ \n\t“”`/*#0aé🙂")
@@ -275,7 +252,6 @@ final class RepairTests: XCTestCase {
         }
     }
 
-    /// Pathological input ends quickly instead of recursing or looping forever.
     func testHostileInputTerminates() {
         for text in [String(repeating: "[", count: 20_000), String(repeating: "{\"a\":", count: 20_000),
                      String(repeating: "{", count: 5000) + String(repeating: "}", count: 5000),

@@ -1,30 +1,19 @@
 import Foundation
 
-// MARK: - "What were you doing?"
-//
-// A mystery gap is 40+ minutes with nothing observed (no check-in, study, motion or scrolling), no
-// scheduled commitment and no sleep, while the student was awake (phone used, or moving). It's
-// asked about while it's still fresh: 10 minutes after it ends, or 45 minutes into one that's
-// still going, never later than 2 hours after it started. Older gaps stay unknown rather than
-// guessed. At most 4 a day, none in wind-down or sleep, none during focus.
-
 public struct MysteryGap: Codable, Hashable, Sendable {
     public var start: Date
     public var end: Date
-    /// Still going at the time it was found.
     public var ongoing: Bool
     public var minutes: Int { Int(end.timeIntervalSince(start) / 60) }
     public init(start: Date, end: Date, ongoing: Bool) { self.start = start; self.end = end; self.ongoing = ongoing }
 }
 
-/// A gap that was asked about, and what came back.
 public struct AskedGap: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var start: Date
     public var end: Date
     public var askedAt: Date
     public var answer: String?
-    /// The marker key the answer became ("gym").
     public var activity: String?
     public init(id: UUID = UUID(), start: Date, end: Date, askedAt: Date, answer: String? = nil, activity: String? = nil) {
         self.id = id
@@ -44,7 +33,6 @@ public struct GapLog: Codable, Hashable, Sendable {
         asked.filter { cal.isDate($0.askedAt, inSameDayAs: day) }.count
     }
 
-    /// Already asked about (overlapping by more than half).
     public func covers(_ g: MysteryGap) -> Bool {
         asked.contains { a in
             let overlap = min(a.end, g.end).timeIntervalSince(max(a.start, g.start))
@@ -57,9 +45,7 @@ public struct GapLog: Codable, Hashable, Sendable {
 public struct GapInput: Sendable {
     public var now: Date
     public var day: DayInputs
-    /// Scrolling sessions (time-stamped by Shortcuts).
     public var scrolling: [ScrollSession]
-    /// Moments the phone was in use (app launches, scroll session edges, check-in taps).
     public var phoneUse: [Date]
     public var plan: Plan
     public var focusing: Bool
@@ -84,13 +70,10 @@ public enum GapDetector {
     public static let freshFor: TimeInterval = 2 * 3600
     public static let maxPerDay = 4
 
-    /// Every unexplained stretch of the day so far, oldest first.
     public static func gaps(_ input: GapInput, calendar cal: Calendar) -> [MysteryGap] {
         let now = input.now
         let segs = TimelineBuilder.segments(input.day, calendar: cal, now: now)
-        // Only the filler is unexplained: everything else is observed, scheduled, routine or sleep.
         var open = segs.filter { $0.category == .free && $0.inferred && $0.label == "Free" }.map { ($0.start, $0.end) }
-        // Scrolling, and planned study (asked about separately), explain time too.
         var known = input.scrolling.map { ($0.openedAt, $0.endedAt ?? now) }
         known += input.plan.blocks.filter(\.isStudy).map { ($0.start, $0.end) }
         for (ks, ke) in known {
@@ -103,14 +86,12 @@ public enum GapDetector {
         return open.compactMap { s, e in
             let g = MysteryGap(start: s, end: e, ongoing: e >= now.addingTimeInterval(-60))
             guard g.minutes >= minMinutes else { return nil }
-            // Awake: the phone was used, or they were moving, during it (or right at its edges).
             let awake = input.phoneUse.contains { $0 >= s.addingTimeInterval(-5 * 60) && $0 <= e.addingTimeInterval(5 * 60) }
                 || moving.contains { $0.end > s && $0.start < e }
             return awake ? g : nil
         }
     }
 
-    /// The gap to ask about right now, if any.
     public static func due(_ input: GapInput, calendar cal: Calendar) -> MysteryGap? {
         let now = input.now
         guard allowed(at: now, input, calendar: cal) else { return nil }
@@ -120,9 +101,6 @@ public enum GapDetector {
         }
     }
 
-    /// When to ask about the stretch that's going on now if nothing else happens: 45 minutes after
-    /// the last explained moment (for a notification scheduled ahead). Nil when that would be
-    /// outside the limits.
     public static func nextAsk(_ input: GapInput, calendar cal: Calendar) -> (at: Date, gap: MysteryGap)? {
         let now = input.now
         let segs = TimelineBuilder.segments(input.day, calendar: cal, now: now)
@@ -144,7 +122,6 @@ public enum GapDetector {
         return !quiet
     }
 
-    /// "What were you doing 3:10–4:05?"
     public static func question(_ g: MysteryGap, calendar cal: Calendar) -> String {
         let f = DateFormatter(); f.calendar = cal; f.timeZone = cal.timeZone; f.dateFormat = "h:mm"
         return g.ongoing ? "What have you been doing since \(f.string(from: g.start))?"
@@ -153,7 +130,6 @@ public enum GapDetector {
 }
 
 public enum GapAnswer {
-    /// Everyday things a one-line answer names, with their category.
     static let vocabulary: [(words: [String], key: String, category: TimeCategory)] = [
         (["homework", "studying", "study", "essay", "assignment", "revising", "revision"], "study", .study),
         (["gym", "workout", "run", "running", "basketball", "soccer", "swim", "practice", "training"], "exercise", .activities),
@@ -166,8 +142,6 @@ public enum GapAnswer {
         (["reading", "music", "guitar", "piano", "drawing", "art"], "hobby", .free),
     ]
 
-    /// Markers for the gap from the answer, on the device, or nil when it needs the box.
-    /// Answers given before ("gym" last Tuesday) are known too.
     public static func markers(for text: String, gap: MysteryGap, commitments: [Commitment], known: [AskedGap],
                                calendar cal: Calendar) -> [TimelineEvent]? {
         let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "’", with: "'")
@@ -180,7 +154,6 @@ public enum GapAnswer {
             return pair(MarkerParser.normalise(c.title), TimeCategory.from(c.kind))
         }
         let words = t.split(whereSeparator: { !$0.isLetter && $0 != "'" }).count
-        // Long answers ("finished the lab then went to Sam's") are for the box.
         guard words <= 4 else { return nil }
         if let v = vocabulary.first(where: { $0.words.contains { t.contains($0) } }) { return pair(v.key, v.category) }
         if let prev = known.first(where: { $0.answer?.lowercased() == t }), let key = prev.activity {
@@ -189,15 +162,12 @@ public enum GapAnswer {
         return nil
     }
 
-    /// The box prompt for an answer the device couldn't read.
     public static func boxText(_ text: String, gap: MysteryGap, calendar cal: Calendar) -> String {
         let f = DateFormatter(); f.calendar = cal; f.timeZone = cal.timeZone; f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd'T'HH:mm"
         return "From \(f.string(from: gap.start)) to \(f.string(from: gap.end)) I was: \(text)"
     }
 
-    /// Answers that keep coming back at the same time of the week: candidates for a belief group
-    /// ("gym on Tuesdays at 4"). Needs 3.
     public static func repeated(_ asked: [AskedGap], calendar cal: Calendar) -> [(activity: String, weekday: Int, hour: Int, count: Int)] {
         var groups: [String: (String, Int, Int, Int)] = [:]
         for a in asked {

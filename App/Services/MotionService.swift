@@ -2,9 +2,6 @@ import Foundation
 import CoreMotion
 import ProductiumCore
 
-/// Walking, cycling, driving and still periods from Core Motion. iOS keeps 7 days of activity
-/// history, so this works even when the app wasn't running. No entitlement needed (free builds
-/// too). Only spans are kept, never locations.
 final class MotionService {
     static let shared = MotionService()
     private let manager = CMMotionActivityManager()
@@ -20,7 +17,6 @@ final class MotionService {
         }
     }
 
-    /// Asks for access (the first query shows the prompt). True when allowed.
     func requestAccess() async -> Bool {
         guard available else { return false }
         _ = await samples(from: Date().addingTimeInterval(-600), to: Date())

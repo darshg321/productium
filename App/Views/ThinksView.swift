@@ -1,8 +1,6 @@
 import SwiftUI
 import ProductiumCore
 
-/// Settings → What Productium Thinks: every assumption the app makes, one section per group,
-/// each with its value, how sure it is, and the evidence behind it.
 struct ThinksView: View {
     @Environment(AppModel.self) private var model
 
@@ -108,7 +106,6 @@ struct BeliefDetail: View {
     }
 }
 
-/// Settings → What Productium Thinks → Changes: pending suggestions, then approved ones with Revert.
 struct ChangesView: View {
     @Environment(AppModel.self) private var model
 

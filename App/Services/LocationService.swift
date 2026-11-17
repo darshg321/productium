@@ -1,13 +1,10 @@
 import Foundation
 import CoreLocation
 
-/// Geofences for saved places (home, school, practice field…). Leaving home and
-/// arriving at school are logged automatically, so commute times are learned
-/// without any taps. Only enter/exit events are used. No location history is stored.
 final class LocationService: NSObject, CLLocationManagerDelegate {
     static let shared = LocationService()
     private let manager = CLLocationManager()
-    var onTransition: ((String, Bool) -> Void)?     // (placeId, entered)
+    var onTransition: ((String, Bool) -> Void)?
     private var pendingFix: CheckedContinuation<CLLocation?, Never>?
 
     override init() {

@@ -2,9 +2,6 @@ import SwiftUI
 import AppIntents
 import ProductiumCore
 
-/// Step-by-step Shortcuts recipes. Each automation is something the app can't do alone: notice
-/// another app opening, react to a Wi-Fi network or NFC tag, or use actions only Shortcuts has
-/// (grayscale, Focus). Every step names the exact button to tap.
 struct ShortcutsGuideView: View {
     @Environment(\.dismiss) private var dismiss
     var inSheet = false
@@ -145,7 +142,6 @@ struct RecipeView: View {
     }
 }
 
-/// One automation, written as taps. Shortcuts' own wording is in bold.
 struct Recipe: Identifiable {
     struct Part { var title: String; var steps: [String]; var note: String? = nil }
     var id: String
@@ -158,7 +154,6 @@ struct Recipe: Identifiable {
     var copy: [String] = []
     var tip: String? = nil
 
-    /// The same opening for every automation.
     static func start(_ trigger: String) -> [String] {
         ["In Shortcuts, open the **Automation** tab and tap **+** (top right). If you have no automations yet, tap **New Automation**.",
          trigger]

@@ -25,10 +25,8 @@ enum Keychain {
 }
 
 enum AIError: LocalizedError {
-    /// `unusable` carries what came back: a reply with nothing in it the app could show or apply.
     case notConfigured, server(Int, String), unusable(String), overBudget
 
-    /// The raw text behind a failure, for the receipt's Details.
     var detail: String? {
         switch self {
         case .unusable(let raw): return raw.isEmpty ? "(empty reply)" : String(raw.prefix(1500))
@@ -54,7 +52,6 @@ enum AIError: LocalizedError {
     }
 }
 
-/// What the server says this key used (GET /v1/usage). Its "today" is the server's UTC day.
 struct ServerUsage: Codable, Equatable {
     struct Row: Codable, Equatable {
         var model: String
@@ -76,9 +73,6 @@ struct ServerUsage: Codable, Equatable {
     var todayRequests: Int { today.reduce(0) { $0 + $1.requests } }
 }
 
-/// How much of the Claude subscription behind the server is used (GET /v1/subscription, which
-/// asks Anthropic and caches for a minute). Older servers don't have it; then /health's last
-/// rate-limit event is used, which only knows the status and the reset time.
 struct SubscriptionStatus: Codable, Equatable {
     struct Limit: Codable, Equatable, Identifiable {
         var kind: String?
@@ -110,21 +104,16 @@ struct SubscriptionStatus: Codable, Equatable {
     var source: String?
     var error: String?
     var last_event: Event?
-    /// True when it came from /health on a server without /v1/subscription.
     var legacy: Bool? = nil
 
     var fetchedAt: Date? { fetched_at.map { Date(timeIntervalSince1970: $0) } }
 }
 
-/// Talks to claude-server's Anthropic-compatible API (POST /v1/messages).
-/// Every reply's token usage is handed to `onUsage` so the app can meter it.
 final class ClaudeClient {
     static let shared = ClaudeClient()
     static let defaultURL = URL(string: "https://raspberrypi.tail29964a.ts.net")!
 
-    /// Called on the main actor with (feature, model, tokens, call id) after every successful request.
     var onUsage: (@MainActor (AIFeature, String, TokenCount, UUID) -> Void)?
-    /// Called on the main actor with every request and what came back (or the error), in full.
     var onCall: (@MainActor (AICall) -> Void)?
 
     var baseURL: URL? {
@@ -176,7 +165,6 @@ final class ClaudeClient {
         do {
             var (d, resp) = try await session.data(for: r)
             code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            // Busy or a transient CLI failure: one retry, as the server's guide recommends.
             if [502, 503, 504, 529].contains(code) {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 (d, resp) = try await session.data(for: r)
@@ -194,7 +182,6 @@ final class ClaudeClient {
             await log(status: code, body: body, error: "HTTP \(code): \(msg.prefix(300))")
             throw AIError.server(code, String(msg.prefix(200)))
         }
-        // Any JSON object is read as a message (see AIResponse). Anything else isn't claude-server.
         guard let res = try? JSONDecoder().decode(AIResponse.self, from: data) else {
             await log(status: code, body: body, error: "Not a claude-server reply")
             throw AIError.server(200, String(body.prefix(200)))
@@ -206,10 +193,6 @@ final class ClaudeClient {
         return res
     }
 
-    /// Sends `req` and reads the reply with `read`, which returns nil only when the reply has
-    /// nothing usable in it (see Reply.swift). That's rare enough that asking once more is cheaper
-    /// than failing; the second request skips the server's response cache so it can't get the
-    /// same reply back. Returns the value, the reply it came from, and the tokens of both tries.
     func send<T>(_ req: AIRequest, feature: AIFeature, read: (AIResponse) -> T?) async throws -> (value: T, response: AIResponse, tokens: TokenCount) {
         let first = try await complete(req, feature: feature)
         if let v = read(first) { return (v, first, first.tokens) }
@@ -220,7 +203,6 @@ final class ClaudeClient {
         return (v, second, first.tokens + second.tokens)
     }
 
-    /// A reply decoded as `type`. `accept` can turn down an answer that decodes but is empty.
     func structured<T: Decodable>(feature: AIFeature, system: String, user: String, schema: JSONValue, as type: T.Type,
                                   maxTokens: Int, cacheTTL: Int? = nil, model: String = AIModel.sonnet, effort: String? = nil,
                                   accept: @escaping (T) -> Bool = { _ in true }) async throws -> T {
@@ -229,7 +211,6 @@ final class ClaudeClient {
         return try await send(req, feature: feature) { $0.decoded(T.self, schema: schema, accept: accept) }.value
     }
 
-    /// No tokens: just "is it there". With a key the server also checks auth.
     func ping() async -> Bool {
         guard let base = baseURL else { return false }
         var r = URLRequest(url: base.appendingPathComponent("health"))
@@ -241,7 +222,6 @@ final class ClaudeClient {
 
     enum Check: Equatable { case ok, badKey, unreachable }
 
-    /// Checks the address *and* the key without spending tokens (/health doesn't check keys, /v1/usage does).
     func verify() async -> Check {
         guard let base = baseURL else { return .unreachable }
         var r = URLRequest(url: base.appendingPathComponent("v1/usage"))
@@ -251,7 +231,6 @@ final class ClaudeClient {
         return code == 200 ? .ok : code == 401 ? .badKey : .unreachable
     }
 
-    /// How much of the subscription is used. No tokens. Falls back to /health on older servers.
     func subscription() async -> SubscriptionStatus? {
         guard var r = try? request("v1/subscription") else { return nil }
         r.timeoutInterval = 12
@@ -259,7 +238,6 @@ final class ClaudeClient {
             if code == 200, let s = try? JSONDecoder().decode(SubscriptionStatus.self, from: data) { return s }
             guard code == 404 else { return nil }
         }
-        // Older claude-server: /health (with the key) carries the CLI's last rate-limit event.
         guard var h = try? request("health") else { return nil }
         h.timeoutInterval = 8
         struct Health: Decodable {
@@ -277,7 +255,6 @@ final class ClaudeClient {
                                   error: nil, last_event: e, legacy: true)
     }
 
-    /// The server's own count for this key (also no tokens).
     func usage() async -> ServerUsage? {
         guard var r = try? request("v1/usage") else { return nil }
         r.timeoutInterval = 8

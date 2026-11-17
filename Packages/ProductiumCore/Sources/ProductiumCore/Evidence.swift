@@ -1,32 +1,17 @@
 import Foundation
 
-// MARK: - Every prompt teaches the app
-//
-// Besides operations, a box answer may carry:
-//   - facts: new or changed lines for about-me.md (only what the student literally said), and
-//   - evidence: timestamped observations ("left 8:02, arrived 8:16", "worked ~200 min on the
-//     Waterloo drafts", "was at CS club 11:10-12:00").
-// Evidence is routed here to the things that learn from it: check-in markers (and from them the
-// routines and the day's timeline) and work done, instead of falling through as reply text.
-
-/// Work done on a day that didn't come from a study block: progress logged through the box, or
-/// a change to a task's minutes done. Each change is kept, so a day's work can be summed later.
 public struct ProgressEntry: Codable, Hashable, Identifiable, Sendable {
     public enum Source: String, Codable, Sendable { case task, evidence }
 
     public var id: UUID
     public var at: Date
     public var itemId: UUID?
-    /// Minutes of work this entry stands for (to - from for a task change).
     public var minutes: Int
-    /// A task's minutes done before and after the change.
     public var from: Int?
     public var to: Int?
     public var source: Source
-    /// True when the minutes are the model's estimate ("two drafts"), not a stated time.
     public var estimated: Bool
     public var note: String?
-    /// The box turn it came from.
     public var turnId: UUID?
 
     public init(id: UUID = UUID(), at: Date, itemId: UUID? = nil, minutes: Int, from: Int? = nil, to: Int? = nil,
@@ -45,16 +30,12 @@ public struct ProgressEntry: Codable, Hashable, Identifiable, Sendable {
 }
 
 extension Array where Element == ProgressEntry {
-    /// Minutes of work logged on `day` (outside study blocks). A correction ("it was 200, not
-    /// 400") counts against the same day, never below zero.
     public func minutes(on day: Date, calendar: Calendar) -> Int {
         Swift.max(0, filter { calendar.isDate($0.at, inSameDayAs: day) }.reduce(0) { $0 + $1.minutes })
     }
 }
 
 public enum EvidenceRouter {
-    /// Routes the answer's evidence and facts. `touchedItems` are tasks whose minutes done the same
-    /// answer already set (their work is already logged, so evidence about them isn't counted twice).
     static func route(_ r: DumpResult, to s: inout DumpState, now: Date, calendar cal: Calendar, writer: Writer,
                       touchedItems: Set<UUID>, turnId: UUID?, report rep: inout DumpReport) {
         for f in r.facts {
@@ -68,7 +49,6 @@ public enum EvidenceRouter {
             newMarkers += route(e, to: &s, now: now, calendar: cal, touchedItems: touchedItems, turnId: turnId, report: &rep)
         }
         guard !newMarkers.isEmpty else { return }
-        // Learn from today's check-ins right away (the same pair is never counted twice).
         for day in Set(newMarkers.map { cal.startOfDay(for: $0.at) }) {
             let evs = s.markers.filter { cal.isDate($0.at, inSameDayAs: day) }
             let before = s.routines
@@ -94,7 +74,7 @@ public enum EvidenceRouter {
         if kind == .study {
             let span = start.flatMap { st in end.map { Int($0.timeIntervalSince(st) / 60) } }
             let minutes = e.minutes ?? span
-            if let task, touchedItems.contains(task.id) { return [] }   // already logged as the task's minutes
+            if let task, touchedItems.contains(task.id) { return [] }
             guard let minutes, minutes > 0 else {
                 rep.problems.append("Couldn't count “\(e.what.prefix(60))” as work done: no time given")
                 return []
@@ -106,11 +86,9 @@ public enum EvidenceRouter {
             return []
         }
 
-        // Everything else is time somewhere: a start/end pair of check-ins.
         let (activity, category, label) = markerKey(kind, words, start ?? end ?? now, s.commitments, cal)
         var made: [TimelineEvent] = []
         func add(_ at: Date, _ phase: MarkerPhase) {
-            // The same transition already checked in within 3 minutes: not a second marker.
             if s.markers.contains(where: { $0.activity == activity && $0.phase == phase && abs($0.at.timeIntervalSince(at)) <= 180 }) { return }
             let m = TimelineEvent(at: at, phrase: e.what, activity: activity, category: category, phase: phase, source: .voice)
             s.markers.append(m)
@@ -142,7 +120,6 @@ public enum EvidenceRouter {
         return .other
     }
 
-    /// The marker key, its category and a label for the receipt.
     static func markerKey(_ kind: EvidenceKind, _ words: String, _ at: Date, _ commitments: [Commitment],
                           _ cal: Calendar) -> (String, TimeCategory, String) {
         switch kind {

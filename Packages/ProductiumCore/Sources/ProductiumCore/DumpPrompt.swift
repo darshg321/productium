@@ -1,9 +1,6 @@
 import Foundation
 
 extension Schemas {
-    /// Three operations and the macros. Entity fields are free-form (`fields` is any object): the
-    /// registry in the prompt says what each entity takes, which is far fewer schema tokens than a
-    /// schema per entity.
     public static let dumpOp: JSONValue = obj([
         "op": strEnum(DumpOpKind.allCases.map(\.rawValue)),
         "entity": strEnum(Registry.entities.map(\.name)),
@@ -24,18 +21,14 @@ extension Schemas {
                                             required: ["ops", "reply"])
 }
 
-/// Everything the Inbox can see. The app fills it from its state; the context is rebuilt for
-/// every message, so the model always works from what's really there now.
 public struct DumpContextInput: Sendable {
     public var now: Date
     public var calendar: Calendar
     public var state: DumpState
-    /// Imported from the iOS calendar: shown, but changed in Calendar, not here.
     public var calendarEvents: [FixedEvent]
     public var todaySegments: [Segment]
     public var plan: Plan
     public var warnings: [PlanWarning]
-    /// about-me.md.
     public var aboutMe: AboutMe
 
     public init(now: Date, calendar: Calendar, state: DumpState, calendarEvents: [FixedEvent] = [],
@@ -104,7 +97,6 @@ extension Prompts {
         """
     }
 
-    /// The app's state, compact: every reference the model needs to change things exactly.
     public static func dumpContext(_ c: DumpContextInput) -> String {
         let cal = c.calendar, now = c.now, s = c.state
         func fmt(_ f: String) -> DateFormatter {
@@ -197,7 +189,6 @@ extension Prompts {
             l.append("Recently done: " + recentDone.map { "\(Ref.task($0.id)) \"\($0.title)\"" }.joined(separator: "; "))
         }
 
-        // Only what's happened so far today: that's what corrections refer to. (* = assumed, not observed.)
         let past = c.todaySegments.filter { $0.minutes >= 15 && $0.start <= now }
         if !past.isEmpty {
             l.append("Today so far: " + past.map { "\(hm.string(from: $0.start))-\(hm.string(from: $0.end)) \($0.label)\($0.inferred ? "*" : "")" }
@@ -208,7 +199,6 @@ extension Prompts {
             l.append("Check-ins today: " + marks.map { "\(hm.string(from: $0.at)) \($0.activity) \($0.phase.rawValue)" }.joined(separator: ", "))
         }
 
-        // The plan as the student sees it on the Schedule tab: today and tomorrow in full, then study only.
         func label(_ b: PlannedBlock) -> String {
             let k: String
             switch b.kind {

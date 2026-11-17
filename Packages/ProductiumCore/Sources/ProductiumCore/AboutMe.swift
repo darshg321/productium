@@ -1,16 +1,5 @@
 import Foundation
 
-// MARK: - about-me.md: what the app knows about the student, in their words
-//
-// One markdown file on the device with four sections the AI keeps tidy. The student can edit it
-// in Settings → About You, and their edits always win: a line they wrote or changed ends in
-// "(you)" and no AI write ever replaces or removes it.
-//
-//   ## Stated       things the student said (the box may append here)
-//   ## Inferred     "… — evidence: …, confidence: med, since 2026-11-17" (reflection only)
-//   ## Patterns     behaviour, e.g. "puts off university essays: deferred 3× this week" (reflection only)
-//   ## Preferences  how they like things (the student, or reflection)
-
 public enum AboutMeSection: String, CaseIterable, Codable, Sendable {
     case stated = "Stated", inferred = "Inferred", patterns = "Patterns", preferences = "Preferences"
 
@@ -21,11 +10,9 @@ public enum AboutMeSection: String, CaseIterable, Codable, Sendable {
     }
 }
 
-/// One new or changed line, as the AI proposes it.
 public struct AboutMeFact: Codable, Hashable, Sendable {
     public var section: String?
     public var text: String
-    /// The existing line this one replaces (its text, without the "- ").
     public var replaces: String?
 
     public init(section: String? = nil, text: String, replaces: String? = nil) {
@@ -38,7 +25,6 @@ public struct AboutMeFact: Codable, Hashable, Sendable {
 public struct AboutMe: Hashable, Sendable {
     public struct Line: Hashable, Sendable {
         public var text: String
-        /// Written or changed by the student: never overwritten.
         public var byStudent: Bool
         public init(_ text: String, byStudent: Bool = false) { self.text = text; self.byStudent = byStudent }
     }
@@ -47,7 +33,6 @@ public struct AboutMe: Hashable, Sendable {
     public static let title = "# About me"
 
     public var sections: [AboutMeSection: [Line]]
-    /// Anything above the first section or in a section the app doesn't know, kept as written.
     public var other: [String]
 
     public init(sections: [AboutMeSection: [Line]] = [:], other: [String] = []) {
@@ -63,8 +48,6 @@ public struct AboutMe: Hashable, Sendable {
     }
 
     public var isEmpty: Bool { AboutMeSection.allCases.allSatisfy { self[$0].isEmpty } && other.isEmpty }
-
-    // MARK: Markdown
 
     public static func parse(_ md: String) -> AboutMe {
         var me = AboutMe()
@@ -105,7 +88,6 @@ public struct AboutMe: Hashable, Sendable {
         return out.joined(separator: "\n")
     }
 
-    /// The file as the AI sees it (inside the user turn, so the system prompt never changes).
     public var promptText: String {
         let body = AboutMeSection.allCases.compactMap { s -> String? in
             let lines = self[s]
@@ -115,13 +97,10 @@ public struct AboutMe: Hashable, Sendable {
         return body.isEmpty ? "About the student: nothing yet" : "About the student (about-me.md):\n" + body.joined(separator: "\n")
     }
 
-    // MARK: Changes
-
     static func norm(_ s: String) -> String {
         s.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    /// Applies an AI's line. Returns a receipt line, or the reason it was refused.
     @discardableResult
     public mutating func apply(_ f: AboutMeFact, by writer: AboutMeWriter, now: Date? = nil) -> Result<String, AboutMeRefusal> {
         let text = f.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -133,7 +112,6 @@ public struct AboutMe: Hashable, Sendable {
         if line.hasSuffix(AboutMe.studentMark) && writer != .student {
             line = String(line.dropLast(AboutMe.studentMark.count)).trimmingCharacters(in: .whitespaces)
         }
-        // Already there, in any section: nothing to do.
         if AboutMeSection.allCases.contains(where: { self[$0].contains { AboutMe.norm($0.text) == AboutMe.norm(line) } }) {
             return .success("Already known: \(line)")
         }
@@ -150,8 +128,6 @@ public struct AboutMe: Hashable, Sendable {
         return .success("Noted: \(line)")
     }
 
-    /// The student saved the editor: every line they added or changed (compared with what the
-    /// file said before) is marked as theirs. Lines that were theirs stay theirs.
     public static func studentEdited(old: String, new: String) -> AboutMe {
         let before = AboutMe.parse(old)
         var after = AboutMe.parse(new)

@@ -2,13 +2,6 @@ import Foundation
 import UserNotifications
 import ProductiumCore
 
-/// Notifications carry most of the input: one tap on Done / Partly / Skipped
-/// from the lock screen, or a typed or dictated reply to the evening check-in.
-/// The app often never needs opening.
-///
-/// What gets sent, and when, is decided by `NudgePlanner` (ProductiumCore); this file only turns
-/// those into requests. Ids starting "plan." are rebuilt on every replan. "snooze." and
-/// "scroll." ones are set by a tap or by a Shortcuts automation and left alone by replans.
 enum NotificationService {
     static let blockCategory = "BLOCK_END"
     static let startCategory = "BLOCK_START"
@@ -65,7 +58,6 @@ enum NotificationService {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
     }
 
-    /// Replaces every pending "plan." notification with `nudges`.
     static func schedule(_ nudges: [PlannedNudge]) {
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { pending in
@@ -95,16 +87,13 @@ enum NotificationService {
         case .deadline: c.categoryIdentifier = deadlineCategory
         default: break
         }
-        // Follow-ups for the same block replace each other in Notification Center.
         if let b = n.blockId { c.threadIdentifier = b.uuidString }
-        // Time Sensitive needs a paid-account entitlement; without it iOS treats this as .active.
+        // Time Sensitive needs a paid-account entitlement; without it iOS treats it as .active.
         c.interruptionLevel = n.urgent ? .timeSensitive : .active
         c.relevanceScore = n.urgent ? 0.9 : 0.4
         return c
     }
 
-    /// "In 10 minutes" from a start notification: one reminder, and the block's own follow-ups
-    /// are dropped (the next replan leaves them out while it's snoozed).
     static func snooze(blockId: UUID, title: String, minutes: Int = 10) {
         let center = UNUserNotificationCenter.current()
         cancel(blockId: blockId)
@@ -118,7 +107,6 @@ enum NotificationService {
         add(center, "snooze.\(blockId)", c, at: Date().addingTimeInterval(Double(minutes) * 60))
     }
 
-    /// Focus started (or the block was answered): no more heads-ups, starts or follow-ups for it.
     static func cancel(blockId: UUID) {
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { pending in
@@ -135,10 +123,6 @@ enum NotificationService {
         }
     }
 
-    // MARK: Scrolling check-ins (free build, from the Shortcuts pause)
-
-    /// After "Go back anyway": one "still scrolling?" check-in. The next is scheduled only when
-    /// the student answers Yes, so an unanswered one (a locked phone) is the last.
     static func scheduleScrollCheckIn(after minutes: Int, total: Int, last: Bool) {
         let center = UNUserNotificationCenter.current()
         cancelScrollCheckIns()
@@ -157,8 +141,6 @@ enum NotificationService {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: (0..<4).map { "scroll.\($0)" })
     }
 
-    /// Free builds: a weekly nudge to drop a Screen Time screenshot, and a warning
-    /// the day before the 7-day signature runs out.
     static func scheduleHousekeeping(freeTier: Bool, expiry: Date?) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: ["house.screenshot", "house.expiry"])
@@ -185,7 +167,6 @@ enum NotificationService {
                                          trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
     }
 
-    /// "What were you doing 3:10–4:05?", answered in one line from the lock screen.
     static func scheduleGapQuestion(_ question: String, start: Date, end: Date, at date: Date) {
         cancelGapQuestion()
         let c = UNMutableNotificationContent()

@@ -1,8 +1,6 @@
 import DeviceActivity
 import SwiftUI
 
-/// Screen Time data stays inside this extension (Apple's privacy rule). It draws
-/// the "Screen" card in Insights. The app itself never sees per-app numbers.
 @main
 struct ProductiumReportExtension: DeviceActivityReportExtension {
     var body: some DeviceActivityReportScene {

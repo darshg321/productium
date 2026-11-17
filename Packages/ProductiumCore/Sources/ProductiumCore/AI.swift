@@ -1,8 +1,5 @@
 import Foundation
 
-// MARK: - Wire format shared with claude-server (POST /v1/messages)
-
-/// Minimal JSON value so schemas and structured output pass through untyped.
 public indirect enum JSONValue: Codable, Hashable, Sendable {
     case string(String), number(Double), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
 
@@ -28,7 +25,6 @@ public indirect enum JSONValue: Codable, Hashable, Sendable {
         }
     }
 
-    /// Re-decode into a typed value.
     public func decode<T: Decodable>(_ type: T.Type) throws -> T {
         try JSONDecoder().decode(T.self, from: JSONEncoder().encode(self))
     }
@@ -43,39 +39,26 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, Ex
     public init(arrayLiteral v: JSONValue...) { self = .array(v) }
     public init(dictionaryLiteral v: (String, JSONValue)...) { self = .object(Dictionary(v, uniquingKeysWith: { _, b in b })) }
 
-    /// Any encodable value as JSON.
     public static func encoding<T: Encodable>(_ v: T) -> JSONValue? {
         let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
         return (try? e.encode(v)).flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) }
     }
 
-    /// The string inside, if it is one.
     public var stringValue: String? { if case .string(let s) = self { return s }; return nil }
     public var numberValue: Double? { if case .number(let n) = self { return n }; return nil }
 }
 
-/// The one model every request uses. Only output tokens are counted, and every call this app makes
-/// is structured extraction or short writing. Measured through claude-server on the app's own
-/// prompts (16 Inbox messages, a project breakdown, flashcards, reads, the weekly note), Sonnet 5.5
-/// at the server's default low effort wrote about 8.1k output tokens where Haiku 5.5 wrote 14.4k:
-/// Haiku's thinking can't be turned off and it thinks more than Sonnet does. Both got every case
-/// right, so a second model would only add cost. Haiku 4.5 isn't used.
 public enum AIModel {
     public static let sonnet = "sonnet"
-    /// Only for the rare calls that change how the app behaves (the reflection), at medium effort.
-    /// Everything they produce waits for the student's approval.
     public static let opus = "opus"
 }
 
 public struct AIImage: Codable, Hashable, Sendable {
-    public var mediaType: String      // image/jpeg, image/png
+    public var mediaType: String
     public var base64: String
     public init(mediaType: String, base64: String) { self.mediaType = mediaType; self.base64 = base64 }
 }
 
-/// A chat message. With images it's sent as content blocks (image… then text), the shape
-/// claude-server and the Anthropic API take. With `raw` set, that exact `content` is sent instead:
-/// a conversation's history goes back byte-for-byte as it went the first time.
 public struct AIMessage: Codable, Hashable, Sendable {
     public var role: String
     public var content: String
@@ -89,7 +72,6 @@ public struct AIMessage: Codable, Hashable, Sendable {
         self.raw = nil
     }
 
-    /// A message whose `content` is sent exactly as given.
     public init(role: String, raw: JSONValue) {
         self.role = role
         self.raw = raw
@@ -105,7 +87,6 @@ public struct AIMessage: Codable, Hashable, Sendable {
         var source: Source?
     }
 
-    /// The readable text of a content value (text blocks, tool inputs and tool results).
     static func text(of v: JSONValue) -> String {
         switch v {
         case .string(let s): return s
@@ -164,7 +145,6 @@ public struct AIMessage: Codable, Hashable, Sendable {
     }
 }
 
-/// A client tool. The box uses one, forced, so claude-server can keep the session alive.
 public struct AITool: Codable, Hashable, Sendable {
     public var name: String
     public var description: String
@@ -176,9 +156,6 @@ public struct AITool: Codable, Hashable, Sendable {
     }
 }
 
-/// A request to claude-server's Anthropic-compatible `POST /v1/messages`. Structured output goes
-/// through `output_config.format`, which the server runs as one forced tool call (one API turn), or
-/// through a forced client tool (`tools` + `tool_choice`), which also keeps a live session.
 public struct AIRequest: Encodable, Sendable {
     public struct Format: Encodable, Sendable { var type = "json_schema"; var schema: JSONValue }
     public struct OutputConfig: Encodable, Sendable {
@@ -194,8 +171,7 @@ public struct AIRequest: Encodable, Sendable {
     public var output_config: OutputConfig?
     public var tools: [AITool]?
     public var tool_choice: ToolChoice?
-    /// Not sent in the body: identical requests within this many seconds are answered from the server's
-    /// memory without using any tokens (sent as the `x-cache-ttl` header).
+    // Sent as the x-cache-ttl header, not in the body.
     public var cacheTTL: Int?
 
     enum CodingKeys: String, CodingKey { case model, max_tokens, system, messages, output_config, tools, tool_choice }
@@ -211,7 +187,6 @@ public struct AIRequest: Encodable, Sendable {
         self.cacheTTL = cacheTTL
     }
 
-    /// A request answered by calling `tool` (forced).
     public init(model: String = AIModel.sonnet, system: String, messages: [AIMessage], tool: AITool,
                 maxTokens: Int, effort: String? = nil) {
         self.init(model: model, system: system, messages: messages, schema: nil, maxTokens: maxTokens, effort: effort)
@@ -219,19 +194,16 @@ public struct AIRequest: Encodable, Sendable {
         self.tool_choice = ToolChoice(name: tool.name)
     }
 
-    /// The schema the answer has to fit: the output format's, or the forced tool's.
     public var answerSchema: JSONValue? {
         output_config?.format?.schema ?? tool_choice.flatMap { c in tools?.first { $0.name == c.name }?.input_schema }
     }
 }
 
-// MARK: - Structured outputs
-
 public struct ParsedItem: Codable, Hashable, Sendable {
     public var title: String
     public var kind: String
     public var subject: String?
-    public var due: String           // ISO 8601 date or date-time, local
+    public var due: String
     public var estimateMinutes: Int?
     public var importance: Int?
     public var difficulty: Int?
@@ -253,8 +225,8 @@ public struct ParsedItem: Codable, Hashable, Sendable {
 public struct ParsedCommitment: Codable, Hashable, Sendable {
     public var title: String
     public var kind: String
-    public var weekdays: [Int]       // 1 = Sunday … 7 = Saturday
-    public var start: String         // "HH:mm"
+    public var weekdays: [Int]
+    public var start: String
     public var end: String
 }
 
@@ -302,7 +274,6 @@ public struct WeeklyReview: Codable, Hashable, Sendable {
 public struct CardBatch: Codable, Hashable, Sendable {
     public struct Card: Codable, Hashable, Sendable { public var front: String; public var back: String }
     public var cards: [Card]
-    /// Cards with both sides written.
     public var usable: [Card] { cards.filter { !$0.front.isEmpty && !$0.back.isEmpty } }
 }
 
@@ -314,11 +285,8 @@ public struct ReadBatch: Codable, Hashable, Sendable {
         public var question: String?
     }
     public var pieces: [Piece]
-    /// Reads with a title and a body.
     public var usable: [Piece] { pieces.filter { !$0.title.isEmpty && !$0.body.isEmpty } }
 }
-
-// MARK: - Schemas (subset of JSON Schema, sent as `output_config.format`)
 
 public enum Schemas {
     static func obj(_ props: [String: JSONValue], required: [String]) -> JSONValue {
@@ -348,14 +316,8 @@ public enum Schemas {
                                              required: ["pieces"])
 }
 
-// MARK: - Prompts
-
+// System prompts must stay byte-identical across requests (server cache and session key); variable data goes in the user turn.
 public enum Prompts {
-    // System prompts are constants: the server's prompt cache and live sessions key on a
-    // byte-identical system prompt, so anything that varies (dates, topics, names) goes in
-    // the user message. They're also short: a shorter prompt is less to read and keeps the
-    // answer focused.
-
     static let persona = """
     You are the assistant in Productium, a calm planner for high-school students. Warm, brief, concrete, never \
     shaming. Sleep is never traded for test prep. No diagnoses; if someone seems in distress, suggest a trusted \
@@ -418,14 +380,12 @@ public enum Prompts {
             "their interests (\(interests.isEmpty ? "science, history, how things work" : interests.joined(separator: ", ")))."
     }
 
-    /// Compact context, so prompts stay cheap and on-topic.
     public static func context(now: Date, items: [WorkItem], plan: Plan, summary: PeriodSummary?, moods: [MoodEntry],
                                taper: ScreenTaper, learned: LearnedModel, calendar cal: Calendar,
                                aboutMe: AboutMe = .empty) -> String {
         let df = DateFormatter(); df.calendar = cal; df.timeZone = cal.timeZone; df.dateFormat = "EEE MMM d HH:mm"
         var lines = ["Now: \(df.string(from: now))"]
         if !aboutMe.isEmpty { lines.append(aboutMe.promptText) }
-        // The weekly note is about how the week went, so only the next few deadlines matter.
         let open = items.filter { !$0.isDone && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(8)
         if !open.isEmpty {
             lines.append("Coming up: " + open.map { "\($0.title) (\(df.string(from: $0.due)), \($0.completedMinutes)/\($0.estimateMinutes)m)" }
@@ -447,8 +407,6 @@ public enum Prompts {
         return lines.joined(separator: "\n")
     }
 }
-
-// MARK: - Turning AI output into model objects, with guard rails
 
 public enum AIMapper {
     public static func parseDate(_ s: String, timeZone: TimeZone) -> Date? {

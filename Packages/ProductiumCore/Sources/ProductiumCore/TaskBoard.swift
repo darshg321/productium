@@ -1,7 +1,5 @@
 import Foundation
 
-// MARK: - The task list
-
 public enum TaskGrouping: String, Codable, CaseIterable, Sendable {
     case due, subject, kind
 
@@ -26,14 +24,10 @@ public struct TaskSummary: Hashable, Sendable {
     public var open: Int
     public var pastDue: Int
     public var dueThisWeek: Int
-    /// Work left on open tasks, corrected by how long things really take.
     public var minutesLeft: Int
-    /// Minutes of that which the plan has a slot for.
     public var minutesPlanned: Int
 }
 
-/// Sorting, grouping and searching tasks. Steps of a project live under the project, so the
-/// list only shows top-level tasks; a search that matches a step shows its project.
 public enum TaskBoard {
     public static func sections(items: [WorkItem], grouping: TaskGrouping, query: String = "", showDone: Bool,
                                 now: Date, calendar cal: Calendar) -> [TaskSection] {
@@ -88,8 +82,6 @@ public enum TaskBoard {
         return q.split(separator: " ").allSatisfy { hay.contains($0) }
     }
 
-    /// Minutes still to do: the estimate (corrected by `factor`) minus what's logged.
-    /// A project with steps counts its open steps instead.
     public static func minutesLeft(_ item: WorkItem, steps: [WorkItem], factor: Double) -> Int {
         guard !item.isDone else { return 0 }
         let open = steps.filter { !$0.isDone }
@@ -99,7 +91,6 @@ public enum TaskBoard {
         return max(0, Int(Double(item.estimateMinutes) * factor) - item.completedMinutes)
     }
 
-    /// The next planned study session for the task or any of its steps.
     public static func nextSession(for item: WorkItem, steps: [WorkItem], plan: Plan, now: Date) -> PlannedBlock? {
         let ids = Set([item.id] + steps.map(\.id))
         return plan.blocks.first { $0.isStudy && $0.end > now && $0.itemId.map(ids.contains) == true }
@@ -147,11 +138,7 @@ extension TaskKind {
     }
 }
 
-// MARK: - The day timeline
-
 public enum TimelineLayout {
-    /// Side-by-side columns for overlapping intervals: (column, columns in its cluster) per input,
-    /// in input order. Intervals that only touch don't overlap.
     public static func lanes(_ xs: [(start: Date, end: Date)]) -> [(lane: Int, of: Int)] {
         let order = xs.indices.sorted { (xs[$0].start, xs[$0].end) < (xs[$1].start, xs[$1].end) }
         var result = Array(repeating: (lane: 0, of: 1), count: xs.count)

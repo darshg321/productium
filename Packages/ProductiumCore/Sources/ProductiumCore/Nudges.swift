@@ -1,10 +1,5 @@
 import Foundation
 
-// MARK: - How pushy the phone is
-
-/// How much the phone interrupts. Every level keeps the basics (block start, "how did it go?",
-/// the evening check-in and morning brief); higher levels add warnings before things happen
-/// and follow-ups when they don't.
 public enum NudgeLevel: String, Codable, CaseIterable, Sendable {
     case gentle, standard, persistent
 
@@ -27,7 +22,6 @@ public enum NudgeLevel: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// Minutes after a block's start to ask again if focus hasn't started.
     public var followUps: [Int] {
         switch self {
         case .gentle: return []
@@ -36,7 +30,6 @@ public enum NudgeLevel: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// Minutes into a scroll session (after "Go back anyway") to check in.
     public var scrollCheckIns: [Int] {
         switch self {
         case .gentle: return [15]
@@ -48,8 +41,6 @@ public enum NudgeLevel: String, Codable, CaseIterable, Sendable {
 
 public struct NudgeSettings: Codable, Hashable, Sendable {
     public var level: NudgeLevel
-    /// Real alarms (AlarmKit) for bedtime, leaving and a block that hasn't started. Opt-in:
-    /// they ring through silent mode and Focus.
     public var alarms: Bool
     public var scrollCheckIns: Bool
     public var arrivingHome: Bool
@@ -76,10 +67,6 @@ public struct NudgeSettings: Codable, Hashable, Sendable {
     }
 }
 
-// MARK: - What the plan says right now
-
-/// One word for what the plan says this minute, so Shortcuts automations can branch on it
-/// ("if it's wind-down, turn on grayscale").
 public enum PlanMoment: String, Codable, CaseIterable, Sendable {
     case focus, breakTime, busy, free, windDown, sleep
 
@@ -96,7 +83,6 @@ public enum PlanMoment: String, Codable, CaseIterable, Sendable {
 }
 
 extension Plan {
-    /// Sleep counts too (`current(at:)` skips it). A gap with nothing planned is free.
     public func moment(at now: Date) -> PlanMoment {
         guard let b = blocks.first(where: { $0.start <= now && now < $0.end }) else { return .free }
         switch b.kind {
@@ -110,13 +96,10 @@ extension Plan {
     }
 }
 
-// MARK: - Notifications to schedule
-
 public enum NudgeKind: String, Codable, Sendable {
     case leadUp, start, followUp, end, windDown, bedtime, stillUp, leaveSoon, leaveNow, deadline, checkIn, morning, marker, intention
 }
 
-/// One local notification, decided here and handed to UserNotifications by the app.
 public struct PlannedNudge: Hashable, Sendable {
     public var id: String
     public var kind: NudgeKind
@@ -127,7 +110,6 @@ public struct PlannedNudge: Hashable, Sendable {
     public var itemId: UUID?
     public var marker: String?
     public var deeplink: String?
-    /// Breaks through Focus where the build allows it.
     public var urgent: Bool
 
     public init(id: String, kind: NudgeKind, at: Date, title: String, body: String, blockId: UUID? = nil,
@@ -145,7 +127,6 @@ public struct PlannedNudge: Hashable, Sendable {
     }
 }
 
-/// An AlarmKit alarm: louder than a notification, used only when the student opts in.
 public struct PlannedAlarm: Hashable, Sendable {
     public enum Kind: String, Sendable { case bedtime, leave, missedStart }
     public var key: String
@@ -169,19 +150,12 @@ public struct NudgeInput {
     public var plan: Plan
     public var items: [WorkItem]
     public var settings: NudgeSettings
-    /// Block a focus session is running for: no start, follow-up or lead-up for it.
     public var startedBlockId: UUID?
-    /// Blocks already answered (done / partly / skipped): nothing more about them.
     public var answeredBlockIds: Set<UUID>
-    /// Blocks snoozed from a notification: their start and follow-ups are left to the snooze.
     public var snoozedBlockIds: Set<UUID>
-    /// One-tap routine prompts while routines are still being learned.
     public var markerPrompts: [(Date, String)]
-    /// iOS keeps at most 64 pending requests; leave room for wake-ups, housekeeping and snoozes.
     public var limit: Int
-    /// How times read in the text ("4:30 PM"). The app passes the phone's own format.
     public var timeLabel: ((Date) -> String)?
-    /// Tier 2 behaviour knobs (approved changes only).
     public var policy: BehaviourPolicy
 
     public init(now: Date, calendar: Calendar, plan: Plan, items: [WorkItem], settings: NudgeSettings,
@@ -206,8 +180,6 @@ public struct NudgeInput {
 public enum NudgePlanner {
     public static let horizon: TimeInterval = 86400
 
-    /// Every notification for the next 24 h, soonest first, at most `limit`.
-    /// Pure: the app removes its pending "plan." requests and adds these.
     public static func plan(_ input: NudgeInput) -> [PlannedNudge] {
         let now = input.now
         let end = now.addingTimeInterval(horizon)
@@ -217,12 +189,10 @@ public enum NudgePlanner {
         func add(_ n: PlannedNudge) { if n.at > now.addingTimeInterval(30) && n.at < end { out.append(n) } }
         func time(_ d: Date) -> String { input.timeLabel?(d) ?? clock(d, input.calendar) }
 
-        // Study blocks: heads-up, start, follow-ups, "how did it go?".
         let study = plan.blocks.filter { $0.isStudy && $0.end > now && $0.start < end && !input.answeredBlockIds.contains($0.id) }
         for (i, b) in study.enumerated() {
             let started = b.id == input.startedBlockId
             let snoozed = input.snoozedBlockIds.contains(b.id)
-            // A block that follows straight on from another doesn't need its own heads-up.
             let backToBack = i > 0 && study[i - 1].end >= b.start.addingTimeInterval(-15 * 60)
             if !started && !snoozed {
                 if level != .gentle && !backToBack && b.minutes >= 20 {
@@ -251,7 +221,6 @@ public enum NudgePlanner {
                       blockId: b.id, itemId: b.itemId))
         }
 
-        // Evening: check-in, wind-down, bedtime, and (persistent) a "still up?".
         if let wind = plan.blocks.first(where: { $0.kind == .windDown && $0.start > now.addingTimeInterval(30 * 60) && $0.start < end }) {
             add(PlannedNudge(id: "plan.checkin", kind: .checkIn, at: wind.start.addingTimeInterval(-30 * 60),
                       title: "20-second check-in",
@@ -272,7 +241,6 @@ public enum NudgePlanner {
             }
         }
 
-        // Morning brief and leaving the house.
         if let w = plan.wakePlans.first(where: { $0.wake > now && $0.wake < end }) {
             let day = plan.blocks(on: w.wake, calendar: input.calendar).filter(\.isStudy)
             let mins = day.reduce(0) { $0 + $1.minutes }
@@ -294,7 +262,6 @@ public enum NudgePlanner {
                       urgent: true))
         }
 
-        // Deadlines: the evening before (6 pm), and on the day for persistent.
         if input.settings.deadlines {
             for item in input.items where !item.isDone && item.parentId == nil && item.due > now {
                 let left = max(0, item.estimateMinutes - item.completedMinutes)
@@ -324,8 +291,6 @@ public enum NudgePlanner {
                       body: "Tap Yes when it happens. A few of these and Productium learns your routine.", marker: s.1))
         }
 
-        // Several things at the same minute: keep the most useful one.
-        // Implementation intentions the student approved: at their time, on their days.
         for intent in input.policy.intentions where intent.trigger == .time {
             guard let t = intent.time else { continue }
             for d in 0...1 {
@@ -339,8 +304,6 @@ public enum NudgePlanner {
         return Array(dedupe(out).sorted { $0.at < $1.at }.prefix(input.limit))
     }
 
-    /// Two nudges in the same minute become one, except "how did it go?" for a block that just
-    /// ended, which always stays (its buttons are the whole point).
     static func dedupe(_ xs: [PlannedNudge]) -> [PlannedNudge] {
         var byMinute: [Int: [PlannedNudge]] = [:]
         for n in xs { byMinute[Int(n.at.timeIntervalSince1970 / 60), default: []].append(n) }
@@ -354,7 +317,6 @@ public enum NudgePlanner {
         return out
     }
 
-    /// Lower is more important when two collide.
     static func rank(_ k: NudgeKind) -> Int {
         switch k {
         case .leaveNow: return 0
@@ -374,8 +336,6 @@ public enum NudgePlanner {
         }
     }
 
-    /// Opt-in alarms for the next 24 h: bedtime, leaving, and a study block 10 minutes in
-    /// that hasn't been started. The app cancels the last one when focus starts.
     public static func alarms(_ input: NudgeInput, max: Int = 6) -> [PlannedAlarm] {
         guard input.settings.alarms else { return [] }
         let now = input.now, end = now.addingTimeInterval(horizon)
@@ -412,8 +372,6 @@ public enum NudgePlanner {
 }
 
 extension Array where Element == ScreenDay {
-    /// Adds Shortcuts-measured days. A screenshot or the Screen Time monitor is more complete,
-    /// so it's never replaced by a Shortcuts count.
     public func merging(measured: [ScreenDay], calendar cal: Calendar) -> [ScreenDay] {
         var byDay = Dictionary(map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
         for m in measured {

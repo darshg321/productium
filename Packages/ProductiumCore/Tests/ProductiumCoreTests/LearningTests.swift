@@ -75,11 +75,9 @@ final class LearningTests: XCTestCase {
         var days = (1...7).map { ScreenDay(day: Fx.mon(0, plusDays: -$0), distractingMinutes: 180) }
         XCTAssertNotNil(t.update(days: days, now: Fx.mon(9), calendar: cal))
         XCTAssertEqual(t.targetMinutes, 180)
-        // Next week, stayed under every day → step down 15%.
         days += (0..<7).map { ScreenDay(day: Fx.mon(0, plusDays: $0), distractingMinutes: 150) }
         t.update(days: days, now: Fx.mon(9, plusDays: 7), calendar: cal)
         XCTAssertEqual(t.targetMinutes, 153)
-        // A hard week holds or loosens, never punishes.
         days += (7..<14).map { ScreenDay(day: Fx.mon(0, plusDays: $0), distractingMinutes: 300) }
         t.update(days: days, now: Fx.mon(9, plusDays: 14), calendar: cal)
         XCTAssertGreaterThanOrEqual(t.targetMinutes!, 153)
@@ -93,7 +91,6 @@ final class LearningTests: XCTestCase {
         c = Leitner.review(c, correct: false, now: Fx.mon(9))
         XCTAssertEqual(c.box, 1)
     }
-
 
     func testExportsAndBackupRoundTrip() throws {
         let csv = Exporter.csv(["a", "b"], [["x,y", "say \"hi\""]])

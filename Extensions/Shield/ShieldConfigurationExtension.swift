@@ -2,8 +2,6 @@ import ManagedSettings
 import ManagedSettingsUI
 import UIKit
 
-/// The screen shown instead of a blocked app: calm and specific, with one way out
-/// that takes a deliberate tap.
 final class ShieldConfigurationExtension: ShieldConfigurationDataSource {
     override func configuration(shielding application: Application) -> ShieldConfiguration { make() }
     override func configuration(shielding application: Application, in category: ActivityCategory) -> ShieldConfiguration { make() }

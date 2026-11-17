@@ -1,20 +1,5 @@
 import Foundation
 
-// MARK: - What the AI may change, and how risky each change is
-//
-// Instead of a growing list of hand-written action types, the AI has three operations over a
-// typed registry: `upsert(entity, id?, fields)`, `delete(entity, id)` and `set(knob, value)`.
-// Every entity and knob declares its fields, bounds and a risk tier:
-//
-//   0 · data       tasks, events, markers, progress, colours, stated facts. The box applies them at
-//                  once, with Undo.
-//   1 · learned    routine durations, sleep need, capacities. The box only from the student's explicit
-//                  statement (marked "stated"); otherwise the learners.
-//   2 · behaviour  planner and nudge policy. Only the reflection job (Opus) may propose these, and
-//                  nothing changes until the student approves (see Proposals.swift).
-//
-// Adding a behaviour later means registering a knob here, not writing a new action.
-
 public enum RiskTier: Int, Codable, Comparable, Sendable, CaseIterable {
     case data = 0, learned = 1, behaviour = 2
     public static func < (a: RiskTier, b: RiskTier) -> Bool { a.rawValue < b.rawValue }
@@ -28,8 +13,6 @@ public enum RiskTier: Int, Codable, Comparable, Sendable, CaseIterable {
     }
 }
 
-/// Who is making a change. The box may write tiers 0 and 1; tier 2 goes through a proposal the
-/// student approves, and only the reflection may propose it.
 public enum Writer: String, Codable, Sendable {
     case student, box, reflection
 
@@ -37,7 +20,6 @@ public enum Writer: String, Codable, Sendable {
         switch self {
         case .student: return true
         case .box: return t < .behaviour
-        // Reflection changes are applied only from an approved proposal (Proposals.swift).
         case .reflection: return true
         }
     }
@@ -53,20 +35,11 @@ public enum Writer: String, Codable, Sendable {
 
 public typealias AboutMeWriter = Writer
 
-// MARK: Tier 2: how the app behaves
-
-/// Policy knobs the planner and nudges read. Defaults are neutral (they change nothing), so a new
-/// student gets the planner as designed; reflection may propose bounded drift from there.
 public struct BehaviourPolicy: Codable, Hashable, Sendable {
-    /// Multiplies the learned daily study capacity (how hard to push).
     public var capacityMultiplier: Double
-    /// The longest a study block may be, on top of the learned focus length.
     public var maxBlockMinutes: Int
-    /// Multiplies the protected free time per day.
     public var freeTimeMultiplier: Double
-    /// Moves the "not started yet?" follow-ups later (or earlier) than the nudge level's default.
     public var followUpShiftMinutes: Int
-    /// Implementation intentions: "When you get home Tuesday, open the Waterloo doc."
     public var intentions: [IntentionNudge]
 
     public init(capacityMultiplier: Double = 1, maxBlockMinutes: Int = 55, freeTimeMultiplier: Double = 1,
@@ -79,13 +52,10 @@ public struct BehaviourPolicy: Codable, Hashable, Sendable {
     }
 }
 
-/// An if-then plan the app reminds the student of (Gollwitzer & Sheeran 2006): at a time on
-/// some weekdays, or when they get home.
 public struct IntentionNudge: Codable, Hashable, Identifiable, Sendable {
     public enum Trigger: String, Codable, Sendable { case time, arriveHome }
     public var id: UUID
     public var trigger: Trigger
-    /// 1 = Sunday … 7 = Saturday; empty = every day.
     public var weekdays: [Int]
     public var time: TimeOfDay?
     public var text: String
@@ -101,11 +71,8 @@ public struct IntentionNudge: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-// MARK: The registry
-
 public struct FieldSpec: Hashable, Sendable {
     public var name: String
-    /// How the value looks, for the prompt ("YYYY-MM-DDTHH:mm", "1-5", "true|false").
     public var format: String
     public init(_ name: String, _ format: String) { self.name = name; self.format = format }
 }
@@ -113,7 +80,6 @@ public struct FieldSpec: Hashable, Sendable {
 public struct EntitySpec: Hashable, Sendable {
     public var name: String
     public var tier: RiskTier
-    /// The context's reference letter ("t" for tasks), or nil when ids are keys (routines).
     public var refPrefix: String?
     public var canDelete: Bool
     public var fields: [FieldSpec]
@@ -124,10 +90,8 @@ public struct KnobSpec: Hashable, Sendable {
     public var key: String
     public var tier: RiskTier
     public var format: String
-    /// Hard range and the biggest change one proposal may make (tier 2).
     public var range: ClosedRange<Double>?
     public var maxStep: Double?
-    /// Things reflection may never touch, whoever asks (sleep need, the floor, the trade-off switch).
     public var reflectionForbidden: Bool
     public var note: String
 
@@ -201,7 +165,6 @@ public enum Registry {
     ]
 
     public static let knobs: [KnobSpec] = [
-        // Tier 0: the student's own preferences, changed when they ask.
         KnobSpec("color.<category>", .data, colorFormat, note: "categories: \(Palette.categories.joined(separator: "|")), subject:<name>, task:<kind>"),
         KnobSpec("interests", .data, "comma list"),
         KnobSpec("schoolDays", .data, "weekday numbers, e.g. 2,3,4,5,6"),
@@ -210,12 +173,10 @@ public enum Registry {
         KnobSpec("nudgeLevel", .data, "gentle|standard|persistent"),
         KnobSpec("alarms", .data, "true|false"), KnobSpec("scrollCheckIns", .data, "true|false"),
         KnobSpec("arrivingHome", .data, "true|false"), KnobSpec("deadlineNudges", .data, "true|false"),
-        // Tier 1: values the app otherwise learns. Only from what the student states.
         KnobSpec("sleepNeedMinutes", .learned, "450-600", reflectionForbidden: true),
         KnobSpec("sleepFloorMinutes", .learned, "360-480", reflectionForbidden: true),
         KnobSpec("allowSleepTradeoffs", .learned, "true|false", reflectionForbidden: true),
         KnobSpec("schoolDayWake", .learned, "HH:mm"), KnobSpec("freeDayWake", .learned, "HH:mm"),
-        // Beliefs: what they say becomes "You said", until the data has 3 samples.
         KnobSpec("study.schoolDayCapacity", .learned, "minutes", range: 30...480),
         KnobSpec("study.freeDayCapacity", .learned, "minutes", range: 30...600),
         KnobSpec("study.schoolDayFreeTime", .learned, "minutes", range: 0...360),
@@ -224,7 +185,6 @@ public enum Registry {
         KnobSpec("study.breakMinutes", .learned, "minutes", range: 0...30),
         KnobSpec("routines.dinnerTime", .learned, "HH:mm"), KnobSpec("routines.dinnerMinutes", .learned, "minutes, 0 = none", range: 0...120),
         KnobSpec("sleep.chronotype", .learned, "early|intermediate|late"),
-        // Tier 2: behaviour. Proposed by the reflection only, applied after the student approves.
         KnobSpec("planner.capacityMultiplier", .behaviour, "0.6-1.3", range: 0.6...1.3, maxStep: 0.1,
                  note: "how much of the learned study capacity to plan"),
         KnobSpec("planner.maxBlockMinutes", .behaviour, "20-60", range: 20...60, maxStep: 10,
@@ -252,7 +212,6 @@ public enum Registry {
             ?? knobs.first { $0.key.contains(".") && $0.key.split(separator: ".").last.map { $0.lowercased() == p } == true }
     }
 
-    /// The box's view of the registry (tiers 0 and 1; tier 2 isn't the box's to change).
     public static func promptText(maxTier: RiskTier = .learned) -> String {
         var l: [String] = []
         l.append("Entities (upsert: id to change one, no id to create; fields as below):")
@@ -275,15 +234,12 @@ public enum Registry {
     }
 }
 
-// MARK: Setting a knob
-
 public enum KnobResult: Hashable, Sendable {
     case changed(String)
     case refused(String)
 }
 
 public enum Knobs {
-    /// The current value of a tier-2 knob.
     public static func value(_ key: String, in p: BehaviourPolicy) -> Double? {
         switch key {
         case "planner.capacityMultiplier": return p.capacityMultiplier
@@ -294,7 +250,6 @@ public enum Knobs {
         }
     }
 
-    /// Writes a tier-2 knob, clamped to its range and its largest step from the current value.
     static func write(_ key: String, _ v: Double, in p: inout BehaviourPolicy) {
         switch key {
         case "planner.capacityMultiplier": p.capacityMultiplier = (v * 100).rounded() / 100
@@ -305,7 +260,6 @@ public enum Knobs {
         }
     }
 
-    /// Where a bounded change from `current` toward `target` lands.
     public static func bounded(_ spec: KnobSpec, from current: Double, to target: Double) -> Double {
         var v = target
         if let s = spec.maxStep { v = max(current - s, min(current + s, v)) }
@@ -313,7 +267,6 @@ public enum Knobs {
         return v
     }
 
-    /// `set(knob, value)` from `writer`. Tier 2 is refused for anyone but an approved proposal.
     public static func set(_ rawKey: String, _ value: String, by writer: Writer, in s: inout DumpState) -> KnobResult {
         guard let spec = Registry.knob(rawKey) else { return .refused("There's no setting called “\(rawKey)”") }
         guard writer.mayApply(spec.tier) else {
@@ -365,11 +318,9 @@ public enum Knobs {
     static func format(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%.2g", v) }
 }
 
-/// Tier 0 and 1 knobs that live in `Preferences`.
 enum PreferenceKnobs {
     static func plain(_ s: String) -> String { s.lowercased().filter { $0.isLetter } }
 
-    /// Applies one setting. Returns the receipt line, or nil when the key or value isn't usable.
     static func apply(key raw: String, value v: String, to p: inout Preferences) -> String? {
         let key = plain(raw)
         let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -377,7 +328,6 @@ enum PreferenceKnobs {
         func int(_ lo: Int, _ hi: Int) -> Int? {
             let digits = t.prefix { $0.isNumber || $0 == "-" }
             guard let n = Int(digits) else { return nil }
-            // "9h" / "9 hours" for a minutes setting
             let hours = lower.contains("h") && !lower.contains("min") && n <= 12
             return max(lo, min(hi, hours ? n * 60 : n))
         }

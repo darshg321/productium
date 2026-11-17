@@ -8,7 +8,6 @@ final class UsageTests: XCTestCase {
         return c
     }()
 
-    /// Only output tokens count: toward the meter, the budget, the chart and the breakdown.
     func testLedgerCountsOutputTokensOnly() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         var l = UsageLedger()
@@ -76,9 +75,6 @@ final class UsageTests: XCTestCase {
         XCTAssertNil(plain["output_config"])
     }
 
-    /// The box runs on every message, so its fixed cost is watched. ~3.5 characters per token. Only output
-    /// tokens count against the budget and this part is identical every time (prompt-cached), so it may be
-    /// as long as the app guide needs, within reason.
     func testBoxPromptStaysSmall() throws {
         let schema = try JSONEncoder().encode(Schemas.dump)
         let tokens = (Prompts.dump().count + schema.count) / 7 * 2
@@ -100,7 +96,6 @@ final class CallLogTests: XCTestCase {
         XCTAssertFalse(c.transcript.contains("AAAA"))
         XCTAssertTrue(c.transcript.contains("=== SYSTEM ===\nsys") && c.transcript.contains("(+1 image)"))
 
-        // Nothing is dropped or cut: the export is the debugging dump.
         var log = AICallLog()
         var old = c; old.at = Fx.mon(12, plusDays: -60)
         var big = c; big.response = String(repeating: "x", count: 200_000)

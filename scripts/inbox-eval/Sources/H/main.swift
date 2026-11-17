@@ -2,16 +2,6 @@ import Foundation
 import FoundationNetworking
 import ProductiumCore
 
-// Multi-turn Inbox run against a real claude-server, the way AppModel.dump does it: the same prompt,
-// context, tool, conversation (history byte-for-byte, a context delta per turn) and applier, on a sample student. Each argument
-// is one message. Uses real subscription tokens (Sonnet), so check Settings → AI Usage first.
-//
-//   CS_URL=http://localhost:8799 CS_KEY=cs_... swift run H \
-//     "split school into periods: P1 8:30-9:20, P2 9:25-10:15, P3 10:30-11:20, lunch 11:20-12:05, P4 12:05-12:55, P5 1:00-3:00" \
-//     "period 3 is actually 10:35-11:25, make lunch green and the rest of school teal" \
-//     "split school into periods again, same times"
-//
-// Then read the printed activities: no duplicates, each change where it was asked for.
 let base = URL(string: ProcessInfo.processInfo.environment["CS_URL"]!)!
 let key = ProcessInfo.processInfo.environment["CS_KEY"]!
 var cal = Calendar(identifier: .gregorian)

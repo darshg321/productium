@@ -1,23 +1,12 @@
 import Foundation
 
-// MARK: - Colours the student (or the Inbox) can set
-//
-// Stored as plain strings so they survive in JSON and in prompts: one of the system colour names
-// below, or "#RRGGBB". The app maps names to system colours, so dark mode still works.
-// Resolution, most specific first:
-//   block of an activity:  activity.color → colors[activity kind] → colors["activity"]
-//   study block / task:    task.color → parent task's color → colors["subject:<subject>"] → colors["task:<kind>"] → colors["study"]
-//   everything else:       colors[category]
-
 public enum Palette {
     public static let names = ["red", "orange", "yellow", "green", "mint", "teal", "cyan", "blue", "indigo",
                                "purple", "pink", "brown", "gray"]
 
-    /// Categories `Preferences.colors` understands, besides "subject:<name>" and "task:<kind>".
     public static let categories = ["study", "break", "free", "meal", "routine", "wind_down", "sleep", "event", "activity"]
         + CommitmentKind.allCases.map(\.rawValue)
 
-    /// A usable colour string, or nil. "Light blue" → "cyan", "grey" → "gray", "#3a7" → nil, "#33AA77" → "#33aa77".
     public static func normalise(_ raw: String?) -> String? {
         guard let raw else { return nil }
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -38,7 +27,6 @@ public enum Palette {
         return names.first { word.contains($0) }
     }
 
-    /// "Free time" → "free", "Breaks" → "break", "subject: Math" → "subject:math", "tests" → "task:test".
     public static func category(_ raw: String?) -> String? {
         guard let raw else { return nil }
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -82,7 +70,6 @@ public enum Palette {
         }
     }
 
-    /// A task's colour, or nil for the type's default.
     public static func color(for item: WorkItem, parent: WorkItem? = nil, colors: [String: String]) -> String? {
         item.color ?? parent?.color
             ?? item.subject.flatMap { colors["subject:\($0.lowercased().trimmingCharacters(in: .whitespaces))"] }
@@ -94,7 +81,6 @@ public enum Palette {
         c.color ?? colors[c.kind.rawValue] ?? colors["activity"]
     }
 
-    /// Stamps every block with its colour. Run after planning, so a colour change never needs the AI.
     public static func paint(_ blocks: [PlannedBlock], items: [WorkItem], commitments: [Commitment],
                              events: [FixedEvent], colors: [String: String]) -> [PlannedBlock] {
         let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })

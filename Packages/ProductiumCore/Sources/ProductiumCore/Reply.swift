@@ -1,28 +1,9 @@
 import Foundation
 
-// MARK: - Reading the model's reply
-//
-// A reply is read in three layers, each of which accepts anything the layer before can produce:
-//
-//   1. `AIResponse` takes the server's message in any shape: text blocks, a tool call's input, a
-//      bare string, or no content at all.
-//   2. `StructuredRepair.parse` finds the JSON in the text: exact JSON first, then a forgiving
-//      reader (`LooseJSON`) that copes with code fences, prose around the answer, single or curly
-//      quotes, unescaped quotes, trailing commas, comments, and a reply cut off mid-way.
-//   3. `StructuredRepair.coerce` fits that value to the schema: keys are matched whatever their
-//      spelling, values are converted to the declared type or dropped, required fields are filled
-//      with empty defaults, and wrapper objects are unwrapped. Its result always decodes into the
-//      Swift type the schema describes.
-//
-// So a reply can only fail to be understood when it carries nothing usable at all (empty, or
-// JSON with none of the expected fields). The client asks once more in that case.
-
-/// The Anthropic `message` object, reduced to what the app reads.
 public struct AIResponse: Decodable, Sendable {
     public struct Block: Sendable {
         public var type: String
         public var text: String?
-        /// A `tool_use` block's arguments.
         public var input: JSONValue?
     }
     public struct Usage: Codable, Hashable, Sendable {
@@ -37,7 +18,6 @@ public struct AIResponse: Decodable, Sendable {
     public var content: [Block]
     public var stop_reason: String?
     public var usage: Usage?
-    /// `content` exactly as it came back, so a conversation can send it back unchanged.
     public var rawContent: JSONValue?
 
     public init(model: String?, text: String, usage: Usage?, stopReason: String? = nil) {
@@ -50,7 +30,6 @@ public struct AIResponse: Decodable, Sendable {
 
     enum CodingKeys: String, CodingKey { case id, model, content, stop_reason, usage }
 
-    /// Only a JSON object is required. Missing or oddly shaped fields are read as absent.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try? c.decodeIfPresent(String.self, forKey: .id)
@@ -77,13 +56,10 @@ public struct AIResponse: Decodable, Sendable {
         }
     }
 
-    /// What the model wrote, without its thinking.
     public var text: String { content.filter { $0.type == "text" }.compactMap(\.text).joined() }
 
-    /// True when the reply was cut off at the token limit.
     public var isTruncated: Bool { stop_reason == "max_tokens" }
 
-    /// Every JSON value the reply could mean, most likely first: tool-call arguments, then the text.
     var candidates: [JSONValue] {
         content.compactMap { b -> JSONValue? in
             guard b.type == "tool_use", let input = b.input else { return nil }
@@ -92,17 +68,12 @@ public struct AIResponse: Decodable, Sendable {
         } + [StructuredRepair.parse(text)].compactMap { $0 }
     }
 
-    /// The structured output as sent, before any repair.
     public var structured: JSONValue? { candidates.first }
 
-    /// The structured output fitted to `schema` (see `StructuredRepair`). Nil only when the reply
-    /// has no JSON in it at all.
     public func structured(for schema: JSONValue) -> JSONValue? {
         candidates.first.map { StructuredRepair.coerce($0, to: schema) }
     }
 
-    /// Fitted to `schema` and decoded. Nil when the reply has no JSON, or `accept` turns it down
-    /// (for example a flashcard batch with no cards).
     public func decoded<T: Decodable>(_ type: T.Type, schema: JSONValue, accept: (T) -> Bool = { _ in true }) -> T? {
         for c in candidates {
             if let v = try? StructuredRepair.coerce(c, to: schema).decode(T.self), accept(v) { return v }
@@ -116,18 +87,11 @@ public struct AIResponse: Decodable, Sendable {
     }
 }
 
-// MARK: - A JSON reader that doesn't give up
-
-/// Reads one JSON value starting at `{` or `[`, accepting what strict JSON rejects: single, curly
-/// or missing quotes, unescaped quotes and line breaks inside strings, trailing or missing commas,
-/// comments, `True`/`None`, and input that stops mid-value (everything open is closed, and a
-/// half-written array element is left out rather than half-applied).
 struct LooseJSON {
     enum Context { case key, objectValue, arrayItem }
 
     let c: [Character]
     var i: Int
-    /// Set once the input ran out inside a value.
     var cut = false
 
     static let quotes: [Character: [Character]] = [
@@ -150,7 +114,6 @@ struct LooseJSON {
         }
     }
 
-    /// Nil only when the input has run out.
     mutating func value(_ ctx: Context, depth: Int = 0) -> JSONValue? {
         skipSpace()
         guard i < c.count else { cut = true; return nil }
@@ -168,13 +131,13 @@ struct LooseJSON {
             skipSpace()
             guard i < c.count else { cut = true; break }
             if c[i] == "}" { i += 1; break }
-            if c[i] == "]" { break }                    // closed by the array around it
+            if c[i] == "]" { break }
             if c[i] == "," { i += 1; continue }
             let key: String
             if let closers = Self.quotes[c[i]] { key = string(closers, .key) } else { key = bareKey() }
             skipSpace()
             guard i < c.count else { cut = true; break }
-            guard c[i] == ":" || c[i] == "=" else { continue }      // a key with no value
+            guard c[i] == ":" || c[i] == "=" else { continue }
             i += 1
             guard let v = value(.objectValue, depth: depth + 1) else { break }
             o[key] = v
@@ -189,10 +152,9 @@ struct LooseJSON {
             skipSpace()
             guard i < c.count else { cut = true; break }
             if c[i] == "]" { i += 1; break }
-            if c[i] == "}" { break }                    // closed by the object around it
+            if c[i] == "}" { break }
             if c[i] == "," || c[i] == ":" { i += 1; continue }
             guard let v = value(.arrayItem, depth: depth + 1) else { break }
-            // The reply was cut off inside this element: half an action is worse than none.
             if cut { if case .string = v { a.append(v) }; break }
             a.append(v)
         }
@@ -205,7 +167,6 @@ struct LooseJSON {
         return String(c[start..<i]).trimmingCharacters(in: .whitespaces)
     }
 
-    /// An unquoted value: a number, a literal, or a string someone forgot to quote.
     mutating func bare() -> JSONValue {
         let start = i
         while i < c.count, !",}]".contains(c[i]), !c[i].isNewline { i += 1 }
@@ -241,8 +202,6 @@ struct LooseJSON {
                 i += 1
                 continue
             }
-            // A quote only ends the string if what follows could follow a string here. Otherwise
-            // it's a quote the model forgot to escape: "I read "5-630" as 17:00".
             if closers.contains(ch), closes(after: i + 1, ctx) { i += 1; return out }
             out.append(ch)
             i += 1
@@ -251,7 +210,6 @@ struct LooseJSON {
         return out
     }
 
-    /// Reads the XXXX of \uXXXX (and a following low surrogate), leaving `i` on its last digit.
     mutating func unicodeEscape() -> Unicode.Scalar? {
         func hex(_ at: Int) -> UInt32? {
             guard at + 4 <= c.count else { return nil }
@@ -282,11 +240,10 @@ struct LooseJSON {
         case .objectValue:
             if c[j] == "}" || c[j] == "]" { return true }
             if c[j] == "," { return keyAhead(j + 1) }
-            return Self.quotes[c[j]] != nil && keyAhead(j)      // a missing comma before the next key
+            return Self.quotes[c[j]] != nil && keyAhead(j)
         }
     }
 
-    /// Does a key (`"name":`, `name:`), the end of the object, or the end of input start at `j`?
     func keyAhead(_ j: Int) -> Bool {
         var j = next(from: j)
         guard j < c.count else { return true }
@@ -306,10 +263,7 @@ struct LooseJSON {
     }
 }
 
-// MARK: - Finding the JSON, and fitting it to the schema
-
 public enum StructuredRepair {
-    /// The JSON object or array in `raw`, wherever it is and however it's written.
     public static func parse(_ raw: String) -> JSONValue? { parse(raw, depth: 0) }
 
     static func parse(_ raw: String, depth: Int) -> JSONValue? {
@@ -318,12 +272,10 @@ public enum StructuredRepair {
         if let v = decode(t) {
             switch v {
             case .object, .array: return v
-            case .string(let inner): return parse(inner, depth: depth + 1)      // JSON sent as a JSON string
+            case .string(let inner): return parse(inner, depth: depth + 1)
             default: return nil
             }
         }
-        // Not exact JSON. Read every top-level {...} forgivingly and keep the one with the most in
-        // it, so prose, code fences and stray braces around the answer don't matter.
         let chars = Array(t)
         for open in ["{", "["] as [Character] {
             var best: (value: JSONValue, weight: Int)?
@@ -347,7 +299,6 @@ public enum StructuredRepair {
         return try? JSONDecoder().decode(JSONValue.self, from: d)
     }
 
-    /// How much is in a value: its keys and leaves.
     static func weight(_ v: JSONValue) -> Int {
         switch v {
         case .object(let o): return o.reduce(0) { $0 + 1 + weight($1.value) }
@@ -357,8 +308,6 @@ public enum StructuredRepair {
         }
     }
 
-    /// `v` made to fit `schema`. Whatever `v` is, the result has the schema's shape: every value
-    /// has its declared type and every required property is present, so it decodes.
     public static func coerce(_ v: JSONValue, to schema: JSONValue) -> JSONValue {
         fit(v, schema, depth: 0) ?? empty(schema)
     }
@@ -368,7 +317,6 @@ public enum StructuredRepair {
         return (type, sc)
     }
 
-    /// The empty value of a schema: "", 0, false, [], or an object with its required properties empty.
     static func empty(_ schema: JSONValue) -> JSONValue {
         guard let (type, sc) = type(of: schema) else { return .null }
         switch type {
@@ -388,10 +336,8 @@ public enum StructuredRepair {
         return r.compactMap { if case .string(let k) = $0 { return k }; return nil }
     }
 
-    /// "estimate_minutes", "Estimate Minutes" and "estimateMinutes" are the same name.
     static func plain(_ s: String) -> String { String(s.lowercased().filter { $0.isLetter || $0.isNumber }) }
 
-    /// Nil when `v` can't be made into what `schema` asks for.
     static func fit(_ v: JSONValue, _ schema: JSONValue, depth: Int) -> JSONValue? {
         guard let (type, sc) = type(of: schema) else { return v }
         guard depth < 24 else { return nil }
@@ -408,7 +354,7 @@ public enum StructuredRepair {
                 if t.hasPrefix("[") || t.hasPrefix("{"), let parsed = parse(t) { return fit(parsed, schema, depth: depth + 1) }
                 return fit(.array(splitList(s)), schema, depth: depth + 1)
             case .null: return nil
-            default: return fit(.array([v]), schema, depth: depth + 1)      // one item where a list belongs
+            default: return fit(.array([v]), schema, depth: depth + 1)
             }
         case "integer", "number":
             var n: Double
@@ -436,7 +382,6 @@ public enum StructuredRepair {
         case "string":
             switch v {
             case .string(let s):
-                // "Add Task", "add-task" or "addTask" for the enum value "add_task".
                 guard case .array(let options)? = sc["enum"], !options.contains(v) else { return v }
                 let match = options.first { if case .string(let o) = $0 { return plain(o) == plain(s) }; return false }
                 return match ?? v
@@ -462,14 +407,12 @@ public enum StructuredRepair {
         let byPlain = Dictionary(props.keys.map { (plain($0), $0) }, uniquingKeysWith: { a, _ in a })
         switch v {
         case .object(let raw):
-            // Match keys to the schema's spelling. Unknown keys are left out.
             var o: [String: JSONValue] = [:]
             for (k, val) in raw {
                 guard let name = props[k] != nil ? k : byPlain[plain(k)] else { continue }
                 if props[k] != nil || o[name] == nil { o[name] = val }
             }
             if o.isEmpty {
-                // {"structured_output": {...}}, {"input": "{...}"}: the answer is one level down.
                 let inner = raw.values.compactMap { val -> JSONValue? in
                     switch val {
                     case .object, .array: return holds(val, byPlain) ? fit(val, schema, depth: depth + 1) : nil
@@ -490,9 +433,7 @@ public enum StructuredRepair {
             guard let parsed = parse(s) else { return nil }
             return fit(parsed, schema, depth: depth + 1)
         case .array(let a):
-            // [{...}] around the answer.
             if a.count == 1, holds(a[0], byPlain) { return fit(a[0], schema, depth: depth + 1) }
-            // The list on its own, where the schema is an object around one list: [..] for {"cards": [..]}.
             let lists = props.filter { StructuredRepair.type(of: $0.value)?.type == "array" }
             guard lists.count == 1, let (key, ls) = lists.first, let fitted = fit(v, ls, depth: depth + 1) else { return nil }
             var o: [String: JSONValue] = [key: fitted]
@@ -503,7 +444,6 @@ public enum StructuredRepair {
         }
     }
 
-    /// Does this value carry at least one of the schema's property names?
     static func holds(_ v: JSONValue, _ byPlain: [String: String]) -> Bool {
         switch v {
         case .object(let o): return o.keys.contains { byPlain[plain($0)] != nil }
@@ -512,7 +452,6 @@ public enum StructuredRepair {
         }
     }
 
-    /// "90", "90 min", "~45", "1.5". Not "2 hours": a number in another unit is worse than none.
     static func number(in s: String) -> Double? {
         var t = Substring(s.trimmingCharacters(in: .whitespaces))
         while let f = t.first, "~≈+".contains(f) { t = t.dropFirst() }
@@ -522,7 +461,6 @@ public enum StructuredRepair {
         return ["", "m", "min", "mins", "minute", "minutes", "%"].contains(rest) ? n : nil
     }
 
-    /// "2, 4" or "mon; wed" style lists that arrived as one string.
     static func splitList(_ s: String) -> [JSONValue] {
         s.split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "\n" })
             .map { $0.trimmingCharacters(in: .whitespaces) }

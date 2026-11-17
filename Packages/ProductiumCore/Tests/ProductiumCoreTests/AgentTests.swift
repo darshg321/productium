@@ -1,7 +1,6 @@
 import XCTest
 @testable import ProductiumCore
 
-/// The Inbox as an agent: it sees ids, changes things by id, and never doubles anything up.
 final class AgentTests: XCTestCase {
     let cal = Fx.cal
 
@@ -40,18 +39,15 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(parts.count, 6)
         XCTAssertTrue(parts.allSatisfy { $0.weekdays == Fx.school.weekdays })
 
-        // Adjust one period by id, as the context shows it.
         let p3 = parts.first { $0.title == "Period 3" }!
         run(&s, [.upsert("activity", id: Ref.activity(p3.id), ["start": "10:35", "end": "11:25"])])
         XCTAssertEqual(s.commitments.first { $0.id == p3.id }?.start, TimeOfDay(10, 35))
 
-        // The model forgets and adds a period again, or splits again: still six, not twelve.
         run(&s, [.upsert("activity", ["title": "Period 2", "kind": "school", "weekdays": [2, 3, 4, 5, 6],
                                       "start": "09:30", "end": "10:20"])])
         XCTAssertEqual(s.commitments.filter { $0.kind == .school }.count, 6)
         XCTAssertEqual(s.commitments.first { $0.title == "Period 2" }?.start, TimeOfDay(9, 30))
 
-        // The planner sees one block per period, and the commute still hangs off the first and last.
         let plan = Planner.plan(PlannerInput(now: Fx.mon(6), calendar: cal, items: [], commitments: s.commitments,
                                              routines: s.routines))
         let today = plan.blocks.filter { $0.kind == .commitment && self.cal.isDate($0.start, inSameDayAs: Fx.mon(12)) }
@@ -85,7 +81,6 @@ final class AgentTests: XCTestCase {
         XCTAssertTrue(s.items[1].isDone)
         XCTAssertFalse(s.items[0].isDone)
         XCTAssertEqual(s.items[0].estimateMinutes, 90, "a ref without its letter still works")
-        // In `target` too, and full UUIDs.
         run(&s, [.upsert("task", ["target": .string(Ref.task(b.id)), "done": false]),
                  .upsert("task", id: a.id.uuidString, ["notes": "odd ones"])])
         XCTAssertFalse(s.items[1].isDone)
@@ -154,7 +149,6 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(s.beliefs.minutes("routines.dinnerMinutes"), 0, "no dinner block")
     }
 
-    /// Tier 2 is how the app behaves: the box (Sonnet) can't change it, only an approved reflection proposal.
     func testBehaviourKnobsAreRefusedFromTheBox() {
         var s = state()
         let r = run(&s, [.set("planner.maxBlockMinutes", "25"), .set("capacityMultiplier", "0.8")])
@@ -162,16 +156,13 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(r.changes, [])
         XCTAssertEqual(r.problems.count, 2)
         XCTAssertTrue(r.problems[0].contains("only the weekly reflection can suggest it"), r.problems[0])
-        // From reflection, the change is bounded by the knob's step and range.
         run(&s, [.set("planner.maxBlockMinutes", "25")], writer: .reflection)
         XCTAssertEqual(s.policy.maxBlockMinutes, 45, "55 → 25 asked, at most -10 per change")
         run(&s, [.set("planner.capacityMultiplier", "3")], writer: .reflection)
         XCTAssertEqual(s.policy.capacityMultiplier, 1.1, accuracy: 0.001)
         let forbidden = run(&s, [.set("sleepNeedMinutes", "450")], writer: .reflection)
         XCTAssertEqual(forbidden.problems.count, 1, "reflection never touches sleep need")
-        // Tier 2 knobs aren't even offered to the box.
         XCTAssertFalse(Prompts.dump().contains("planner.maxBlockMinutes"))
-        // The planner reads them.
         s.policy.maxBlockMinutes = 25
         let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 6), estimateMinutes: 240)
         let plan = Planner.plan(PlannerInput(now: Fx.mon(6), calendar: cal, items: [essay], commitments: s.commitments,
@@ -242,7 +233,6 @@ final class AgentTests: XCTestCase {
                                            "set": .set, "split_activity": .split, "SPLIT": .split]
         for (raw, want) in names { XCTAssertEqual(DumpOpKind(loose: raw), want, raw) }
         XCTAssertNil(DumpOpKind(loose: "fly_to_moon"))
-        // The entity can be read off an id's letter.
         let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 5))
         var s = state(items: [essay])
         run(&s, [DumpOp("upsert", id: Ref.task(essay.id), fields: ["done": true])])

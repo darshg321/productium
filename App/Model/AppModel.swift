@@ -4,9 +4,6 @@ import Observation
 import UserNotifications
 import ProductiumCore
 
-/// The app's single source of truth. Views read `state` and call intent methods.
-/// Every change ends in `replan()`, which rebuilds the plan and pushes it out to
-/// notifications, shields, widgets, the Live Activity and alarms.
 @MainActor
 @Observable
 final class AppModel {
@@ -17,13 +14,9 @@ final class AppModel {
     @ObservationIgnored private var undoSnapshot: AppState?
     var busy: Set<String> = []
     var serverOnline: Bool?
-    /// The server's own per-key count, refreshed now and then (costs no tokens).
     var serverUsage: ServerUsage?
-    /// How much of the Claude subscription behind the server is used (no tokens).
     var subscription: SubscriptionStatus?
-    /// Every AI request and reply in full, newest last (its own file, not part of `state`).
     var callLog: AICallLog
-    /// about-me.md (its own file, so the student can read and edit it as text).
     var aboutMe: AboutMe {
         didSet { AboutMeStore.save(aboutMe) }
     }
@@ -39,8 +32,6 @@ final class AppModel {
         aboutMe = AboutMeStore.load()
     }
 
-    // MARK: - Persistence
-
     func save() {
         saveTask?.cancel()
         let snapshot = state
@@ -50,8 +41,6 @@ final class AppModel {
             Persistence.save(snapshot)
         }
     }
-
-    // MARK: - Lifecycle
 
     func launch() {
         ClaudeClient.shared.onUsage = { [weak self] feature, model, tokens, callId in
@@ -70,7 +59,6 @@ final class AppModel {
     }
 
     func foreground() {
-        // Productium came forward: whatever scrolling session was open has ended.
         Friction.ended(by: .productium)
         state.appOpens.append(Date())
         if let link = SharedConfig.defaults.string(forKey: SharedConfig.Key.pendingDeepLink) {
@@ -80,7 +68,6 @@ final class AppModel {
         if Date().timeIntervalSince(lastRefresh) > 5 * 60 { Task { await refresh() } } else { replan() }
     }
 
-    /// Pull every data source, learn from it, replan.
     func refresh(full: Bool = true) async {
         lastRefresh = Date()
         await syncHealth()
@@ -97,7 +84,6 @@ final class AppModel {
         replan()
         if full {
             serverOnline = await ClaudeClient.shared.ping()
-            // Flashcards and reads are made when gap mode opens, not on every launch.
             await weeklyReviewIfDue()
             await reflectIfDue()
             await refreshServerUsage()
@@ -105,13 +91,10 @@ final class AppModel {
         }
     }
 
-    // MARK: - Planning
-
     var itemsById: [UUID: WorkItem] { Dictionary(uniqueKeysWithValues: state.items.map { ($0.id, $0) }) }
 
     func replan() {
         let now = Date()
-        // Never yank the block the student is in the middle of.
         var locked: [PlannedBlock] = []
         if let f = state.focus, var b = state.plan.blocks.first(where: { $0.id == f.blockId }) {
             b.end = max(b.end, now.addingTimeInterval(60))
@@ -155,7 +138,6 @@ final class AppModel {
         if state.integrations.calendarExport { CalendarService.shared.export(plan: plan) }
     }
 
-    /// Everything the notification planner needs to know about right now.
     func nudgeInput(now: Date = Date()) -> NudgeInput {
         let answered = Set(state.outcomes.filter { $0.plannedStart > now.addingTimeInterval(-2 * 86400) }.map(\.blockId))
         let snoozed = Set(state.snoozed.filter { $0.value > now }.map(\.key))
@@ -171,7 +153,6 @@ final class AppModel {
         state.plan.blocks(on: date, calendar: cal).filter { $0.kind != .sleep }
     }
 
-    /// Ended study blocks (last 36 h) that nobody said anything about. Asked once, in one tap.
     var pendingOutcomes: [PlannedBlock] {
         let now = Date()
         let answered = Set(state.outcomes.map(\.blockId))
@@ -181,8 +162,6 @@ final class AppModel {
     var activeWarnings: [PlanWarning] {
         state.plan.warnings.filter { !state.dismissed.contains($0.message) }
     }
-
-    // MARK: - Outcomes & focus
 
     func logOutcome(blockId: UUID, status: OutcomeStatus, actualMinutes: Int? = nil) {
         guard !state.outcomes.contains(where: { $0.blockId == blockId }),
@@ -197,7 +176,6 @@ final class AppModel {
         state.learned.record(outcome: o, calendar: cal)
         if let i = idx { state.items[i].completedMinutes += actual }
         if status == .skipped {
-            // Self-compassion, not guilt: self-forgiveness reduces later procrastination (Wohl et al. 2010).
             toast = "No problem. It's been moved to a better slot."
         }
         replan()
@@ -214,8 +192,6 @@ final class AppModel {
         save()
     }
 
-    /// The block that's on now, or (if it's study) the next one. From Siri, an NFC tag, a
-    /// notification or an alarm button.
     func startNowOrNext() {
         guard state.focus == nil else { return }
         let now = Date()
@@ -226,14 +202,12 @@ final class AppModel {
         }
     }
 
-    /// From a start notification: start a specific block now, even if it's a few minutes early.
     func startFocus(blockId: UUID) {
         guard state.focus == nil else { return }
         if let b = state.plan.blocks.first(where: { $0.id == blockId }), b.isStudy, b.end > Date() { startFocus(b) }
         else { startNowOrNext() }
     }
 
-    /// "In 10 minutes" on a start notification.
     func snooze(blockId: UUID, minutes: Int = 10) {
         guard let b = state.plan.blocks.first(where: { $0.id == blockId }) else { return }
         state.snoozed[blockId] = Date().addingTimeInterval(Double(minutes) * 60)
@@ -242,7 +216,6 @@ final class AppModel {
         save()
     }
 
-    /// Start working on an item right now, even if it isn't planned now.
     func focusNow(on item: WorkItem) {
         let mins = Int(state.learned.focusMinutes.rounded())
         let b = PlannedBlock(kind: item.kind.isMemoryBased ? .review : .work, start: Date(), end: Date().addingTimeInterval(Double(mins) * 60),
@@ -260,8 +233,6 @@ final class AppModel {
         logOutcome(blockId: f.blockId, status: status, actualMinutes: elapsed)
     }
 
-    // MARK: - Items
-
     func add(_ item: WorkItem) {
         let dup = state.items.contains {
             $0.title.lowercased() == item.title.lowercased() && cal.isDate($0.due, inSameDayAs: item.due)
@@ -271,14 +242,12 @@ final class AppModel {
         followUp(new: item)
     }
 
-    /// From the task form: no AI involved, the plan just makes room for it.
     func addManually(_ item: WorkItem) {
         state.items.append(item)
         replan()
         followUp(new: item)
     }
 
-    /// Undo "done" from the task list.
     func reopen(_ id: UUID) {
         guard let i = state.items.firstIndex(where: { $0.id == id }), state.items[i].isDone else { return }
         state.items[i].isDone = false
@@ -304,7 +273,6 @@ final class AppModel {
         if it.completedMinutes >= 10 {
             state.learned.recordCompletion(kind: it.kind, estimated: it.estimateMinutes, actual: it.completedMinutes)
         }
-        // Finishing the last step of a project finishes the project.
         if let p = it.parentId, !state.items.contains(where: { $0.parentId == p && !$0.isDone }) { complete(p) }
         replan()
     }
@@ -335,9 +303,7 @@ final class AppModel {
         if place == "home" && entered { arrivedHome() }
     }
 
-    /// Getting home is when the evening gets decided, so say what's next while it's still a choice.
     private func arrivedHome() {
-        // Approved "when you get home" plans come first.
         if state.integrations.notifications, let intent = state.policy.intentions.first(where: {
             $0.trigger == .arriveHome && ($0.weekdays.isEmpty || $0.weekdays.contains(cal.component(.weekday, from: Date())))
         }) {
@@ -357,8 +323,6 @@ final class AppModel {
         }
     }
 
-    /// While a routine is still being learned (and there's no geofence), prompt at the
-    /// moment it usually happens. Prompts stop once ~5 samples exist.
     private func markerPrompts() -> [(Date, String)] {
         guard !state.integrations.location else { return [] }
         var out: [(Date, String)] = []
@@ -380,7 +344,6 @@ final class AppModel {
         return out.filter { $0.0 > now }
     }
 
-    /// When this sideloaded build stops launching (free signing lasts 7 days).
     var signatureExpiry: Date? { Signature.expiry }
 
     func logMood(_ mood: Int, energy: Int?, note: String?) {
@@ -391,8 +354,6 @@ final class AppModel {
     var supportSuggested: Bool { Wellbeing.supportSuggested(moods: state.moods, now: Date()) }
 
     var todayMood: MoodEntry? { state.moods.filter { cal.isDateInToday($0.at) }.max { $0.at < $1.at } }
-
-    // MARK: - Syncing
 
     private func syncHealth() async {
         guard state.integrations.health else { return }
@@ -405,8 +366,6 @@ final class AppModel {
         if let c = LearnedModel.chronotype(fromFreeDaySleepMidpointsHours: mids) { state.learned.inferredChronotype = c }
     }
 
-    /// The last 7 days of motion (all iOS keeps), merged into the stored spans; walks on school
-    /// mornings and afternoons teach the commute.
     private func syncMotion() async {
         guard state.integrations.motion else { return }
         let now = Date()
@@ -422,7 +381,6 @@ final class AppModel {
         }
     }
 
-    /// Study capacity, free time, focus length and dinner, from the last three weeks.
     private func learnCapacities() {
         let today = cal.startOfDay(for: Date())
         let days = (1...CapacityLearner.window).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
@@ -439,7 +397,6 @@ final class AppModel {
                                               now: Date(), calendar: cal)
     }
 
-    /// Nights Health didn't measure, from check-ins, stillness and phone use (SleepEstimator).
     func estimateSleep() {
         let today = cal.startOfDay(for: Date())
         let days = (0..<14).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
@@ -462,8 +419,6 @@ final class AppModel {
     }
 
     private func syncScreen() {
-        // Free builds: minutes counted by the Shortcuts open/close automations.
-        // Sessions nobody saw end are estimated, and screenshots (the truth) calibrate the counts.
         var log = Friction.log
         log.resolve(now: Date())
         log.calibrate(with: state.screen, calendar: cal)
@@ -478,7 +433,6 @@ final class AppModel {
         state.screen = byDay.values.sorted { $0.day < $1.day }
     }
 
-    /// Teach routines from finished days' check-ins (each day once).
     private func learnFromPastDays() {
         let today = cal.startOfDay(for: Date())
         for i in 1...7 {
@@ -495,10 +449,6 @@ final class AppModel {
         }
     }
 
-    // MARK: - Behaviour proposals (nothing changes until the student approves)
-
-    /// The reflection (Opus, medium effort): at most once a day, only when something warrants it,
-    /// never over budget. Everything it returns waits on the Today card for approval.
     func reflectIfDue(asked question: String? = nil) async {
         let now = Date()
         state.proposals.expire(now: now)
@@ -564,9 +514,6 @@ final class AppModel {
         replan()
     }
 
-    // MARK: - "What were you doing?"
-
-    /// The gap to ask about on Today right now (a small banner), if any.
     var dueGap: MysteryGap?
 
     func gapInput(now: Date = Date()) -> GapInput {
@@ -577,8 +524,6 @@ final class AppModel {
                         plan: state.plan, focusing: state.focus != nil, log: state.gaps)
     }
 
-    /// One pending question at most: 45 minutes into the stretch going on now, if nothing else
-    /// happens first (any new check-in reschedules it).
     private func scheduleGapQuestion(now: Date) {
         state.gaps.asked.removeAll { $0.answer == nil && $0.askedAt > now }
         guard let next = GapDetector.nextAsk(gapInput(now: now), calendar: cal) else {
@@ -590,15 +535,12 @@ final class AppModel {
         state.gaps.asked.append(AskedGap(start: next.gap.start, end: next.gap.end, askedAt: next.at))
     }
 
-    /// "Not now": counts as asked, so it isn't asked again.
     func dismissGap(_ gap: MysteryGap) {
         state.gaps.asked.append(AskedGap(start: gap.start, end: gap.end, askedAt: Date(), answer: ""))
         dueGap = nil
         save()
     }
 
-    /// The answer becomes a marker pair for that window: known phrases on the device, anything else
-    /// through the box with the window attached.
     func answerGap(_ text: String, gap: MysteryGap) async {
         let known = state.gaps.asked
         var asked = state.gaps.asked.first { abs($0.start.timeIntervalSince(gap.start)) < 60 }
@@ -618,8 +560,6 @@ final class AppModel {
             await dump(GapAnswer.boxText(text, gap: gap, calendar: cal))
         }
     }
-
-    // MARK: - Insights
 
     func dayInputs(_ day: Date) -> DayInputs {
         let next = cal.date(byAdding: .day, value: 1, to: day) ?? day
@@ -644,13 +584,6 @@ final class AppModel {
     func segments(on day: Date) -> [Segment] {
         TimelineBuilder.segments(dayInputs(day), calendar: cal, now: Date())
     }
-
-    // MARK: - AI usage
-    //
-    // Everything runs on Sonnet (see AIModel) and only output tokens are counted. In order of what
-    // matters: the box (every message) is trimmed hardest; flashcards and reads are batched and
-    // only made when gap mode needs them; project breakdowns and the weekly note are rare.
-    // Background jobs stand down over budget.
 
     func recordUsage(_ feature: AIFeature, model: String, tokens: TokenCount, callId: UUID? = nil) {
         state.usage.record(UsageRecord(at: Date(), feature: feature, model: model, tokens: tokens, callId: callId))
@@ -684,7 +617,6 @@ final class AppModel {
         ClaudeClient.shared.isConfigured && state.usage.allows(feature, now: Date(), calendar: cal)
     }
 
-    /// Output tokens today: what the meter shows.
     var tokensToday: Int { state.usage.total(on: Date(), calendar: cal).counted }
     var usageFraction: Double { state.usage.fractionUsed(now: Date(), calendar: cal) }
 
@@ -729,8 +661,6 @@ final class AppModel {
         save()
     }
 
-    /// Called when gap mode opens. Cards only for tests in the next two weeks that have none yet;
-    /// reads only when fewer than two are left, three at a time.
     func ensureGapContent() async {
         for t in state.items where t.kind.isMemoryBased && !t.isDone && !t.topics.isEmpty && t.due.timeIntervalSinceNow < 14 * 86400
             && !state.flashcards.contains(where: { $0.itemId == t.id }) {
@@ -764,19 +694,9 @@ final class AppModel {
         save()
     }
 
-
-    // MARK: - Brain dump (the main way anything gets in or gets fixed)
-
-    /// The turn that Undo would take back (only the latest one, while nothing else has changed).
     var undoTurnId: UUID?
     @ObservationIgnored private var undoAboutMe: AboutMe?
 
-    /// Anything at all: deadlines, corrections, what happened, how they feel, a question,
-    /// screenshots (Screen Time, assignment sheets, timetables). Claude reads it in context
-    /// and returns actions. The device applies them, then shows what changed, with Undo.
-    ///
-    /// The box is one ongoing session (see Conversation.swift): every earlier prompt and answer goes
-    /// back unchanged, the full context only in the first turn and a delta after that.
     @discardableResult
     func dump(_ raw: String, images: [AIImage] = []) async -> Bool {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -804,7 +724,6 @@ final class AppModel {
             state.dumpState = ds
             if ds.aboutMe != aboutMe { aboutMe = ds.aboutMe }
             estimateSleep()
-            // The thread always says something, even if the model sent actions with no reply.
             var reply = result.reply
             if reply.isEmpty { reply = report.changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }
             if res.isTruncated { reply += " That was a lot at once, so I may have missed the end. Check the list and send the rest again." }
@@ -833,8 +752,6 @@ final class AppModel {
         }
     }
 
-    /// Takes back what the latest answer changed. The conversation keeps the turn (history is never
-    /// edited); the next prompt's tool result tells the model it was undone.
     func undo() {
         guard let snap = undoSnapshot, let id = undoTurnId else { return }
         let convo = state.conversation, archive = state.archive
@@ -851,7 +768,6 @@ final class AppModel {
         replan()
     }
 
-    /// Clear: the conversation goes to Past Prompts and the next prompt starts a new session.
     func clearConversation() {
         state.archive.archive(state.conversation, now: Date())
         state.conversation = Conversation(startedAt: Date())
@@ -860,7 +776,6 @@ final class AppModel {
         save()
     }
 
-    /// Makes an archived conversation the active one again (the current one is archived first).
     func resumeConversation(_ id: UUID) {
         guard var c = state.archive.remove(id) else { return }
         state.archive.archive(state.conversation, now: Date())
@@ -876,7 +791,6 @@ final class AppModel {
         save()
     }
 
-    /// Long projects get broken into steps; tests with topics get flashcards.
     private func followUp(new item: WorkItem) {
         if [.application, .essay, .project].contains(item.kind), item.due.timeIntervalSinceNow > 10 * 86400, item.parentId == nil {
             Task { await decompose(item.id) }
@@ -884,12 +798,9 @@ final class AppModel {
         if item.kind.isMemoryBased, !item.topics.isEmpty { Task { await makeCards(for: item) } }
     }
 
-    /// The student saved Settings → About You: lines they added or changed become theirs.
     func saveAboutMe(editedText: String) {
         aboutMe = AboutMe.studentEdited(old: aboutMe.markdown, new: editedText)
     }
-
-    // MARK: - Gap mode
 
     func reviewCard(_ id: UUID, correct: Bool) {
         guard let i = state.flashcards.firstIndex(where: { $0.id == id }) else { return }
@@ -901,8 +812,6 @@ final class AppModel {
     func markRead(_ id: UUID) {
         if let i = state.reads.firstIndex(where: { $0.id == id }) { state.reads[i].readAt = Date(); save() }
     }
-
-    // MARK: - Data ownership
 
     func exportFiles() throws -> [URL] {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("productium-export", isDirectory: true)
@@ -929,8 +838,6 @@ final class AppModel {
         }
     }
 
-    /// Everything, in one JSON file the student keeps (Files, iCloud Drive, AirDrop…): every byte
-    /// the app keeps, except the API key.
     func backupData() async throws -> Data {
         try ExportBundle.encoder().encode(await ExportService.make(self))
     }
@@ -939,7 +846,6 @@ final class AppModel {
         "Productium Export \(Date().formatted(.iso8601.year().month().day()))"
     }
 
-    /// Reads an export without applying it, so Settings can say what's in it first.
     func readBackup(from url: URL) throws -> RestorePreview {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
@@ -947,8 +853,6 @@ final class AppModel {
         return RestorePreview(exportedAt: b.exportedAt, summary: b.summary, bundle: b)
     }
 
-    /// Replaces everything with the export. The current data is kept on the side first
-    /// (state-before-restore.json), so a wrong file is never a disaster.
     func applyRestore(_ p: RestorePreview) {
         ExportService.restore(p.bundle, into: self)
         undoSnapshot = nil
@@ -968,7 +872,6 @@ final class AppModel {
     }
 }
 
-/// Reads the provisioning profile embedded in a sideloaded/dev build to find when it expires.
 enum Signature {
     static var expiry: Date? {
         guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),

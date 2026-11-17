@@ -36,8 +36,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         [.banner, .list, .sound]
     }
 
-    /// Lock-screen replies land here: Done / Partly / Skipped, Start / Snooze / Can't Today,
-    /// mood taps, typed check-ins, scrolling check-ins and deadline buttons.
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         let action = response.actionIdentifier

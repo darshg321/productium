@@ -2,12 +2,6 @@ import SwiftUI
 import PhotosUI
 import ProductiumCore
 
-/// Today, as a column of cards on the grouped background (the Health summary layout),
-/// in order of how often each is needed:
-///   1. Inbox: tell it anything, or fix anything
-///   2. Now: what to do this minute, and what's next
-///   3. at most one question and one heads-up
-///   4. three numbers for the rest of the day, then the schedule
 struct TodayView: View {
     @Environment(AppModel.self) private var model
     @Binding var showGap: Bool
@@ -50,11 +44,6 @@ struct TodayView: View {
     }
 }
 
-// MARK: - Inbox
-
-/// The one box. Typed text and screenshots go to Claude (Sonnet), which returns changes.
-/// The box is one ongoing conversation: the thread under it shows every prompt verbatim and
-/// what each answer changed, with Undo on the latest.
 struct DumpBox: View {
     @Environment(AppModel.self) private var model
     @State private var text = ""
@@ -128,8 +117,6 @@ struct DumpBox: View {
         }
     }
 
-    /// Screenshots are downscaled to ≤1280 px JPEG: plenty to read text, and image tokens scale
-    /// with pixels (about w×h/750), so this keeps a screenshot near 1.5k tokens instead of 2.5k+.
     private func load(_ items: [PhotosPickerItem]) async {
         var out: [(UIImage, AIImage)] = []
         for item in items {
@@ -147,8 +134,6 @@ struct DumpBox: View {
     }
 }
 
-/// The conversation so far: the student's prompts as right-aligned bubbles (exact text and
-/// thumbnails), each answer under its prompt with what it changed. Collapsed to the last exchange.
 struct ThreadView: View {
     @Environment(AppModel.self) private var model
     @State private var expanded = false
@@ -191,7 +176,6 @@ struct TurnView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // What the student wrote, exactly.
             VStack(alignment: .trailing, spacing: 6) {
                 if !turn.images.isEmpty {
                     HStack(spacing: 6) {
@@ -260,7 +244,6 @@ struct TurnView: View {
     }
 }
 
-/// "Productium suggests 2 changes": the reflection's proposals, which do nothing until approved.
 struct ProposalsCard: View {
     @Environment(AppModel.self) private var model
 
@@ -309,7 +292,6 @@ struct ProposalRow: View {
     }
 }
 
-/// "What were you doing 3:10–4:05?" while it's fresh. One line fills in the day.
 struct GapQuestionCard: View {
     @Environment(AppModel.self) private var model
     let gap: MysteryGap
@@ -337,8 +319,6 @@ struct GapQuestionCard: View {
         Task { await model.answerGap(t, gap: gap) }
     }
 }
-
-// MARK: - Now
 
 struct NowCard: View {
     @Environment(AppModel.self) private var model
@@ -407,7 +387,6 @@ struct NowCard: View {
     }
 }
 
-/// Short, human labels for plan blocks.
 func blockLabel(_ b: PlannedBlock) -> String {
     switch b.kind {
     case .free, .gap: return "Free time"
@@ -417,8 +396,6 @@ func blockLabel(_ b: PlannedBlock) -> String {
     default: return b.title
     }
 }
-
-// MARK: - One question, one heads-up
 
 struct Attention: View {
     @Environment(AppModel.self) private var model
@@ -464,9 +441,6 @@ struct Attention: View {
     }
 }
 
-// MARK: - The rest of the day
-
-/// Three numbers, side by side: work left, free time left, bedtime.
 struct DayNumbers: View {
     let blocks: [PlannedBlock]
     let now: Date
@@ -497,7 +471,6 @@ struct DayNumbers: View {
     }
 }
 
-/// The day from now to bed: a strip to scale, then one row per block.
 struct ScheduleCard: View {
     let blocks: [PlannedBlock]
     let from: Date

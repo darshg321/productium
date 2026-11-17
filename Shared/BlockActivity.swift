@@ -2,7 +2,6 @@ import Foundation
 #if canImport(ActivityKit)
 import ActivityKit
 
-/// Live Activity for the block that's happening now (lock screen + Dynamic Island).
 struct BlockActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         var title: String

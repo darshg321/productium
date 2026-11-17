@@ -10,8 +10,6 @@ struct ProductiumWidgets: WidgetBundle {
     }
 }
 
-// MARK: - Home / lock screen widget: now + next
-
 struct NextUpEntry: TimelineEntry {
     let date: Date
     let now: WidgetSnapshot.Item?
@@ -36,7 +34,6 @@ struct NextUpProvider: TimelineProvider {
                             policy: .after(Date().addingTimeInterval(3600))))
     }
 
-    /// One entry per block boundary in the next 12 hours, so the widget changes on time with no app wake-ups.
     private func entries() -> [NextUpEntry] {
         guard let snap = WidgetSnapshot.load() else { return [] }
         let items = snap.items.sorted { $0.start < $1.start }
@@ -102,8 +99,6 @@ struct NextUpWidget: Widget {
         .supportedFamilies([.systemSmall, .accessoryRectangular, .accessoryCircular])
     }
 }
-
-// MARK: - Live Activity
 
 struct BlockLiveActivity: Widget {
     var body: some WidgetConfiguration {

@@ -28,11 +28,11 @@ public struct DayTotals: Codable, Hashable, Sendable {
 public struct PeriodSummary: Codable, Hashable, Sendable {
     public var days: Int
     public var averageMinutes: [TimeCategory: Int]
-    public var followThrough: Double?     // done / planned study
+    public var followThrough: Double?
     public var averageSleep: Int?
     public var averageMood: Double?
     public var averageScreen: Int?
-    public var bestHours: [Int]           // when the student actually gets work done
+    public var bestHours: [Int]
     public var estimateFactors: [String: Double]
     public var patterns: [String]
 }

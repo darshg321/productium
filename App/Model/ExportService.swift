@@ -6,8 +6,6 @@ import EventKit
 import HealthKit
 import ProductiumCore
 
-/// UserDefaults values (plist types) as JSON and back. Data and dates, which JSON doesn't have,
-/// become `{"$data": base64}` and `{"$date": iso8601}`.
 enum PlistJSON {
     static func json(_ v: Any) -> JSONValue {
         switch v {
@@ -40,10 +38,8 @@ enum PlistJSON {
     static func domain(_ d: [String: Any]?) -> [String: JSONValue] { (d ?? [:]).mapValues(json) }
 }
 
-/// Builds and restores the one-file export (see `ExportBundle`).
 @MainActor
 enum ExportService {
-    /// Files already in the bundle under their own names, so they aren't copied twice.
     static let representedFiles: Set<String> = ["container/state.json", "container/ai-calls.json", "documents/about-me.md"]
 
     static var documentsURL: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
@@ -81,7 +77,6 @@ enum ExportService {
                             permissions: await permissions(), serverSnapshots: snapshots)
     }
 
-    /// Every file under the app's container and Documents, except the ones the bundle already holds.
     static func files() -> [String: String] {
         var out: [String: String] = [:]
         for (prefix, root) in [("container", SharedConfig.containerURL), ("documents", documentsURL)] {
@@ -108,8 +103,7 @@ enum ExportService {
         p["calendar"] = ["notDetermined", "restricted", "denied", "fullAccess", "writeOnly"][safe: ek.rawValue] ?? "\(ek.rawValue)"
         if HKHealthStore.isHealthDataAvailable() {
             let store = HealthService.shared.store
-            // HealthKit never says whether *read* access was granted; this is the share status and
-            // whether the request sheet would still show.
+            // HealthKit never reveals whether read access was granted; this is the share status.
             let types: [(String, HKObjectType)] = [
                 ("health.sleep", HKCategoryType(.sleepAnalysis)), ("health.steps", HKQuantityType(.stepCount)),
                 ("health.daylight", HKQuantityType(.timeInDaylight)), ("health.restingHeartRate", HKQuantityType(.restingHeartRate)),
@@ -133,7 +127,6 @@ enum ExportService {
         return withUnsafeBytes(of: &u.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
     }
 
-    /// Puts everything back. The current data is set aside first (state-before-restore.json).
     static func restore(_ b: ExportBundle, into model: AppModel) {
         if let data = try? ExportBundle.encoder().encode(model.state) {
             try? data.write(to: Persistence.url.deletingLastPathComponent().appendingPathComponent("state-before-restore.json"), options: .atomic)

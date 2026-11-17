@@ -1,21 +1,5 @@
 import Foundation
 
-// MARK: - The reflection job (Opus, medium effort, rare)
-//
-// The one place the app thinks about the student's behaviour rather than their data: why a task
-// keeps getting put off, whether the plan asks too much. It runs at most once a day and normally
-// once or twice a week, when:
-//   - a task has been put off 3 or more times,
-//   - planned-vs-done has been under 50% for 3 days running,
-//   - the weekly review is due, or
-//   - the student asks ("why do I keep putting this off?").
-// Everything it returns is a proposal (Proposals.swift): nothing changes until it's approved.
-// It skips when over the AI budget, and while paused after two rejected runs.
-//
-// Evidence: implementation intentions roughly double follow-through on goals (Gollwitzer & Sheeran
-// 2006); breaking an aversive task into a small, concrete first step reduces procrastination
-// (Steel 2007; Sirois & Pychyl 2013 on task aversiveness).
-
 public struct Deferral: Hashable, Sendable {
     public var itemId: UUID
     public var title: String
@@ -27,8 +11,6 @@ public struct Deferral: Hashable, Sendable {
 public enum ReflectionTrigger: String, Codable, Sendable { case deferrals, lowFollowThrough, weekly, asked }
 
 public enum Reflection {
-    /// Put-offs per open task: skipped blocks, blocks that ended without being started, and
-    /// snoozes/"can't today". (When tasks carry their own deferral count, it's added.)
     public static func deferrals(items: [WorkItem], outcomes: [BlockOutcome], missedBlocks: [PlannedBlock] = [],
                                  extra: [UUID: Int] = [:], since: Date) -> [Deferral] {
         items.filter { !$0.isDone }.compactMap { item in
@@ -41,7 +23,6 @@ public enum Reflection {
         }.sorted { $0.count > $1.count }
     }
 
-    /// Why to run now, or nil. At most once a day; not while paused or over budget.
     public static func trigger(now: Date, lastRun: Date?, deferrals: [Deferral], days: [DayRecord], weeklyDue: Bool,
                                asked: Bool, paused: Bool, budgetAllows: Bool, calendar cal: Calendar) -> ReflectionTrigger? {
         guard budgetAllows, !paused else { return nil }
@@ -118,7 +99,6 @@ public enum Reflection {
         public var about_me: [Line]?
     }
 
-    /// Everything the reflection reads, in the user turn.
     public static func request(now: Date, aboutMe: AboutMe, beliefs: Beliefs, routines: [Routine], deferrals: [Deferral],
                                days: [DayRecord], policy: BehaviourPolicy, feedback: [String], conversations: [String],
                                items: [WorkItem], trigger: ReflectionTrigger, question: String?, calendar cal: Calendar) -> String {
@@ -147,7 +127,6 @@ public enum Reflection {
         return l.joined(separator: "\n")
     }
 
-    /// The model's proposals as drafts for `ProposalBook.submit` (which applies every guard).
     public static func drafts(_ o: Output, runId: UUID, items: [WorkItem], now: Date, model: String,
                               calendar cal: Calendar) -> [BehaviourProposal] {
         func make(_ c: ProposalChange, _ reason: String, _ ev: [String]) -> BehaviourProposal {
