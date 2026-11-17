@@ -1,13 +1,20 @@
 # Builds Productium without a Mac.
 #  • core-tests: the planning engine, on Linux (every push)
 #  • ios-compile: compile-check the whole app + extensions for the simulator, unsigned (every push)
-#  • ios-free-ipa: on a push to main only: versions, builds the free-account .ipa and publishes a release
+#  • ios-free-ipa: on a push to main that changes code (see `paths` below): versions, builds the free-account .ipa and releases
 #  • ios-device: signed development .ipa, needs the paid Apple Developer Program (manual)
-# Setup: docs/NO_MAC.md
 name: ios
 
 on:
   push:
+    # Only real code changes test, build and release: docs, source.json, the workflow itself and scripts don't.
+    paths:
+      - "App/**"
+      - "Extensions/**"
+      - "Shared/**"
+      - "Packages/**"
+      - "project.yml"
+      - "scripts/make-free-spec.py"
   workflow_dispatch:
     inputs:
       device_build:
