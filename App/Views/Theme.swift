@@ -96,6 +96,7 @@ enum Theme {
         case .reads: return .brown
         case .breakdown: return .purple
         case .review: return .teal
+        case .reflection: return .indigo
         }
     }
 
@@ -106,6 +107,7 @@ enum Theme {
         case .reads: return "text.book.closed.fill"
         case .breakdown: return "list.bullet.indent"
         case .review: return "sparkles"
+        case .reflection: return "brain.head.profile"
         }
     }
 
