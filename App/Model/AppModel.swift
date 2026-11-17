@@ -387,10 +387,11 @@ final class AppModel {
 
     private func offerPlace(after evs: [TimelineEvent]) {
         guard placeOffer == nil, LocationService.shared.status != .denied,
-              var offer = PlaceSuggester.offer(after: evs, places: state.places, commitments: state.commitments,
+              let found = PlaceSuggester.offer(after: evs, places: state.places, commitments: state.commitments,
                                                declined: state.declinedPlaces) else { return }
         Task {
             guard let fix = await LocationService.shared.currentLocation() else { return }
+            var offer = found
             offer.latitude = fix.coordinate.latitude
             offer.longitude = fix.coordinate.longitude
             placeOffer = offer
