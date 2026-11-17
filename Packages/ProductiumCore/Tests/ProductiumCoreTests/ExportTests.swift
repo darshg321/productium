@@ -46,6 +46,9 @@ final class ExportTests: XCTestCase {
         s.learnedDays = ["2026-11-16"]
         s.gaps = GapLog(asked: [AskedGap(start: now, end: now.addingTimeInterval(3000), askedAt: now, answer: "gym", activity: "exercise")])
         s.appOpens = [now]
+        s.proposals.submit(ReflectionRun(at: now, note: "n", model: "opus"),
+                           [BehaviourProposal(runId: UUID(), change: .knob(key: "planner.maxBlockMinutes", to: 45), from: "", to: "",
+                                              reason: "r", evidence: ["e"], model: "opus", at: now)], state: s.dumpState, now: now)
         s.dismissed = ["a warning"]
         s.usage.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(output: 90)))
         s.snoozed = [UUID(): now.addingTimeInterval(600)]

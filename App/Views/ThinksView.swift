@@ -10,6 +10,13 @@ struct ThinksView: View {
         let beliefs = model.state.beliefs
         List {
             Section {
+                NavigationLink { ChangesView() } label: {
+                    LabeledContent("Changes", value: "\(model.state.proposals.pending.count) waiting")
+                }
+            } footer: {
+                Text("What the weekly reflection suggested about how Productium behaves. Nothing changes until you approve it.")
+            }
+            Section {
                 ForEach(Beliefs.routines(model.state.routines)) { BeliefRow(belief: $0) }
                 ForEach(beliefs.group("routines")) { BeliefRow(belief: $0) }
                 NavigationLink("Turn Routines On or Off") { RoutineSettings() }
@@ -99,4 +106,48 @@ struct BeliefDetail: View {
         .navigationTitle(b.label)
         .navigationBarTitleDisplayMode(.inline)
     }
+}
+
+/// Settings → What Productium Thinks → Changes: pending suggestions, then approved ones with Revert.
+struct ChangesView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let book = model.state.proposals
+        List {
+            Section("Waiting for You") {
+                if book.pending.isEmpty { Text("Nothing waiting.").foregroundStyle(.secondary) }
+                ForEach(book.pending) { ProposalRow(proposal: $0) }
+            }
+            Section("Changed") {
+                if book.history.isEmpty { Text("Nothing yet.").foregroundStyle(.secondary) }
+                ForEach(book.history) { p in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(p.title).font(.subheadline)
+                        Text("\(p.status == .reverted ? "Reverted" : "Approved") \((p.decidedAt ?? p.at).formatted(date: .abbreviated, time: .omitted)) · \(p.reason)")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if p.status == .approved {
+                            Button("Revert") { model.revertProposal(p.id) }.font(.subheadline).buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+            if !book.pinned.isEmpty {
+                Section("Never Changed") {
+                    ForEach(book.pinned.sorted(), id: \.self) { k in
+                        Text(Registry.knob(k)?.note.capitalizedFirstLetter ?? k)
+                    }
+                }
+            }
+            if book.isPaused(now: Date()), let until = book.pausedUntil {
+                Section { Text("Suggestions are paused until \(until.formatted(date: .abbreviated, time: .omitted)), since you turned down the last two.") }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Changes")
+    }
+}
+
+extension String {
+    var capitalizedFirstLetter: String { prefix(1).uppercased() + dropFirst() }
 }

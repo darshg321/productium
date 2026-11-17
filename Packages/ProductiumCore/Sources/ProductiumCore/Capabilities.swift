@@ -66,13 +66,38 @@ public struct BehaviourPolicy: Codable, Hashable, Sendable {
     public var freeTimeMultiplier: Double
     /// Moves the "not started yet?" follow-ups later (or earlier) than the nudge level's default.
     public var followUpShiftMinutes: Int
+    /// Implementation intentions: "When you get home Tuesday, open the Waterloo doc."
+    public var intentions: [IntentionNudge]
 
     public init(capacityMultiplier: Double = 1, maxBlockMinutes: Int = 55, freeTimeMultiplier: Double = 1,
-                followUpShiftMinutes: Int = 0) {
+                followUpShiftMinutes: Int = 0, intentions: [IntentionNudge] = []) {
+        self.intentions = intentions
         self.capacityMultiplier = capacityMultiplier
         self.maxBlockMinutes = maxBlockMinutes
         self.freeTimeMultiplier = freeTimeMultiplier
         self.followUpShiftMinutes = followUpShiftMinutes
+    }
+}
+
+/// An if-then plan the app reminds the student of (Gollwitzer & Sheeran 2006): at a time on
+/// some weekdays, or when they get home.
+public struct IntentionNudge: Codable, Hashable, Identifiable, Sendable {
+    public enum Trigger: String, Codable, Sendable { case time, arriveHome }
+    public var id: UUID
+    public var trigger: Trigger
+    /// 1 = Sunday … 7 = Saturday; empty = every day.
+    public var weekdays: [Int]
+    public var time: TimeOfDay?
+    public var text: String
+    public var itemId: UUID?
+
+    public init(id: UUID = UUID(), trigger: Trigger, weekdays: [Int] = [], time: TimeOfDay? = nil, text: String, itemId: UUID? = nil) {
+        self.id = id
+        self.trigger = trigger
+        self.weekdays = weekdays
+        self.time = time
+        self.text = text
+        self.itemId = itemId
     }
 }
 

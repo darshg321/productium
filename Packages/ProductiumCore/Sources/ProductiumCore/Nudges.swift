@@ -113,7 +113,7 @@ extension Plan {
 // MARK: - Notifications to schedule
 
 public enum NudgeKind: String, Codable, Sendable {
-    case leadUp, start, followUp, end, windDown, bedtime, stillUp, leaveSoon, leaveNow, deadline, checkIn, morning, marker
+    case leadUp, start, followUp, end, windDown, bedtime, stillUp, leaveSoon, leaveNow, deadline, checkIn, morning, marker, intention
 }
 
 /// One local notification, decided here and handed to UserNotifications by the app.
@@ -325,6 +325,17 @@ public enum NudgePlanner {
         }
 
         // Several things at the same minute: keep the most useful one.
+        // Implementation intentions the student approved: at their time, on their days.
+        for intent in input.policy.intentions where intent.trigger == .time {
+            guard let t = intent.time else { continue }
+            for d in 0...1 {
+                guard let day = input.calendar.date(byAdding: .day, value: d, to: input.calendar.startOfDay(for: now)),
+                      intent.weekdays.isEmpty || intent.weekdays.contains(input.calendar.component(.weekday, from: day)),
+                      let at = input.calendar.date(bySettingHour: t.hour, minute: t.minute, second: 0, of: day) else { continue }
+                add(PlannedNudge(id: "intent.\(intent.id).\(d)", kind: .intention, at: at, title: "Your plan", body: intent.text,
+                                 itemId: intent.itemId, deeplink: "productium://now"))
+            }
+        }
         return Array(dedupe(out).sorted { $0.at < $1.at }.prefix(input.limit))
     }
 
@@ -359,6 +370,7 @@ public enum NudgePlanner {
         case .morning: return 10
         case .stillUp: return 11
         case .marker: return 12
+        case .intention: return 6
         }
     }
 

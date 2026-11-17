@@ -336,6 +336,13 @@ final class AppModel {
 
     /// Getting home is when the evening gets decided, so say what's next while it's still a choice.
     private func arrivedHome() {
+        // Approved "when you get home" plans come first.
+        if state.integrations.notifications, let intent = state.policy.intentions.first(where: {
+            $0.trigger == .arriveHome && ($0.weekdays.isEmpty || $0.weekdays.contains(cal.component(.weekday, from: Date())))
+        }) {
+            NotificationService.notify("You're home", intent.text, deeplink: "productium://now")
+            return
+        }
         guard state.integrations.notifications, state.prefs.nudges.arrivingHome, state.prefs.nudges.level != .gentle,
               state.focus == nil else { return }
         let now = Date()
@@ -485,6 +492,35 @@ final class AppModel {
         if state.learnedDays.count > 60 {
             state.learnedDays = Set(state.learnedDays.sorted().suffix(30))
         }
+    }
+
+    // MARK: - Behaviour proposals (nothing changes until the student approves)
+
+    func approveProposal(_ id: UUID) {
+        var ds = state.dumpState
+        guard state.proposals.approve(id, in: &ds, now: Date(), calendar: cal) else { return }
+        state.dumpState = ds
+        replan()
+    }
+
+    func approveRun(_ runId: UUID) {
+        for p in state.proposals.pending where p.runId == runId { approveProposal(p.id) }
+    }
+
+    func rejectProposal(_ id: UUID) { state.proposals.reject(id, now: Date()); save() }
+
+    func rejectRun(_ runId: UUID) {
+        for p in state.proposals.pending where p.runId == runId { state.proposals.reject(p.id, now: Date()) }
+        save()
+    }
+
+    func neverChange(_ id: UUID) { state.proposals.neverChange(id, now: Date()); save() }
+
+    func revertProposal(_ id: UUID) {
+        var ds = state.dumpState
+        guard state.proposals.revert(id, in: &ds, now: Date()) else { return }
+        state.dumpState = ds
+        replan()
     }
 
     // MARK: - "What were you doing?"
