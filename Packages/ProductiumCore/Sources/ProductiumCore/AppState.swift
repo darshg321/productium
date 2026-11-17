@@ -102,6 +102,8 @@ public struct AppState: Codable, Sendable {
     @SortedSet public var dismissed: Set<String> = []
     /// Behaviour changes the reflection suggested, and what the student decided.
     public var proposals = ProposalBook()
+    /// When the reflection last ran.
+    public var reflectionAt: Date?
     /// "What were you doing?" questions and their answers.
     public var gaps = GapLog()
     /// When Productium was opened (phone-use evidence for gaps and sleep).
@@ -169,6 +171,7 @@ public struct AppState: Codable, Sendable {
         learnedDays = v(.learnedDays, d.learnedDays)
         dismissed = v(.dismissed, d.dismissed)
         proposals = v(.proposals, d.proposals)
+        reflectionAt = v(.reflectionAt, d.reflectionAt)
         gaps = v(.gaps, d.gaps)
         appOpens = v(.appOpens, d.appOpens)
         usage = v(.usage, d.usage)

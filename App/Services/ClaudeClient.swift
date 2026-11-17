@@ -222,9 +222,10 @@ final class ClaudeClient {
 
     /// A reply decoded as `type`. `accept` can turn down an answer that decodes but is empty.
     func structured<T: Decodable>(feature: AIFeature, system: String, user: String, schema: JSONValue, as type: T.Type,
-                                  maxTokens: Int, cacheTTL: Int? = nil, accept: @escaping (T) -> Bool = { _ in true }) async throws -> T {
-        let req = AIRequest(system: system, messages: [AIMessage(role: "user", content: user)],
-                            schema: schema, maxTokens: maxTokens, cacheTTL: cacheTTL)
+                                  maxTokens: Int, cacheTTL: Int? = nil, model: String = AIModel.sonnet, effort: String? = nil,
+                                  accept: @escaping (T) -> Bool = { _ in true }) async throws -> T {
+        let req = AIRequest(model: model, system: system, messages: [AIMessage(role: "user", content: user)],
+                            schema: schema, maxTokens: maxTokens, cacheTTL: cacheTTL, effort: effort)
         return try await send(req, feature: feature) { $0.decoded(T.self, schema: schema, accept: accept) }.value
     }
 

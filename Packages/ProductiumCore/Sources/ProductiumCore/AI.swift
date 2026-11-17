@@ -62,6 +62,9 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, Ex
 /// right, so a second model would only add cost. Haiku 4.5 isn't used.
 public enum AIModel {
     public static let sonnet = "sonnet"
+    /// Only for the rare calls that change how the app behaves (the reflection), at medium effort.
+    /// Everything they produce waits for the student's approval.
+    public static let opus = "opus"
 }
 
 public struct AIImage: Codable, Hashable, Sendable {

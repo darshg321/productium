@@ -32,7 +32,7 @@ public struct TokenCount: Codable, Hashable, Sendable {
 
 /// What a request was for, so the meter can say where tokens went.
 public enum AIFeature: String, Codable, CaseIterable, Sendable {
-    case box, flashcards, reads, breakdown, review
+    case box, flashcards, reads, breakdown, review, reflection
 
     public var title: String {
         switch self {
@@ -41,6 +41,7 @@ public enum AIFeature: String, Codable, CaseIterable, Sendable {
         case .reads: return "Short reads"
         case .breakdown: return "Project steps"
         case .review: return "Weekly note"
+        case .reflection: return "Opus · reflection"
         }
     }
 

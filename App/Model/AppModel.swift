@@ -99,6 +99,7 @@ final class AppModel {
             serverOnline = await ClaudeClient.shared.ping()
             // Flashcards and reads are made when gap mode opens, not on every launch.
             await weeklyReviewIfDue()
+            await reflectIfDue()
             await refreshServerUsage()
             await refreshSubscription()
         }
@@ -496,10 +497,48 @@ final class AppModel {
 
     // MARK: - Behaviour proposals (nothing changes until the student approves)
 
+    /// The reflection (Opus, medium effort): at most once a day, only when something warrants it,
+    /// never over budget. Everything it returns waits on the Today card for approval.
+    func reflectIfDue(asked question: String? = nil) async {
+        let now = Date()
+        state.proposals.expire(now: now)
+        let since = now.addingTimeInterval(-14 * 86400)
+        let deferrals = Reflection.deferrals(items: state.items, outcomes: state.outcomes, missedBlocks: pendingOutcomes, since: since)
+        let today = cal.startOfDay(for: now)
+        let days = CapacityLearner.records(
+            days: (1...14).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }, outcomes: state.outcomes, progress: state.progress,
+            isSchoolDay: { SchoolDay.isSchoolDay($0, prefs: self.state.prefs, commitments: self.state.commitments,
+                                                exceptions: self.state.exceptions, calendar: self.cal) }, calendar: cal)
+        let weeklyDue = state.reflectionAt.map { now.timeIntervalSince($0) > 6.5 * 86400 } ?? (state.outcomes.count >= 5)
+        guard let trigger = Reflection.trigger(now: now, lastRun: state.reflectionAt, deferrals: deferrals, days: days,
+                                               weeklyDue: weeklyDue, asked: question != nil,
+                                               paused: state.proposals.isPaused(now: now), budgetAllows: aiAllowed(.reflection),
+                                               calendar: cal) else { return }
+        busy.insert("reflection")
+        defer { busy.remove("reflection") }
+        let convos = state.archive.conversations.suffix(5).compactMap(\.title) + state.conversation.turns.suffix(5).map { String($0.text.prefix(120)) }
+        let user = Reflection.request(now: now, aboutMe: aboutMe, beliefs: state.beliefs, routines: state.routines, deferrals: deferrals,
+                                      days: days, policy: state.policy, feedback: state.proposals.feedback, conversations: convos,
+                                      items: state.items, trigger: trigger, question: question, calendar: cal)
+        guard let out = try? await ClaudeClient.shared.structured(
+            feature: .reflection, system: Reflection.system(), user: user, schema: Reflection.schema, as: Reflection.Output.self,
+            maxTokens: 1500, model: AIModel.opus, effort: "medium", accept: { !$0.note.isEmpty }) else { return }
+        state.reflectionAt = now
+        let run = ReflectionRun(at: now, note: out.note, model: AIModel.opus)
+        let drafts = Reflection.drafts(out, runId: run.id, items: state.items, now: now, model: AIModel.opus, calendar: cal)
+        var ds = state.dumpState
+        ds.aboutMe = aboutMe
+        state.proposals.submit(run, drafts, state: ds, now: now)
+        if drafts.isEmpty { toast = out.note }
+        save()
+    }
+
     func approveProposal(_ id: UUID) {
         var ds = state.dumpState
+        ds.aboutMe = aboutMe
         guard state.proposals.approve(id, in: &ds, now: Date(), calendar: cal) else { return }
         state.dumpState = ds
+        if ds.aboutMe != aboutMe { aboutMe = ds.aboutMe }
         replan()
     }
 
@@ -518,8 +557,10 @@ final class AppModel {
 
     func revertProposal(_ id: UUID) {
         var ds = state.dumpState
+        ds.aboutMe = aboutMe
         guard state.proposals.revert(id, in: &ds, now: Date()) else { return }
         state.dumpState = ds
+        if ds.aboutMe != aboutMe { aboutMe = ds.aboutMe }
         replan()
     }
 

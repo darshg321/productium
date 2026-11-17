@@ -20,6 +20,8 @@ public enum ProposalChange: Codable, Hashable, Sendable {
     case intention(IntentionNudge)
     /// A new group on What Productium Thinks.
     case beliefGroup(BeliefGroup, evidence: [String])
+    /// An Inferred or Patterns line for about-me.md.
+    case aboutMe(section: AboutMeSection, text: String)
 
     /// What it's about, for the one-change-per-week rule and pinning.
     public var target: String {
@@ -27,7 +29,8 @@ public enum ProposalChange: Codable, Hashable, Sendable {
         case .knob(let k, _): return k
         case .starterStep(let p, _, _, _): return "step:\(p.uuidString)"
         case .intention(let i): return "intention:\(i.itemId?.uuidString ?? i.text)"
-        case .beliefGroup(let g, _): return "group"
+        case .beliefGroup: return "group"
+        case .aboutMe(_, let t): return "about:\(t.prefix(40))"
         }
     }
 }
@@ -72,6 +75,7 @@ public struct BehaviourProposal: Codable, Hashable, Identifiable, Sendable {
         case .starterStep(_, let t, let m, _): return "Add a \(m)-minute first step: \(t)"
         case .intention(let i): return "Remind you: \(i.text)"
         case .beliefGroup(let g, _): return "Start noticing: \(g.title)"
+        case .aboutMe(let s, let t): return "Add to About You (\(s.rawValue)): \(t)"
         }
     }
 }
@@ -140,7 +144,19 @@ public struct ProposalBook: Codable, Hashable, Sendable {
         var problems: [String] = []
         var accepted: [BehaviourProposal] = []
         for var p in drafts {
-            guard accepted.count < Self.maxPerRun else { problems.append("More than \(Self.maxPerRun) in one run: \(p.title)"); continue }
+            if case .aboutMe(let section, let text) = p.change {
+                // About-me lines don't count toward the 3 behaviour changes, but still wait for approval.
+                guard section == .inferred || section == .patterns, !text.isEmpty,
+                      accepted.filter({ if case .aboutMe = $0.change { return true }; return false }).count < 3 else {
+                    problems.append("About-me line refused: \(text.prefix(40))"); continue
+                }
+                guard !s.aboutMe[section].contains(where: { AboutMe.norm($0.text) == AboutMe.norm(text) }) else { continue }
+                p.runId = run.id
+                p.status = .pending
+                accepted.append(p)
+                continue
+            }
+            guard accepted.filter({ if case .aboutMe = $0.change { return false }; return true }).count < Self.maxPerRun else { problems.append("More than \(Self.maxPerRun) in one run: \(p.title)"); continue }
             let t = p.change.target
             if pinned.contains(t) { problems.append("\(t) is pinned"); continue }
             if proposals.contains(where: { $0.change.target == t && $0.status == .approved
@@ -175,6 +191,7 @@ public struct ProposalBook: Codable, Hashable, Sendable {
                     problems.append("A reminder needs text and a time"); continue
                 }
                 guard s.policy.intentions.count < 3 else { problems.append("Three reminders already"); continue }
+            case .aboutMe: break
             case .beliefGroup(let g, let ev):
                 guard ev.count >= 3 else { problems.append("A new group needs 3 pieces of evidence"); continue }
                 if proposals.contains(where: { if case .beliefGroup = $0.change { return $0.status != .rejected && $0.status != .expired
@@ -216,6 +233,8 @@ public struct ProposalBook: Codable, Hashable, Sendable {
             g.createdAt = now
             g.note = ev.joined(separator: "; ")
             s.beliefs.groups.append(g)
+        case .aboutMe(let section, let text):
+            guard case .success = s.aboutMe.apply(AboutMeFact(section: section.rawValue, text: text), by: .reflection, now: now) else { return false }
         }
         p.status = .approved
         p.decidedAt = now
@@ -252,6 +271,8 @@ public struct ProposalBook: Codable, Hashable, Sendable {
         case .beliefGroup(let g, _):
             s.beliefs.groups.removeAll { $0.id == g.id }
             s.beliefs.items.removeAll { $0.group == g.id }
+        case .aboutMe(let section, let text):
+            s.aboutMe[section].removeAll { AboutMe.norm($0.text) == AboutMe.norm(text) && !$0.byStudent }
         }
         proposals[i].status = .reverted
         proposals[i].decidedAt = now

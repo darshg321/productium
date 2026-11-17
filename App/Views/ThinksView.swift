@@ -115,9 +115,20 @@ struct ChangesView: View {
     var body: some View {
         let book = model.state.proposals
         List {
-            Section("Waiting for You") {
+            Section {
                 if book.pending.isEmpty { Text("Nothing waiting.").foregroundStyle(.secondary) }
                 ForEach(book.pending) { ProposalRow(proposal: $0) }
+            } header: { Text("Waiting for You") } footer: {
+                Text("Suggestions come from a weekly reflection by Claude Opus. It runs rarely (it's the costliest AI call), and only when something is worth a look.")
+            }
+            Section {
+                if model.busy.contains("reflection") {
+                    HStack(spacing: 10) { ProgressView(); Text("Thinking about your week…").foregroundStyle(.secondary) }
+                } else {
+                    Button("Why Do I Keep Putting Things Off?") {
+                        Task { await model.reflectIfDue(asked: "Why do I keep putting things off?") }
+                    }
+                }
             }
             Section("Changed") {
                 if book.history.isEmpty { Text("Nothing yet.").foregroundStyle(.secondary) }

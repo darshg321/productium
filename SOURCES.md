@@ -20,7 +20,7 @@ Three ground rules shaped the design:
 | | |
 |---|---|
 | **Decision** | `Planner.plan()` is a pure function: same inputs, same plan, in milliseconds, offline. Claude never places blocks. Sonnet turns "chem test fri ch 4-5" into a structured item, breaks a college essay into dated steps and writes the weekly review. |
-| **Why** | Scheduling around hard constraints (classes, sleep, deadlines) is constraint satisfaction. LLMs are unreliable at it and can't be unit-tested. A deterministic engine can be (`Packages/ProductiumCore/Tests`, 29 tests on Linux), and it explains itself through warnings. Any AI-suggested setting change is clamped (`AIMapper.apply`: at most ±10 min per change, and sleep settings can never be touched). |
+| **Why** | Scheduling around hard constraints (classes, sleep, deadlines) is constraint satisfaction. LLMs are unreliable at it and can't be unit-tested. A deterministic engine can be (`Packages/ProductiumCore/Tests`, 29 tests on Linux), and it explains itself through warnings. The AI changes the app only through three operations over a registry with risk tiers (`Capabilities.swift`). Behaviour changes are proposals the student approves, each bounded by a range and a largest step, and sleep need, the sleep floor and the trade-off switch can never be touched by them (`Proposals.swift`). |
 | **Code** | `Planner.swift`, `AI.swift` (`Prompts`, `Schemas`, `AIMapper`) |
 
 ## 2. Test prep: spaced retrieval, never cramming
@@ -82,6 +82,14 @@ Three ground rules shaped the design:
 | **Prompts, not nagging** | A cue at the moment of action carries out an if-then plan (Gollwitzer & Sheeran, 2006), so a block's heads-up asks for the first small step, and its notification starts focus in one tap. But notifications cost attention: turning them up increased inattention (Kushlev, Proulx & Dunn, 2016), and batching them improved well-being (Fitz et al., 2019). So follow-ups stop the moment focus starts or the block is answered, two in the same minute become one, the default is Standard (one follow-up), and Persistent is opt-in. `NudgePlanner`. |
 | **Fresh starts** | Screen limits step on Mondays. Temporal landmarks raise goal motivation (Dai, Milkman & Riis, 2014). |
 | **Code** | `LearnedModel.record`, `loadFactor`, `AppModel.logOutcome`, `AppModel.replan` |
+
+## 7b. The weekly reflection: changing how the app behaves, with permission
+
+| | |
+|---|---|
+| **Evidence** | If-then plans ("when I get home Tuesday, I open the Waterloo doc") roughly double goal attainment (implementation intentions, d≈0.65; Gollwitzer & Sheeran, 2006). Procrastination tracks how aversive a task feels and how distant its reward is (Steel, 2007), and it's largely short-term mood repair (Sirois & Pychyl, 2013), so the lever is a smaller, more concrete entry: a 5-20 minute first step. Breaking a task into parts also corrects underestimates (Kruger & Evans, 2004). Autonomy-supportive change sticks better than imposed change (Ryan & Deci, 2000), so nothing changes without the student's approval. |
+| **Implementation** | `Reflection` runs on Opus at medium effort, at most once a day and normally once or twice a week: when a task is put off 3+ times, planned-vs-done is under 50% for 3 days, the weekly review is due, or the student asks. It proposes at most 3 changes (a starter step, an if-then reminder, a bounded knob, at most one new belief group with 3+ pieces of evidence) plus Inferred/Patterns lines for about-me.md. `ProposalBook` enforces ranges, steps, one change per knob per week, pinning, no repeats of rejected changes for 30 days, 7-day expiry, Revert, and a week's pause after two rejected runs. |
+| **Code** | `Reflection.swift`, `Proposals.swift`, `AppModel.reflectIfDue` |
 
 ## 8. Breaks
 
