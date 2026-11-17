@@ -94,7 +94,7 @@ final class CallLogTests: XCTestCase {
         c.status = 200
         c.response = #"{"content":[{"type":"text","text":"hi"}],"model":"claude-sonnet-5-5"}"#
         XCTAssertEqual(c.messages, [AICall.Message(role: "user", content: "hello", images: 1)])
-        XCTAssertTrue(c.schema?.contains("split_activity") == true)
+        XCTAssertTrue(c.schema?.contains("upsert") == true)
         XCTAssertTrue(c.ok)
         XCTAssertTrue(c.prettyResponse.contains("\n"))
         XCTAssertFalse(c.transcript.contains("AAAA"))

@@ -3,17 +3,26 @@ import Foundation
 // MARK: - Brain dump: one box for everything
 //
 // The student types (or pastes a screenshot of) anything: new deadlines, what they did,
-// what changed, how they feel, a question. Claude returns a list of actions plus a reply.
-// `DumpApplier` turns them into state changes on the device, deterministically and
-// testably, and reports what it changed so the UI can show it with an Undo.
+// what changed, how they feel, a question. Claude returns a list of operations plus a reply.
+// There are only three operations over a registry of what the AI may change (see
+// Capabilities.swift): `upsert` an entity, `delete` one, or `set` a knob. Compound changes,
+// like splitting an activity into periods, are registered macros. `DumpApplier` turns them
+// into state changes on the device, deterministically and testably, and reports what it
+// changed so the UI can show it with an Undo.
 
 public struct DumpApp: Codable, Hashable, Sendable {
     public var name: String
     public var minutes: Int
     public var distracting: Bool?
+
+    public init(name: String, minutes: Int, distracting: Bool? = nil) {
+        self.name = name
+        self.minutes = minutes
+        self.distracting = distracting
+    }
 }
 
-/// One piece of a `split_activity`: "Period 1 8:30-9:20".
+/// One piece of a `split`: "Period 1 8:30-9:20".
 public struct DumpPart: Codable, Hashable, Sendable {
     public var title: String
     public var start: String
@@ -30,84 +39,98 @@ public struct DumpPart: Codable, Hashable, Sendable {
     }
 }
 
-/// One flat action record. Only the fields relevant to `type` are set.
-public struct DumpAction: Codable, Hashable, Sendable {
-    public var type: String
-    /// A reference from the context ("t3f9a2", "a81c0d", "e…", "d…"): exact, so nothing gets duplicated.
+/// One operation from the model.
+public struct DumpOp: Codable, Hashable, Sendable {
+    /// upsert | delete | set | a macro name (split).
+    public var op: String
+    public var entity: String?
+    /// A reference from the context ("t3f9a2", "a81c0d", "e…", "d…"; a routine's key), exact, so
+    /// nothing gets duplicated. Omitted to create.
     public var id: String?
-    /// The existing thing's name, when there's no id.
-    public var target: String?
-    public var title: String?
-    public var kind: String?
-    public var subject: String?
-    public var due: String?
-    public var estimateMinutes: Int?
-    public var importance: Int?
-    public var difficulty: Int?
-    public var progressMinutes: Int?
-    public var doneMinutes: Int?
-    public var topics: [String]?
-    public var notes: String?
-    /// The task a new task is a step of (an id).
-    public var parent: String?
-    public var color: String?
-    public var weekdays: [Int]?
+    /// The entity's fields (see the registry). Free-form: unknown names are ignored.
+    public var fields: [String: JSONValue]?
+    /// For `set`: the knob and its new value as text.
+    public var knob: String?
+    public var value: String?
+
+    public init(_ op: String, entity: String? = nil, id: String? = nil, fields: [String: JSONValue]? = nil,
+                knob: String? = nil, value: String? = nil) {
+        self.op = op
+        self.entity = entity
+        self.id = id
+        self.fields = fields
+        self.knob = knob
+        self.value = value
+    }
+
+    public static func upsert(_ entity: String, id: String? = nil, _ fields: [String: JSONValue] = [:]) -> DumpOp {
+        DumpOp("upsert", entity: entity, id: id, fields: fields)
+    }
+    public static func delete(_ entity: String, id: String) -> DumpOp { DumpOp("delete", entity: entity, id: id) }
+    public static func set(_ knob: String, _ value: String) -> DumpOp { DumpOp("set", knob: knob, value: value) }
+}
+
+/// What the model may say besides operations: lines for about-me.md, and timestamped observations.
+public struct DumpEvidence: Codable, Hashable, Sendable {
+    /// "left home", "arrived at school", "worked on Waterloo drafts", "at CS club"…
+    public var what: String
+    /// Local date-times (YYYY-MM-DDTHH:mm). One, or a start and an end.
     public var start: String?
     public var end: String?
-    public var bufferMinutes: Int?
-    public var validFrom: String?
-    public var validUntil: String?
-    public var parts: [DumpPart]?
-    public var date: String?
-    public var cancelled: Bool?
-    public var wake: String?
-    public var activity: String?
-    public var category: String?
-    public var phase: String?
-    public var at: String?
-    public var routine: String?
+    /// Minutes, when they said a duration rather than times ("worked ~200 min").
     public var minutes: Int?
-    public var enabled: Bool?
-    public var mood: Int?
-    public var energy: Int?
-    public var note: String?
-    public var screenMinutes: Int?
-    public var distractingMinutes: Int?
-    public var apps: [DumpApp]?
-    /// settings: which setting (see `DumpSettings.keys`) and its new value, as text.
-    public var key: String?
-    public var value: String?
-    // Older settings fields, still applied if a reply uses them.
-    public var sleepNeedMinutes: Int?
-    public var freeDayWake: String?
-    public var maxStudyMinutesSchoolDay: Int?
-    public var minFreeMinutesSchoolDay: Int?
-    public var interests: [String]?
+    /// The task it was about (an id), for work done.
+    public var task: String?
+    /// "travel" | "study" | "activity" | "sleep" | "other": what kind of time it was.
+    public var kind: String?
 
-    public init(type: String) { self.type = type }
+    public init(what: String, start: String? = nil, end: String? = nil, minutes: Int? = nil, task: String? = nil, kind: String? = nil) {
+        self.what = what
+        self.start = start
+        self.end = end
+        self.minutes = minutes
+        self.task = task
+        self.kind = kind
+    }
 }
 
 public struct DumpResult: Codable, Hashable, Sendable {
-    public var actions: [DumpAction]
+    public var ops: [DumpOp]
     public var reply: String
-    public init(actions: [DumpAction], reply: String) { self.actions = actions; self.reply = reply }
+    /// New or changed lines for about-me.md (only what the student literally said).
+    public var facts: [AboutMeFact]
+    /// Timestamped observations, routed to markers, routines and work done.
+    public var evidence: [DumpEvidence]
 
-    /// Lenient: a reply with no actions, or actions with no reply, still counts. One malformed
-    /// action is dropped rather than losing the whole message.
+    public init(ops: [DumpOp], reply: String, facts: [AboutMeFact] = [], evidence: [DumpEvidence] = []) {
+        self.ops = ops
+        self.reply = reply
+        self.facts = facts
+        self.evidence = evidence
+    }
+
+    enum CodingKeys: String, CodingKey { case ops, reply, facts, evidence }
+
+    /// Lenient: a reply with no operations, or operations with no reply, still counts. One
+    /// malformed operation is dropped rather than losing the whole message.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         reply = (try? c.decodeIfPresent(String.self, forKey: .reply)) ?? ""
-        let raw = (try? c.decodeIfPresent([JSONValue].self, forKey: .actions)) ?? []
-        actions = raw.compactMap { try? $0.decode(DumpAction.self) }
-        guard !reply.isEmpty || !raw.isEmpty else {
-            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "no actions and no reply"))
+        let raw = (try? c.decodeIfPresent([JSONValue].self, forKey: .ops)) ?? []
+        ops = raw.compactMap { try? $0.decode(DumpOp.self) }.filter { !$0.op.isEmpty }
+        facts = ((try? c.decodeIfPresent([JSONValue].self, forKey: .facts)) ?? [])
+            .compactMap { try? $0.decode(AboutMeFact.self) }.filter { !$0.text.isEmpty }
+        evidence = ((try? c.decodeIfPresent([JSONValue].self, forKey: .evidence)) ?? [])
+            .compactMap { try? $0.decode(DumpEvidence.self) }.filter { !$0.what.isEmpty }
+        guard !reply.isEmpty || !raw.isEmpty || !facts.isEmpty || !evidence.isEmpty else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "nothing in the answer"))
         }
     }
 }
 
 extension DumpResult {
     /// Reads the Inbox answer out of a reply, whatever shape it came back in: the schema's
-    /// `{actions, reply}`, a list of actions, one action on its own, the reply under another name,
+    /// `{ops, reply}`, a list of operations, one operation on its own, the reply under another name,
     /// or plain prose (shown as the reply, changing nothing). Nil only when there's nothing to
     /// show and nothing to do.
     public static func read(_ res: AIResponse) -> DumpResult? {
@@ -122,10 +145,33 @@ extension DumpResult {
         let prose = res.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard res.candidates.isEmpty, prose.filter(\.isLetter).count >= 3, !prose.contains("{"), !prose.contains("```"),
               !["null", "none", "undefined"].contains(prose.lowercased()) else { return nil }
-        return DumpResult(actions: [], reply: String(prose.prefix(600)))
+        return DumpResult(ops: [], reply: String(prose.prefix(600)))
+    }
+
+    static let opKeys: Set<String> = ["op", "entity", "id", "fields", "knob", "value"]
+
+    /// An operation with its fields beside it instead of under `fields`: move them under.
+    static func normaliseOp(_ v: JSONValue) -> JSONValue {
+        guard case .object(var o) = v else { return v }
+        let plainKeys = Dictionary(o.keys.map { (StructuredRepair.plain($0), $0) }, uniquingKeysWith: { a, _ in a })
+        if plainKeys["op"] == nil, let k = plainKeys["operation"] ?? plainKeys["type"] ?? plainKeys["action"] {
+            o["op"] = o.removeValue(forKey: k)
+        }
+        var fields: [String: JSONValue] = [:]
+        if let k = plainKeys["fields"], case .object(let f)? = o[k] { fields = f }
+        for (k, val) in o where !opKeys.contains(StructuredRepair.plain(k)) && plainKeys["fields"] != k
+            && !(k == "operation" || k == "type" || k == "action") {
+            fields[k] = val
+            o[k] = nil
+        }
+        if !fields.isEmpty { o[plainKeys["fields"] ?? "fields"] = .object(fields) }
+        return .object(o)
     }
 
     static func normalise(_ v: JSONValue) -> JSONValue {
+        if case .array(let a) = v, a.allSatisfy({ if case .object(let o) = $0 { return o["reply"] == nil }; return false }) {
+            return .object(["ops": .array(a.map(normaliseOp)), "reply": .string("")])
+        }
         guard case .object(var o) = v else { return v }
         let plain = Dictionary(o.keys.map { (StructuredRepair.plain($0), $0) }, uniquingKeysWith: { a, _ in a })
         func value(_ names: [String]) -> JSONValue? { names.lazy.compactMap { plain[$0].flatMap { o[$0] } }.first }
@@ -133,57 +179,41 @@ extension DumpResult {
            let r = value(["message", "response", "answer", "text", "summary", "content", "output"]), case .string = r {
             o["reply"] = r
         }
-        if plain["actions"] == nil {
-            if let a = value(["action", "changes", "items", "tasks"]) {
-                o["actions"] = a
-            } else if case .string(let t)? = value(["type"]), DumpActionType(loose: t) != nil {
-                // One action on its own, with the reply (if any) beside its fields.
-                var action = o
-                action["reply"] = nil
-                o = ["actions": .array([.object(action)]), "reply": o["reply"] ?? .string("")]
+        if plain["ops"] == nil {
+            if let a = value(["operations", "actions", "action", "changes"]) {
+                o["ops"] = a
+            } else if case .string(let t)? = value(["op", "operation"]), DumpOpKind(loose: t) != nil {
+                // One operation on its own, with the reply (if any) beside its fields.
+                var single = o
+                single["reply"] = nil
+                o = ["ops": .array([.object(single)]), "reply": o["reply"] ?? .string("")]
             }
+        }
+        let key = plain["ops"] ?? "ops"
+        switch o[key] {
+        case .array(let a)?: o[key] = .array(a.map(normaliseOp))
+        case .object?: o[key] = .array([normaliseOp(o[key]!)])
+        default: break
         }
         return .object(o)
     }
 }
 
-public enum DumpActionType: String, CaseIterable, Sendable {
-    case addTask = "add_task", updateTask = "update_task", completeTask = "complete_task", reopenTask = "reopen_task"
-    case deleteTask = "delete_task"
-    case addActivity = "add_activity", updateActivity = "update_activity", deleteActivity = "delete_activity"
-    case splitActivity = "split_activity"
-    case addEvent = "add_event", updateEvent = "update_event", deleteEvent = "delete_event"
-    case changeDay = "change_day", deleteDayChange = "delete_day_change"
-    case log, routine, mood
-    case screenTime = "screen_time", settings, setColor = "set_color"
+/// The three operations, plus the registered macros.
+public enum DumpOpKind: String, CaseIterable, Sendable {
+    case upsert, delete, set, split
 
-    /// The schema's names, plus the near misses a model can produce: "addTask", "create_task",
-    /// "mark_done", "remove_activity", "screentime", "preferences", "colour", "split_school".
+    /// The schema's names plus the near misses a model produces ("create", "update", "remove").
     public init?(loose raw: String) {
-        if let exact = DumpActionType(rawValue: raw) { self = exact; return }
-        let words = raw.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1_$2", options: .regularExpression).lowercased()
-            .split(whereSeparator: { !$0.isLetter }).map(String.init)
-        let joined = words.joined(separator: "_")
-        if let exact = DumpActionType(rawValue: joined) { self = exact; return }
-        func has(_ options: String...) -> Bool { words.contains { options.contains($0) } }
-        let activity = has("activity", "activities", "commitment", "class", "classes", "club", "practice")
-        let remove = has("delete", "remove", "cancel", "drop", "clear")
-        let change = has("update", "change", "edit", "move", "reschedule", "modify", "rename", "set")
-        if has("screen", "screentime") { self = .screenTime }
-        else if has("color", "colour", "colors", "colours", "paint", "tint") { self = .setColor }
-        else if has("setting", "settings", "preference", "preferences", "prefs") { self = .settings }
-        else if has("mood", "feeling", "energy") { self = .mood }
-        else if has("routine") { self = .routine }
-        else if has("split", "divide", "periods") { self = .splitActivity }
-        else if has("day", "exception") { self = remove ? .deleteDayChange : .changeDay }
-        else if has("event", "appointment") { self = remove ? .deleteEvent : change ? .updateEvent : .addEvent }
-        else if has("log", "checkin", "marker", "happened") { self = .log }
-        else if has("reopen", "undone", "uncomplete", "incomplete", "unfinish", "undo") { self = .reopenTask }
-        else if has("complete", "completed", "done", "finish", "finished") { self = .completeTask }
-        else if remove { self = activity ? .deleteActivity : .deleteTask }
-        else if change { self = activity ? .updateActivity : .updateTask }
-        else if has("add", "create", "new") { self = activity ? .addActivity : .addTask }
-        else { return nil }
+        let w = raw.lowercased().filter(\.isLetter)
+        if let exact = DumpOpKind(rawValue: w) { self = exact; return }
+        switch w {
+        case "add", "create", "update", "edit", "change", "insert", "new", "modify", "put", "save", "log": self = .upsert
+        case "remove", "del", "drop", "cancel": self = .delete
+        case "setknob", "setting", "settings", "assign": self = .set
+        case "splitactivity", "divide": self = .split
+        default: return nil
+        }
     }
 }
 
@@ -198,9 +228,12 @@ public struct DumpState: Sendable {
     public var moods: [MoodEntry]
     public var screen: [ScreenDay]
     public var prefs: Preferences
+    /// Tier 2: how the app behaves. Only the reflection may propose changes (see Capabilities).
+    public var policy: BehaviourPolicy
 
     public init(items: [WorkItem], commitments: [Commitment], exceptions: [DayException], oneOffs: [FixedEvent],
-                markers: [TimelineEvent], routines: [Routine], moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences) {
+                markers: [TimelineEvent], routines: [Routine], moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences,
+                policy: BehaviourPolicy = BehaviourPolicy()) {
         self.items = items
         self.commitments = commitments
         self.exceptions = exceptions
@@ -210,6 +243,74 @@ public struct DumpState: Sendable {
         self.moods = moods
         self.screen = screen
         self.prefs = prefs
+        self.policy = policy
     }
 }
 
+/// An entity's fields, read from an operation. Internal: the applier's handlers read these.
+struct DumpFields: Codable, Hashable, Sendable {
+    var target: String?
+    var title: String?
+    var kind: String?
+    var subject: String?
+    var due: String?
+    var estimateMinutes: Int?
+    var importance: Int?
+    var difficulty: Int?
+    var doneMinutes: Int?
+    var done: Bool?
+    var topics: [String]?
+    var notes: String?
+    var parent: String?
+    var color: String?
+    var weekdays: [Int]?
+    var start: String?
+    var end: String?
+    var bufferMinutes: Int?
+    var validFrom: String?
+    var validUntil: String?
+    var parts: [DumpPart]?
+    var date: String?
+    var cancelled: Bool?
+    var wake: String?
+    var activity: String?
+    var category: String?
+    var phase: String?
+    var at: String?
+    var minutes: Int?
+    var enabled: Bool?
+    var mood: Int?
+    var energy: Int?
+    var note: String?
+    var screenMinutes: Int?
+    var distractingMinutes: Int?
+    var apps: [DumpApp]?
+
+    /// The id of the thing (from the op) and its name when there's no id.
+    var id: String?
+
+    init() {}
+
+    static let schema: JSONValue = {
+        let s = Schemas.str, i = Schemas.int, b: JSONValue = .object(["type": .string("boolean")])
+        let part = Schemas.obj(["title": s, "start": s, "end": s, "weekdays": Schemas.arr(i), "color": s],
+                               required: ["title", "start", "end"])
+        return Schemas.obj([
+            "target": s, "title": s, "kind": s, "subject": s, "due": s, "estimateMinutes": i, "importance": i,
+            "difficulty": i, "doneMinutes": i, "done": b, "topics": Schemas.arr(s), "notes": s, "parent": s, "color": s,
+            "weekdays": Schemas.arr(i), "start": s, "end": s, "bufferMinutes": i, "validFrom": s, "validUntil": s,
+            "parts": Schemas.arr(part), "date": s, "cancelled": b, "wake": s, "activity": s, "category": s, "phase": s,
+            "at": s, "minutes": i, "enabled": b, "mood": i, "energy": i, "note": s, "screenMinutes": i,
+            "distractingMinutes": i,
+            "apps": Schemas.arr(Schemas.obj(["name": s, "minutes": i, "distracting": b], required: ["name", "minutes"])),
+        ], required: [])
+    }()
+
+    /// Fields fitted to their types ("90" → 90, "2, 4" → [2, 4]); unknown names are dropped.
+    static func read(_ op: DumpOp) -> DumpFields {
+        let raw: JSONValue = .object(op.fields ?? [:])
+        var f = (try? StructuredRepair.coerce(raw, to: schema).decode(DumpFields.self)) ?? DumpFields()
+        f.id = op.id.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+        return f
+    }
+}

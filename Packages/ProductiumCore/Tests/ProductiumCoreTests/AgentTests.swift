@@ -10,13 +10,18 @@ final class AgentTests: XCTestCase {
                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 
-    func act(_ type: String, _ f: (inout DumpAction) -> Void = { _ in }) -> DumpAction {
-        var a = DumpAction(type: type); f(&a); return a
+    @discardableResult
+    func run(_ s: inout DumpState, _ ops: [DumpOp], now: Date? = nil, writer: Writer = .box) -> DumpReport {
+        DumpApplier.apply(DumpResult(ops: ops, reply: ""), to: &s, now: now ?? Fx.mon(12), calendar: cal, writer: writer)
     }
 
-    @discardableResult
-    func run(_ s: inout DumpState, _ actions: [DumpAction], now: Date? = nil) -> DumpReport {
-        DumpApplier.apply(DumpResult(actions: actions, reply: ""), to: &s, now: now ?? Fx.mon(12), calendar: cal)
+    func split(_ id: String, _ parts: [DumpPart]) -> DumpOp {
+        DumpOp("split", entity: "activity", id: id,
+               fields: ["parts": .array(parts.map { p in
+                   var o: [String: JSONValue] = ["title": .string(p.title), "start": .string(p.start), "end": .string(p.end)]
+                   if let w = p.weekdays { o["weekdays"] = .array(w.map { .number(Double($0)) }) }
+                   return .object(o)
+               })])
     }
 
     let periods = [
@@ -28,7 +33,7 @@ final class AgentTests: XCTestCase {
     func testSplitSchoolIntoPeriodsThenAdjustWithoutDuplicates() {
         var s = state()
         let school = Ref.activity(Fx.school.id)
-        let r = run(&s, [act("split_activity") { $0.id = school; $0.parts = self.periods }])
+        let r = run(&s, [split(school, periods)])
         XCTAssertEqual(r.problems, [])
         XCTAssertFalse(s.commitments.contains { $0.id == Fx.school.id }, "the original goes when every day is covered")
         let parts = s.commitments.filter { $0.kind == .school }
@@ -37,12 +42,12 @@ final class AgentTests: XCTestCase {
 
         // Adjust one period by id, as the context shows it.
         let p3 = parts.first { $0.title == "Period 3" }!
-        run(&s, [act("update_activity") { $0.id = Ref.activity(p3.id); $0.start = "10:35"; $0.end = "11:25" }])
+        run(&s, [.upsert("activity", id: Ref.activity(p3.id), ["start": "10:35", "end": "11:25"])])
         XCTAssertEqual(s.commitments.first { $0.id == p3.id }?.start, TimeOfDay(10, 35))
 
         // The model forgets and adds a period again, or splits again: still six, not twelve.
-        run(&s, [act("add_activity") { $0.title = "Period 2"; $0.kind = "school"; $0.weekdays = [2, 3, 4, 5, 6]
-            $0.start = "09:30"; $0.end = "10:20" }])
+        run(&s, [.upsert("activity", ["title": "Period 2", "kind": "school", "weekdays": [2, 3, 4, 5, 6],
+                                      "start": "09:30", "end": "10:20"])])
         XCTAssertEqual(s.commitments.filter { $0.kind == .school }.count, 6)
         XCTAssertEqual(s.commitments.first { $0.title == "Period 2" }?.start, TimeOfDay(9, 30))
 
@@ -57,9 +62,8 @@ final class AgentTests: XCTestCase {
 
     func testSplittingOneDayKeepsTheOthers() {
         var s = state()
-        run(&s, [act("split_activity") { $0.id = Ref.activity(Fx.school.id)
-            $0.parts = [DumpPart(title: "Assembly", start: "8:30", end: "9:30", weekdays: [2]),
-                        DumpPart(title: "Classes", start: "9:30", end: "15:00", weekdays: [2])] }])
+        run(&s, [split(Ref.activity(Fx.school.id), [DumpPart(title: "Assembly", start: "8:30", end: "9:30", weekdays: [2]),
+                                                    DumpPart(title: "Classes", start: "9:30", end: "15:00", weekdays: [2])])])
         XCTAssertEqual(s.commitments.first { $0.id == Fx.school.id }?.weekdays, [3, 4, 5, 6])
         XCTAssertEqual(s.commitments.filter { $0.kind == .school }.count, 3)
     }
@@ -67,7 +71,7 @@ final class AgentTests: XCTestCase {
     func testCancelledDayFollowsTheParts() {
         var s = state()
         s.exceptions = [DayException(day: Fx.mon(0, plusDays: 1), commitmentId: Fx.school.id, cancelled: true)]
-        run(&s, [act("split_activity") { $0.id = Ref.activity(Fx.school.id); $0.parts = Array(self.periods.prefix(2)) }])
+        run(&s, [split(Ref.activity(Fx.school.id), Array(periods.prefix(2)))])
         XCTAssertEqual(s.exceptions.count, 2)
         XCTAssertTrue(s.exceptions.allSatisfy(\.cancelled))
     }
@@ -76,15 +80,17 @@ final class AgentTests: XCTestCase {
         let a = WorkItem(title: "Math homework 1", kind: .assignment, due: Fx.mon(23, plusDays: 1))
         let b = WorkItem(title: "Math homework 10", kind: .assignment, due: Fx.mon(23, plusDays: 2))
         var s = state(items: [a, b])
-        run(&s, [act("complete_task") { $0.id = Ref.task(b.id) }, act("update_task") { $0.id = String(Ref.task(a.id).dropFirst()); $0.estimateMinutes = 90 }])
+        run(&s, [.upsert("task", id: Ref.task(b.id), ["done": true]),
+                 .upsert("task", id: String(Ref.task(a.id).dropFirst()), ["estimateMinutes": 90])])
         XCTAssertTrue(s.items[1].isDone)
         XCTAssertFalse(s.items[0].isDone)
         XCTAssertEqual(s.items[0].estimateMinutes, 90, "a ref without its letter still works")
         // In `target` too, and full UUIDs.
-        run(&s, [act("reopen_task") { $0.target = Ref.task(b.id) }, act("update_task") { $0.id = a.id.uuidString; $0.notes = "odd ones" }])
+        run(&s, [.upsert("task", ["target": .string(Ref.task(b.id)), "done": false]),
+                 .upsert("task", id: a.id.uuidString, ["notes": "odd ones"])])
         XCTAssertFalse(s.items[1].isDone)
         XCTAssertEqual(s.items[0].notes, "odd ones")
-        let r = run(&s, [act("delete_task") { $0.id = "tffffff" }])
+        let r = run(&s, [.delete("task", id: "tffffff")])
         XCTAssertEqual(s.items.count, 2)
         XCTAssertEqual(r.problems.count, 1)
     }
@@ -94,13 +100,13 @@ final class AgentTests: XCTestCase {
         let math = WorkItem(title: "Calc set", kind: .assignment, subject: "Math", due: Fx.mon(23, plusDays: 3))
         var s = state(items: [essay, math])
         let r = run(&s, [
-            act("set_color") { $0.category = "free time"; $0.color = "green" },
-            act("set_color") { $0.id = Ref.activity(Fx.soccer.id); $0.color = "Light Blue" },
-            act("set_color") { $0.category = "subject:Math"; $0.color = "#FF8800" },
-            act("set_color") { $0.id = Ref.task(essay.id); $0.color = "purple" },
-            act("set_color") { $0.category = "school"; $0.color = "teal" },
-            act("set_color") { $0.category = "sleep"; $0.color = "sparkly" },
-            act("update_activity") { $0.target = "school"; $0.color = "default" },
+            .set("color.free time", "green"),
+            .upsert("activity", id: Ref.activity(Fx.soccer.id), ["color": "Light Blue"]),
+            .set("color.subject:Math", "#FF8800"),
+            .upsert("task", id: Ref.task(essay.id), ["color": "purple"]),
+            .set("colour.school", "teal"),
+            .set("color.sleep", "sparkly"),
+            .upsert("activity", ["target": "school", "color": "default"]),
         ])
         XCTAssertEqual(r.problems.count, 1, "an unknown colour is reported")
         XCTAssertEqual(s.prefs.colors, ["free": "green", "subject:math": "#ff8800", "school": "teal"])
@@ -124,17 +130,17 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(Palette.category("wind-down"), "wind_down")
     }
 
-    func testEveryNamedSetting() {
+    func testEveryNamedKnob() {
         var s = state()
         let r = run(&s, [
-            act("settings") { $0.key = "dinner"; $0.value = "19:15" },
-            act("settings") { $0.key = "focus_block_minutes"; $0.value = "50" },
-            act("settings") { $0.key = "schoolDays"; $0.value = "2,3,4,5" },
-            act("settings") { $0.key = "nudgeLevel"; $0.value = "gentle" },
-            act("settings") { $0.key = "sleepNeedMinutes"; $0.value = "7h" },
-            act("settings") { $0.key = "freeDayWake"; $0.value = "9:30am" },
-            act("settings") { $0.key = "chronotype"; $0.value = "sometimes" },
-            act("settings") { $0.key = "warpDrive"; $0.value = "on" },
+            .set("dinner", "19:15"),
+            .set("focus_block_minutes", "50"),
+            .set("schoolDays", "2,3,4,5"),
+            .set("nudgeLevel", "gentle"),
+            .set("sleepNeedMinutes", "7h"),
+            .set("freeDayWake", "9:30am"),
+            .set("chronotype", "sometimes"),
+            .set("warpDrive", "on"),
         ])
         XCTAssertEqual(s.prefs.dinner, TimeOfDay(19, 15))
         XCTAssertEqual(s.prefs.focusBlockMinutes, 50)
@@ -143,43 +149,71 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(s.prefs.sleepNeedMinutes, 450, "7h asked, the floor holds")
         XCTAssertEqual(s.prefs.freeDayWake, TimeOfDay(9, 30))
         XCTAssertEqual(r.problems.count, 2)
-        run(&s, [act("settings") { $0.key = "dinner"; $0.value = "none" }])
+        run(&s, [.set("dinner", "none")])
         XCTAssertNil(s.prefs.dinner)
+    }
+
+    /// Tier 2 is how the app behaves: the box (Sonnet) can't change it, only an approved reflection proposal.
+    func testBehaviourKnobsAreRefusedFromTheBox() {
+        var s = state()
+        let r = run(&s, [.set("planner.maxBlockMinutes", "25"), .set("capacityMultiplier", "0.8")])
+        XCTAssertEqual(s.policy, BehaviourPolicy())
+        XCTAssertEqual(r.changes, [])
+        XCTAssertEqual(r.problems.count, 2)
+        XCTAssertTrue(r.problems[0].contains("only the weekly reflection can suggest it"), r.problems[0])
+        // From reflection, the change is bounded by the knob's step and range.
+        run(&s, [.set("planner.maxBlockMinutes", "25")], writer: .reflection)
+        XCTAssertEqual(s.policy.maxBlockMinutes, 45, "55 → 25 asked, at most -10 per change")
+        run(&s, [.set("planner.capacityMultiplier", "3")], writer: .reflection)
+        XCTAssertEqual(s.policy.capacityMultiplier, 1.1, accuracy: 0.001)
+        let forbidden = run(&s, [.set("sleepNeedMinutes", "450")], writer: .reflection)
+        XCTAssertEqual(forbidden.problems.count, 1, "reflection never touches sleep need")
+        // Tier 2 knobs aren't even offered to the box.
+        XCTAssertFalse(Prompts.dump().contains("planner.maxBlockMinutes"))
+        // The planner reads them.
+        s.policy.maxBlockMinutes = 25
+        let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 6), estimateMinutes: 240)
+        let plan = Planner.plan(PlannerInput(now: Fx.mon(6), calendar: cal, items: [essay], commitments: s.commitments,
+                                             routines: s.routines, policy: s.policy))
+        XCTAssertTrue(plan.blocks.filter { $0.itemId == essay.id }.allSatisfy { $0.minutes <= 25 },
+                      "\(plan.blocks.filter { $0.itemId == essay.id }.map(\.minutes))")
+        XCTAssertFalse(plan.blocks.filter { $0.itemId == essay.id }.isEmpty)
     }
 
     func testEventsDayChangesRoutines() {
         var s = state()
-        run(&s, [act("add_event") { $0.title = "Dentist"; $0.date = "2026-11-18"; $0.start = "16:00"; $0.end = "17:00" },
-                 act("add_event") { $0.title = "dentist"; $0.date = "2026-11-18"; $0.start = "16:30"; $0.end = "17:30" }])
+        run(&s, [.upsert("event", ["title": "Dentist", "date": "2026-11-18", "start": "16:00", "end": "17:00"]),
+                 .upsert("event", ["title": "dentist", "date": "2026-11-18", "start": "16:30", "end": "17:30"])])
         XCTAssertEqual(s.oneOffs.count, 1, "the same event twice is a move")
         XCTAssertEqual(s.oneOffs[0].start, Fx.mon(16, 30, plusDays: 2))
-        run(&s, [act("update_event") { $0.id = Ref.event(s.oneOffs[0].id); $0.date = "2026-11-19" }])
+        run(&s, [.upsert("event", id: Ref.event(s.oneOffs[0].id), ["date": "2026-11-19"])])
         XCTAssertEqual(s.oneOffs[0].start, Fx.mon(16, 30, plusDays: 3))
         XCTAssertEqual(s.oneOffs[0].end, Fx.mon(17, 30, plusDays: 3))
-        run(&s, [act("delete_event") { $0.target = "dentist" }])
+        run(&s, [DumpOp("delete", entity: "event", fields: ["target": "dentist"])])
         XCTAssertTrue(s.oneOffs.isEmpty)
 
-        run(&s, [act("change_day") { $0.id = Ref.activity(Fx.soccer.id); $0.date = "2026-11-18"; $0.cancelled = true }])
+        run(&s, [.upsert("day_change", ["activity": .string(Ref.activity(Fx.soccer.id)), "date": "2026-11-18", "cancelled": true])])
         XCTAssertEqual(s.exceptions.first?.commitmentId, Fx.soccer.id)
-        run(&s, [act("change_day") { $0.id = Ref.dayChange(s.exceptions[0].id); $0.cancelled = false; $0.start = "17:00" }])
+        run(&s, [.upsert("day_change", id: Ref.dayChange(s.exceptions[0].id), ["cancelled": false, "start": "17:00"])])
         XCTAssertEqual(s.exceptions.count, 1)
         XCTAssertEqual(s.exceptions[0].start, TimeOfDay(17))
-        run(&s, [act("delete_day_change") { $0.id = Ref.dayChange(s.exceptions[0].id) }])
+        run(&s, [.delete("day_change", id: Ref.dayChange(s.exceptions[0].id))])
         XCTAssertTrue(s.exceptions.isEmpty)
 
-        run(&s, [act("routine") { $0.routine = "get_ready"; $0.enabled = false }])
+        run(&s, [.upsert("routine", id: "get_ready", ["enabled": false])])
         XCTAssertEqual(s.routines.first { $0.id == "get_ready" }?.enabled, false)
     }
 
     func testStepsAndSameTaskTwice() {
         let project = WorkItem(title: "Science fair", kind: .project, due: Fx.mon(23, plusDays: 20))
         var s = state(items: [project])
-        run(&s, [act("add_task") { $0.title = "Pick a question"; $0.due = "2026-12-30"; $0.parent = Ref.task(project.id) },
-                 act("add_task") { $0.title = "Pick a question"; $0.due = "2026-11-18"; $0.parent = Ref.task(project.id) }])
+        let parent = JSONValue.string(Ref.task(project.id))
+        run(&s, [.upsert("task", ["title": "Pick a question", "due": "2026-12-30", "parent": parent]),
+                 .upsert("task", ["title": "Pick a question", "due": "2026-11-18", "parent": parent])])
         let steps = s.items.filter { $0.parentId == project.id }
         XCTAssertEqual(steps.count, 1)
         XCTAssertEqual(steps[0].due, Fx.mon(23, 59, plusDays: 2), "the second is an update, and a step can't be due after its project")
-        run(&s, [act("complete_task") { $0.id = Ref.task(steps[0].id) }])
+        run(&s, [.upsert("task", id: Ref.task(steps[0].id), ["done": true])])
         XCTAssertTrue(s.items.first { $0.id == project.id }!.isDone, "the last step finishes the project")
     }
 
@@ -198,16 +232,19 @@ final class AgentTests: XCTestCase {
                        "Calendar (read-only): Grandma", "Plan today:", "Plan tomorrow:", "all school cancelled"] {
             XCTAssertTrue(ctx.contains(needle), "context is missing \(needle)\n\(ctx)")
         }
-        XCTAssertTrue(Prompts.dump().contains("split_activity"))
+        XCTAssertTrue(Prompts.dump().contains("split (activity)"))
         XCTAssertEqual(Ref.event("EK:1"), Ref.event("EK:1"), "stable for non-UUID ids")
     }
 
-    func testLooseNamesForNewActions() {
-        let names: [String: DumpActionType] = [
-            "split_school": .splitActivity, "divide_activity": .splitActivity, "change_colour": .setColor, "setColor": .setColor,
-            "remove_event": .deleteEvent, "move_event": .updateEvent, "clear_day_change": .deleteDayChange,
-            "uncomplete_task": .reopenTask, "mark_undone": .reopenTask,
-        ]
-        for (raw, want) in names { XCTAssertEqual(DumpActionType(loose: raw), want, raw) }
+    func testLooseOperationNames() {
+        let names: [String: DumpOpKind] = ["create": .upsert, "Update": .upsert, "add": .upsert, "remove": .delete,
+                                           "set": .set, "split_activity": .split, "SPLIT": .split]
+        for (raw, want) in names { XCTAssertEqual(DumpOpKind(loose: raw), want, raw) }
+        XCTAssertNil(DumpOpKind(loose: "fly_to_moon"))
+        // The entity can be read off an id's letter.
+        let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 5))
+        var s = state(items: [essay])
+        run(&s, [DumpOp("upsert", id: Ref.task(essay.id), fields: ["done": true])])
+        XCTAssertTrue(s.items[0].isDone)
     }
 }

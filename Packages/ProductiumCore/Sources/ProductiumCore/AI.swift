@@ -34,6 +34,20 @@ public indirect enum JSONValue: Codable, Hashable, Sendable {
     }
 }
 
+extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByFloatLiteral,
+    ExpressibleByBooleanLiteral, ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral {
+    public init(stringLiteral v: String) { self = .string(v) }
+    public init(integerLiteral v: Int) { self = .number(Double(v)) }
+    public init(floatLiteral v: Double) { self = .number(v) }
+    public init(booleanLiteral v: Bool) { self = .bool(v) }
+    public init(arrayLiteral v: JSONValue...) { self = .array(v) }
+    public init(dictionaryLiteral v: (String, JSONValue)...) { self = .object(Dictionary(v, uniquingKeysWith: { _, b in b })) }
+
+    /// The string inside, if it is one.
+    public var stringValue: String? { if case .string(let s) = self { return s }; return nil }
+    public var numberValue: Double? { if case .number(let n) = self { return n }; return nil }
+}
+
 /// The one model every request uses. Only output tokens are counted, and every call this app makes
 /// is structured extraction or short writing. Measured through claude-server on the app's own
 /// prompts (16 Inbox messages, a project breakdown, flashcards, reads, the weekly note), Sonnet 5.5

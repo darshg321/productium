@@ -21,20 +21,6 @@ public enum AboutMeSection: String, CaseIterable, Codable, Sendable {
     }
 }
 
-/// Who is writing. The box (Sonnet) may only append what the student literally said; the
-/// reflection job (Opus) may also write inferences and patterns; the student may write anything.
-public enum AboutMeWriter: String, Codable, Sendable {
-    case student, box, reflection
-
-    public func mayWrite(_ s: AboutMeSection) -> Bool {
-        switch self {
-        case .student: return true
-        case .box: return s == .stated
-        case .reflection: return s != .stated
-        }
-    }
-}
-
 /// One new or changed line, as the AI proposes it.
 public struct AboutMeFact: Codable, Hashable, Sendable {
     public var section: String?

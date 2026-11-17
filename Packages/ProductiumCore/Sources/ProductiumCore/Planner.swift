@@ -17,12 +17,15 @@ public struct PlannerInput: Sendable {
     /// One-day changes ("no school today", "practice moved to 5").
     public var exceptions: [DayException]
     public var horizonDays: Int
+    /// Tier 2 behaviour knobs (approved changes only).
+    public var policy: BehaviourPolicy
 
     public init(now: Date, calendar: Calendar = .current, items: [WorkItem], commitments: [Commitment] = [],
                 events: [FixedEvent] = [], preferences: Preferences = Preferences(),
                 learned: LearnedModel = LearnedModel(), health: [HealthDay] = [], moods: [MoodEntry] = [],
                 locked: [PlannedBlock] = [], routines: [Routine] = Routine.defaults,
-                exceptions: [DayException] = [], horizonDays: Int = 14) {
+                exceptions: [DayException] = [], horizonDays: Int = 14, policy: BehaviourPolicy = BehaviourPolicy()) {
+        self.policy = policy
         self.now = now
         self.calendar = calendar
         self.items = items
@@ -241,8 +244,10 @@ public enum Planner {
                 let freeTotal = free.reduce(0) { $0 + $1.minutes }
 
                 var cap = Double(school ? prefs.maxStudyMinutesSchoolDay : prefs.maxStudyMinutesFreeDay) * loadFactor
+                    * input.policy.capacityMultiplier
                 if i == 0 { cap *= todayFactor }
-                let floor = school ? prefs.minFreeMinutesSchoolDay : prefs.minFreeMinutesFreeDay
+                let floor = Int(Double(school ? prefs.minFreeMinutesSchoolDay : prefs.minFreeMinutesFreeDay)
+                    * input.policy.freeTimeMultiplier)
 
                 days.append(Day(index: i, start: day, isSchoolDay: school, wake: wakeT, workEnd: workEnd,
                                 bedtime: bedtime, nextWake: nextWake, free: free, fixed: fixed,
@@ -352,7 +357,7 @@ public enum Planner {
                 } else {
                     hint = "Retrieval practice: questions or flashcards from memory first, notes only to check."
                 }
-                for chunk in split(sessionsMinutes[k], focus: 50) {
+                for chunk in split(sessionsMinutes[k], focus: min(50, input.policy.maxBlockMinutes)) {
                     out.append(Demand(item: item, minutes: chunk, earliest: max(input.now, windowStart),
                                       latest: max(windowEnd, input.now.addingTimeInterval(60)), preferredDay: target,
                                       isReview: true, title: item.title, hint: hint))
@@ -364,7 +369,7 @@ public enum Planner {
         /// Production work: focus-length chunks paced evenly to a buffered target.
         func pacedChunks(_ item: WorkItem, minutes: Int) -> [Demand] {
             let focus = Int(input.learned.focusMinutes.rounded())
-            let chunks = split(minutes, focus: max(20, min(60, focus)))
+            let chunks = split(minutes, focus: max(20, min(60, input.policy.maxBlockMinutes, focus)))
             let bufferDays = minutes > 240 ? 2 : (minutes > 90 ? 1 : 0)
             var target = cal.date(byAdding: .day, value: -bufferDays, to: item.due) ?? item.due
             // Not enough room for the buffer: use the real deadline.
@@ -392,9 +397,11 @@ public enum Planner {
         }
 
         /// Even split into blocks close to `focus` minutes (65 → 33 + 32, not 50 + 15).
+        /// No block is longer than the policy's `maxBlockMinutes`.
         func split(_ minutes: Int, focus: Int) -> [Int] {
             guard minutes > 0 else { return [] }
-            let n = max(1, Int((Double(minutes) / Double(focus + 15)).rounded(.up)))
+            let longest = max(Planner.minChunk, min(focus + 15, input.policy.maxBlockMinutes))
+            let n = max(1, Int((Double(minutes) / Double(longest)).rounded(.up)))
             let base = minutes / n
             // Round each block up to 5 min so the plan reads 19:00–19:55, not 19:00–19:52.
             return (0..<n).map { i in

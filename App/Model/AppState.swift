@@ -45,6 +45,8 @@ struct AppState: Codable {
     var oneOffs: [FixedEvent] = []         // one-off busy time from the brain dump
     var exceptions: [DayException] = []    // one-day changes ("no school today")
     var learned = LearnedModel()
+    /// Tier 2: how the app behaves. Changed only by approved proposals.
+    var policy = BehaviourPolicy()
     var taper = ScreenTaper()
     var flashcards: [Flashcard] = []
     var reads: [ReadPiece] = []
@@ -66,7 +68,7 @@ struct AppState: Codable {
     var dumpState: DumpState {
         get {
             DumpState(items: items, commitments: commitments, exceptions: exceptions, oneOffs: oneOffs, markers: markers,
-                      routines: routines, moods: moods, screen: screen, prefs: prefs)
+                      routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy)
         }
         set {
             items = newValue.items
@@ -78,6 +80,7 @@ struct AppState: Codable {
             moods = newValue.moods
             screen = newValue.screen
             prefs = newValue.prefs
+            policy = newValue.policy
         }
     }
 
@@ -101,6 +104,7 @@ struct AppState: Codable {
         oneOffs = v(.oneOffs, d.oneOffs)
         exceptions = v(.exceptions, d.exceptions)
         learned = v(.learned, d.learned)
+        policy = v(.policy, d.policy)
         taper = v(.taper, d.taper)
         flashcards = v(.flashcards, d.flashcards)
         reads = v(.reads, d.reads)

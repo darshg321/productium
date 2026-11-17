@@ -115,7 +115,7 @@ final class AppModel {
         let input = PlannerInput(now: now, calendar: cal, items: state.items, commitments: state.commitments,
                                  events: state.events + state.oneOffs, preferences: state.prefs, learned: state.learned,
                                  health: state.health, moods: state.moods, locked: locked, routines: state.routines,
-                                 exceptions: state.exceptions, horizonDays: 14)
+                                 exceptions: state.exceptions, horizonDays: 14, policy: state.policy)
         state.plan = Planner.merge(previous: state.plan, new: Planner.plan(input), now: now, calendar: cal)
         save()
         applyPlanEffects()
@@ -152,7 +152,8 @@ final class AppModel {
         let snoozed = Set(state.snoozed.filter { $0.value > now }.map(\.key))
         return NudgeInput(now: now, calendar: cal, plan: state.plan, items: state.items, settings: state.prefs.nudges,
                           startedBlockId: state.focus?.blockId, answeredBlockIds: answered, snoozedBlockIds: snoozed,
-                          markerPrompts: markerPrompts(), timeLabel: { $0.formatted(date: .omitted, time: .shortened) })
+                          markerPrompts: markerPrompts(), timeLabel: { $0.formatted(date: .omitted, time: .shortened) },
+                          policy: state.policy)
     }
 
     var currentBlock: PlannedBlock? { state.plan.current(at: Date()) }

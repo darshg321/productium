@@ -181,10 +181,14 @@ public struct NudgeInput {
     public var limit: Int
     /// How times read in the text ("4:30 PM"). The app passes the phone's own format.
     public var timeLabel: ((Date) -> String)?
+    /// Tier 2 behaviour knobs (approved changes only).
+    public var policy: BehaviourPolicy
 
     public init(now: Date, calendar: Calendar, plan: Plan, items: [WorkItem], settings: NudgeSettings,
                 startedBlockId: UUID? = nil, answeredBlockIds: Set<UUID> = [], snoozedBlockIds: Set<UUID> = [],
-                markerPrompts: [(Date, String)] = [], limit: Int = 52, timeLabel: ((Date) -> String)? = nil) {
+                markerPrompts: [(Date, String)] = [], limit: Int = 52, timeLabel: ((Date) -> String)? = nil,
+                policy: BehaviourPolicy = BehaviourPolicy()) {
+        self.policy = policy
         self.now = now
         self.calendar = calendar
         self.plan = plan
@@ -230,11 +234,12 @@ public enum NudgePlanner {
                 add(PlannedNudge(id: "plan.start.\(b.id)", kind: .start, at: b.start, title: b.title,
                           body: b.hint ?? "Starting now. Tap Start Focus, or snooze it 10 minutes.",
                           blockId: b.id, itemId: b.itemId, deeplink: "productium://now", urgent: true))
-                for (k, m) in level.followUps.enumerated() where Double(m) * 60 < b.end.timeIntervalSince(b.start) - 5 * 60 {
+                let followUps = level.followUps.map { max(2, $0 + input.policy.followUpShiftMinutes) }
+                for (k, m) in followUps.enumerated() where Double(m) * 60 < b.end.timeIntervalSince(b.start) - 5 * 60 {
                     let left = b.minutes - m
                     let body = k == 0
                         ? "Not started yet. Even 10 minutes of it counts. \(left) minutes left in this block."
-                        : k == level.followUps.count - 1
+                        : k == followUps.count - 1
                             ? "Last nudge for this one. Start now, or tap Can't Today and it moves to a better slot."
                             : "Still time: \(left) minutes left. Open it and do the first small step."
                     add(PlannedNudge(id: "plan.follow.\(b.id).\(k)", kind: .followUp, at: b.start.addingTimeInterval(Double(m) * 60),

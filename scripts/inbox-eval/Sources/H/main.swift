@@ -3,7 +3,7 @@ import FoundationNetworking
 import ProductiumCore
 
 // Multi-turn Inbox run against a real claude-server, the way AppModel.dump does it: the same prompt,
-// context, schema, history (with what was applied) and applier, on a sample student. Each argument
+// context, tool, conversation (history byte-for-byte, a context delta per turn) and applier, on a sample student. Each argument
 // is one message. Uses real subscription tokens (Sonnet), so check Settings → AI Usage first.
 //
 //   CS_URL=http://localhost:8799 CS_KEY=cs_... swift run H \
@@ -26,7 +26,7 @@ var s = DumpState(items: [
     WorkItem(title: "Gatsby essay", kind: .essay, subject: "English", due: now.addingTimeInterval(8 * 86400)),
 ], commitments: [school, soccer], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults, moods: [], screen: [],
    prefs: Preferences())
-var chat: [AIMessage] = []
+var convo = Conversation(startedAt: now)
 
 func send(_ req: AIRequest) async throws -> AIResponse {
     var r = URLRequest(url: base.appendingPathComponent("v1/messages"))
@@ -46,21 +46,19 @@ for (n, text) in turns.enumerated() {
     let plan = Planner.plan(PlannerInput(now: now, calendar: cal, items: s.items, commitments: s.commitments, events: s.oneOffs,
                                          preferences: s.prefs, routines: s.routines, exceptions: s.exceptions))
     let ctx = Prompts.dumpContext(DumpContextInput(now: now, calendar: cal, state: s, plan: plan, warnings: plan.warnings))
-    let msg = "Context (the app right now):\n\(ctx)\n\nStudent:\n\(text)"
-    let req = AIRequest(system: Prompts.dump(), messages: Array(chat.suffix(6)) + [AIMessage(role: "user", content: msg)],
-                        schema: Schemas.dump, maxTokens: 1800)
+    let content = ConversationPolicy.userContent(for: convo, text: text, images: [], fullContext: ctx)
+    let req = convo.request(system: Prompts.dump(), tool: ConversationPolicy.tool(schema: Schemas.dump),
+                            userContent: content, maxTokens: 3000)
     let res = try await send(req)
     outTotal += res.tokens.output
     guard let r = DumpResult.read(res) else { print("UNREADABLE:", res.text); exit(1) }
     let rep = DumpApplier.apply(r, to: &s, now: now, calendar: cal)
-    var memory = r.reply
-    if !rep.changes.isEmpty { memory += "\n[Applied: \(rep.changes.joined(separator: "; "))]" }
-    if !rep.problems.isEmpty { memory += "\n[Not applied: \(rep.problems.joined(separator: "; "))]" }
-    chat += [AIMessage(role: "user", content: text), AIMessage(role: "assistant", content: memory)]
+    convo.add(ConversationTurn(at: now, text: text, userContent: content, assistantContent: res.rawContent, reply: r.reply,
+                               applied: AppliedReport(changes: rep.changes, problems: rep.problems), tokens: res.tokens, context: ctx))
     print("\n===== TURN \(n + 1): \(text)")
     print("tokens out \(res.tokens.output), in \(res.tokens.input)+\(res.tokens.cacheRead)c, truncated \(res.isTruncated)")
-    print("actions:", r.actions.map { a in [a.type, a.id, a.target, a.title, a.start, a.end, a.color, a.category, a.key, a.value,
-                                          a.parts.map { "\($0.count) parts" }].compactMap { $0 }.joined(separator: " ") })
+    print("ops:", r.ops.map { o in [o.op, o.entity, o.id, o.knob, o.value].compactMap { $0 }.joined(separator: " ")
+        + (o.fields.map { " " + ($0.keys.sorted().joined(separator: ",")) } ?? "") })
     print("reply:", r.reply)
     print("changes:", rep.changes)
     print("problems:", rep.problems)

@@ -1,27 +1,19 @@
 import Foundation
 
 extension Schemas {
-    /// Flat on purpose: one action shape with optional fields is far fewer schema tokens than
-    /// one schema per action type. Formats are explained once, in the prompt.
-    public static let dump: JSONValue = {
-        let bool: JSONValue = .object(["type": .string("boolean")])
-        let part = obj(["title": str, "start": str, "end": str, "weekdays": arr(int), "color": str],
-                       required: ["title", "start", "end"])
-        let action = obj([
-            "type": strEnum(DumpActionType.allCases.map(\.rawValue)),
-            "id": str, "target": str, "title": str, "kind": str, "subject": str, "due": str,
-            "estimateMinutes": int, "importance": int, "difficulty": int, "progressMinutes": int, "doneMinutes": int,
-            "topics": arr(str), "notes": str, "parent": str, "color": str,
-            "weekdays": arr(int), "start": str, "end": str, "bufferMinutes": int, "validFrom": str, "validUntil": str,
-            "parts": arr(part), "date": str, "cancelled": bool, "wake": str,
-            "activity": str, "category": str, "phase": strEnum(["start", "end"]),
-            "at": str, "routine": str, "minutes": int, "enabled": bool,
-            "mood": int, "energy": int, "note": str, "screenMinutes": int, "distractingMinutes": int,
-            "apps": arr(obj(["name": str, "minutes": int, "distracting": bool], required: ["name", "minutes"])),
-            "key": str, "value": str,
-        ], required: ["type"])
-        return obj(["actions": arr(action), "reply": str], required: ["actions", "reply"])
-    }()
+    /// Three operations and the macros. Entity fields are free-form (`fields` is any object): the
+    /// registry in the prompt says what each entity takes, which is far fewer schema tokens than a
+    /// schema per entity.
+    public static let dumpOp: JSONValue = obj([
+        "op": strEnum(DumpOpKind.allCases.map(\.rawValue)),
+        "entity": strEnum(Registry.entities.map(\.name)),
+        "id": str,
+        "fields": .object(["type": .string("object")]),
+        "knob": str,
+        "value": str,
+    ], required: ["op"])
+
+    public static let dump: JSONValue = obj(["ops": arr(dumpOp), "reply": str], required: ["ops", "reply"])
 }
 
 /// Everything the Inbox can see. The app fills it from its state; the context is rebuilt for
@@ -56,8 +48,8 @@ extension Prompts {
         persona + """
 
         You run the single input box of Productium, an iPhone planner. The student writes anything, messy, maybe \
-        with screenshots. You see the app's whole state in the context and change it with actions; the app applies \
-        them in order, then reruns its planner. Return actions, then a reply.
+        with screenshots. You see the app's whole state in the context and change it with operations; the app applies \
+        them in order, then reruns its planner. Return operations, then a reply.
 
         How the app works:
         - Tasks (t…): homework, tests, projects with a due date and an estimate. Steps of a project have a parent.
@@ -67,50 +59,30 @@ extension Prompts {
         - Day changes (d…): one date differs from the usual week (no school, late start, sleep in).
         - The planner places study blocks, breaks, free time, dinner, wind-down and sleep itself, around the \
         fixed things. You can't place or move a study block directly: change the task (due, estimate), the \
-        activities, a day change or a setting, and say so if they asked for a specific time.
+        activities, a day change or a knob, and say so if they asked for a specific time.
         - Colours: every task, activity and event can have its own; categories have defaults (study blue, free \
         orange, sleep indigo, fixed time gray).
 
         Rules:
         - Name existing things by id from the context (id: "a1b2c3"). Never add something that is already there: \
-        update it. Read the context before every change; your earlier messages may already have done it.
-        - Splitting an activity (school into periods): split_activity with id and parts; never add periods \
-        next to the original. Parts keep the original's days unless given weekdays; days no part covers keep the \
-        original. To change a period later, update_activity its id. If the periods already exist, update them.
+        upsert it by id. Read the context before every change; your earlier messages may already have done it.
+        - Splitting an activity (school into periods): the split macro with the activity's id and parts. If the \
+        periods already exist, upsert them by id instead.
         - "About the student" is what they've told the app before. When you need to know something about \
         them, look there first; ask only if it isn't there.
-        - Several things at once: one action each, in order. Fix rather than duplicate. If unsure, do the likely \
-        thing and say so.
+        - Several things at once: one operation each, in order. Fix rather than duplicate. If unsure, do the \
+        likely thing and say so.
+        - Values the app learns (routines, sleep need, wake times, study limits) change only when the student \
+        states them. How the planner behaves isn't yours to change: say what you'd suggest instead.
 
         Formats: times 24h HH:mm, dates YYYY-MM-DD, date-times local YYYY-MM-DDTHH:mm. weekdays 1=Sun..7=Sat.
-        Actions (id = the thing's id; target = its name only if it has no id):
-        - add_task: title, kind (test|quiz|assignment|project|essay|application|reading|practice|chore|other), subject, \
-        due (no time: tests 08:00, submissions 23:59), estimateMinutes (realistic), importance 1-5, difficulty 1-3, \
-        topics, notes, color, parent (a task id, for a step). One per deadline on an assignment sheet.
-        - update_task: id + any of title, kind, subject, due, estimateMinutes, importance, difficulty, \
-        progressMinutes (adds), doneMinutes (sets), topics, notes, color. complete_task, reopen_task, delete_task: id.
-        - add_activity: title, kind (school|extracurricular|job|family|other), weekdays, start, end, bufferMinutes \
-        (travel before/after, default 10; 0 between periods), color, validFrom/validUntil (dates, for a term).
-        - update_activity: id + any of those. delete_activity: id.
-        - split_activity: id, parts [{title, start, end, weekdays?, color?}].
-        - add_event: title, date, start, end, color. update_event, delete_event: id.
-        - change_day: date; id of the activity (or target "school" for all of school); cancelled=true or new \
-        start/end; or wake alone ("sleeping in till 10 sat"). With a day change's id: edits it. "Didn't go to \
-        school" is change_day, not log. delete_day_change: id (or date + target).
-        - log: something that happened: activity (short key: to_school, from_school, school, study, sleep, in_bed…), \
-        phase start/end, at. "Woke at 9" = sleep end 09:00.
-        - routine: routine id (get_ready|to_school|from_school), minutes, enabled.
-        - mood: 1-5, energy 1-5, note in their words. Only if they say how they feel.
-        - screen_time: per day shown: date, screenMinutes, distractingMinutes (social, video, games, feeds), apps. \
-        Unreadable week view: one action for today with the daily average.
-        - settings: key and value (text), one action per setting. Keys: \
-        \(DumpSettings.keys.map { "\($0.0) (\($0.1))" }.joined(separator: ", ")).
-        - set_color: color (\(Palette.names.joined(separator: "|")), #RRGGBB, or default) and either id \
-        (task/activity/event) or category (\(Palette.categories.joined(separator: "|")), subject:<name>, \
-        task:<kind>). Colour all of a subject with subject:<name>, so new tasks match.
+        Operations (ops), applied in order: upsert (entity, id?, fields), delete (entity, id), set (knob, value), \
+        split (entity activity, id, fields.parts).
+        \(Registry.promptText())
 
         reply: 1-3 short plain sentences: what changed, or the answer to their question. Don't claim a change \
-        you didn't make an action for.
+        you didn't make an operation for. Each later message starts with what the app applied for your last \
+        answer, then what changed in the context since.
         """
     }
 

@@ -6,27 +6,29 @@ import XCTest
 final class RepairTests: XCTestCase {
     func response(_ text: String, stop: String? = nil) -> AIResponse { AIResponse(model: "sonnet", text: text, usage: nil, stopReason: stop) }
 
+    func fields(_ op: DumpOp?) -> DumpFields { op.map(DumpFields.read) ?? DumpFields() }
+
     func dump(_ text: String, file: StaticString = #filePath, line: UInt = #line) throws -> DumpResult {
         try XCTUnwrap(DumpResult.read(response(text)), "not understood: \(text)", file: file, line: line)
     }
 
     /// A real Sonnet reply to an assignment sheet, as claude-server returned it.
-    static let real = #"{"actions": [{"type": "add_task", "title": "Macbeth Act 1 reading quiz", "kind": "quiz", "subject": "English", "due": "2026-11-19T08:00", "estimateMinutes": 45, "importance": 3, "difficulty": 2, "topics": ["Macbeth Act 1"]}, {"type": "add_task", "title": "Soliloquy annotation (submit on Teams)", "kind": "assignment", "subject": "English", "due": "2026-11-23T23:59", "estimateMinutes": 60, "importance": 3, "difficulty": 2}, {"type": "change_day", "date": "2026-11-21", "wake": "10:00"}, {"type": "mood", "mood": 2, "energy": 2, "note": "tired, \"kinda\" stressed"}], "reply": "Added 2 tasks. I read \"5-630\" as 17:00-18:30, so tell me if that's off."}"#
+    static let real = #"{"ops": [{"op": "upsert", "entity": "task", "fields": {"title": "Macbeth Act 1 reading quiz", "kind": "quiz", "subject": "English", "due": "2026-11-19T08:00", "estimateMinutes": 45, "importance": 3, "difficulty": 2, "topics": ["Macbeth Act 1"]}}, {"op": "upsert", "entity": "task", "fields": {"title": "Soliloquy annotation (submit on Teams)", "kind": "assignment", "subject": "English", "due": "2026-11-23T23:59", "estimateMinutes": 60, "importance": 3, "difficulty": 2}}, {"op": "upsert", "entity": "day_change", "fields": {"date": "2026-11-21", "wake": "10:00"}}, {"op": "upsert", "entity": "mood", "fields": {"mood": 2, "energy": 2, "note": "tired, \"kinda\" stressed"}}], "reply": "Added 2 tasks. I read \"5-630\" as 17:00-18:30, so tell me if that's off."}"#
 
     // MARK: The envelope
 
     func testMessageShapes() throws {
         func message(_ json: String) throws -> AIResponse { try JSONDecoder().decode(AIResponse.self, from: Data(json.utf8)) }
-        let text = try message(#"{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5-5","stop_reason":"end_turn","content":[{"type":"text","text":"{\"actions\":[],\"reply\":\"ok\"}"}],"usage":{"input_tokens":900,"output_tokens":80}}"#)
+        let text = try message(#"{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5-5","stop_reason":"end_turn","content":[{"type":"text","text":"{\"ops\":[],\"reply\":\"ok\"}"}],"usage":{"input_tokens":900,"output_tokens":80}}"#)
         XCTAssertEqual(DumpResult.read(text)?.reply, "ok")
         XCTAssertEqual(text.tokens.counted, 80)
         // The answer as a tool call's arguments, after a thinking block.
-        let tool = try message(#"{"content":[{"type":"thinking","thinking":"hmm","signature":"x"},{"type":"tool_use","id":"toolu_1","name":"structured_output","input":{"actions":[{"type":"mood","mood":4}],"reply":"Nice."}}],"stop_reason":"tool_use"}"#)
-        XCTAssertEqual(DumpResult.read(tool)?.actions.first?.mood, 4)
+        let tool = try message(#"{"content":[{"type":"thinking","thinking":"hmm","signature":"x"},{"type":"tool_use","id":"toolu_1","name":"structured_output","input":{"ops":[{"op":"upsert","entity":"mood","fields":{"mood":4}}],"reply":"Nice."}}],"stop_reason":"tool_use"}"#)
+        XCTAssertEqual(fields(DumpResult.read(tool)?.ops.first).mood, 4)
         XCTAssertEqual(tool.text, "")
         // Content as a bare string, as blocks of bare strings, absent, null, or with odd usage.
-        XCTAssertEqual(DumpResult.read(try message(#"{"content":"{\"actions\":[],\"reply\":\"s\"}"}"#))?.reply, "s")
-        XCTAssertEqual(DumpResult.read(try message(#"{"content":["{\"actions\":[],", "\"reply\":\"parts\"}"]}"#))?.reply, "parts")
+        XCTAssertEqual(DumpResult.read(try message(#"{"content":"{\"ops\":[],\"reply\":\"s\"}"}"#))?.reply, "s")
+        XCTAssertEqual(DumpResult.read(try message(#"{"content":["{\"ops\":[],", "\"reply\":\"parts\"}"]}"#))?.reply, "parts")
         XCTAssertNil(DumpResult.read(try message(#"{"type":"message"}"#)))
         XCTAssertNil(DumpResult.read(try message(#"{"content":null,"usage":"none","model":5}"#)))
         XCTAssertEqual(try message(#"{"content":[{"type":"text","text":"hi"},{"type":"text"},7,null]}"#).text, "hi")
@@ -37,9 +39,9 @@ final class RepairTests: XCTestCase {
 
     func testCleanReply() throws {
         let r = try dump(Self.real)
-        XCTAssertEqual(r.actions.count, 4)
-        XCTAssertEqual(r.actions[0].topics, ["Macbeth Act 1"])
-        XCTAssertEqual(r.actions[3].note, "tired, \"kinda\" stressed")
+        XCTAssertEqual(r.ops.count, 4)
+        XCTAssertEqual(fields(r.ops[0]).topics, ["Macbeth Act 1"])
+        XCTAssertEqual(fields(r.ops[3]).note, "tired, \"kinda\" stressed")
     }
 
     func testWrappedFencedProseAndDoubleEncoded() throws {
@@ -58,27 +60,27 @@ final class RepairTests: XCTestCase {
         let r = try dump("""
         {
           // what changed
-          'actions': [
-            {type: 'change_day', date: '2026-11-17', target: "school", cancelled: True, note: None,},
+          'ops': [
+            {op: 'upsert', entity: 'day_change', fields: {date: '2026-11-17', activity: "school", cancelled: True, note: None,},},
           ],
           "reply": 'Got it.',
         }
         """)
-        XCTAssertEqual(r.actions.first?.cancelled, true)
-        XCTAssertNil(r.actions.first?.note)
+        XCTAssertEqual(fields(r.ops.first).cancelled, true)
+        XCTAssertNil(fields(r.ops.first).note)
         XCTAssertEqual(r.reply, "Got it.")
         // Curly quotes, a missing comma, and a real line break inside a string.
-        let s = try dump("{“actions”: [] “reply”: “Line one\nline two”}")
+        let s = try dump("{“ops”: [] “reply”: “Line one\nline two”}")
         XCTAssertEqual(s.reply, "Line one\nline two")
         // Escapes survive the forgiving reader too.
-        let e = try dump(#"{"actions":[],"reply":"café 😀 a\\b \"q\" \/ tab\there",}"#)
+        let e = try dump(#"{"ops":[],"reply":"café 😀 a\\b \"q\" \/ tab\there",}"#)
         XCTAssertEqual(e.reply, "café 😀 a\\b \"q\" / tab\there")
     }
 
     func testUnescapedQuotesInsideStrings() throws {
-        let r = try dump(#"{"actions": [{"type": "add_task", "title": "Read "The Road", ch 3", "due": "2026-11-22T17:00"}], "reply": "I read "5-630" as 17:00, so tell me if that's off."}"#)
-        XCTAssertEqual(r.actions.first?.title, #"Read "The Road", ch 3"#)
-        XCTAssertEqual(r.actions.first?.due, "2026-11-22T17:00")
+        let r = try dump(#"{"ops": [{"op": "upsert", "entity": "task", "fields": {"title": "Read "The Road", ch 3", "due": "2026-11-22T17:00"}}], "reply": "I read "5-630" as 17:00, so tell me if that's off."}"#)
+        XCTAssertEqual(fields(r.ops.first).title, #"Read "The Road", ch 3"#)
+        XCTAssertEqual(fields(r.ops.first).due, "2026-11-22T17:00")
         XCTAssertEqual(r.reply, #"I read "5-630" as 17:00, so tell me if that's off."#)
     }
 
@@ -87,15 +89,15 @@ final class RepairTests: XCTestCase {
     func testTruncatedAtEveryLength() throws {
         let full = try dump(Self.real)
         let chars = Array(Self.real)
-        let firstActionEnd = try XCTUnwrap(Self.real.range(of: #""topics": ["Macbeth Act 1"]}"#)).upperBound
+        let firstActionEnd = try XCTUnwrap(Self.real.range(of: #""topics": ["Macbeth Act 1"]}}"#)).upperBound
         let enough = Self.real.distance(from: Self.real.startIndex, to: firstActionEnd)
         for n in 1..<chars.count {
             let cut = String(chars[0..<n])
             let r = DumpResult.read(response(cut, stop: "max_tokens"))
             if n >= enough {
                 let got = try XCTUnwrap(r, "nothing read from the first \(n) characters")
-                XCTAssertGreaterThanOrEqual(got.actions.count, 1)
-                XCTAssertEqual(got.actions, Array(full.actions.prefix(got.actions.count)), "a half-written action got through at \(n)")
+                XCTAssertGreaterThanOrEqual(got.ops.count, 1)
+                XCTAssertEqual(got.ops, Array(full.ops.prefix(got.ops.count)), "a half-written operation got through at \(n)")
             }
         }
     }
@@ -103,14 +105,14 @@ final class RepairTests: XCTestCase {
     // MARK: Fitting the schema
 
     func testStringifiedActionsArray() throws {
-        let r = try dump(#"{"actions":"[{\"type\":\"add_task\",\"title\":\"Essay\",\"estimateMinutes\":\"90\"}]","reply":"ok"}"#)
-        XCTAssertEqual(r.actions.count, 1)
-        XCTAssertEqual(r.actions.first?.estimateMinutes, 90)
+        let r = try dump(#"{"ops":"[{\"op\":\"upsert\",\"entity\":\"task\",\"fields\":{\"title\":\"Essay\",\"estimateMinutes\":\"90\"}}]","reply":"ok"}"#)
+        XCTAssertEqual(r.ops.count, 1)
+        XCTAssertEqual(fields(r.ops.first).estimateMinutes, 90)
     }
 
     func testWrongTypesAreConvertedOrDropped() throws {
-        let r = try dump(#"{"actions":[{"type":"change_day","date":20261117,"target":"school","cancelled":"true","importance":3.0,"weekdays":"2, 4","estimateMinutes":"about an hour","difficulty":"2 hours","minutes":"25 min","mood":[4],"topics":"stoich; gas laws","apps":{"name":"TikTok","minutes":"120"},"title":["Chem","test"],"energy":{"level":3},"start":null}],"reply":7}"#)
-        let a = try XCTUnwrap(r.actions.first)
+        let r = try dump(#"{"ops":[{"op":"upsert","entity":"day_change","date":20261117,"target":"school","cancelled":"true","importance":3.0,"weekdays":"2, 4","estimateMinutes":"about an hour","difficulty":"2 hours","minutes":"25 min","mood":[4],"topics":"stoich; gas laws","apps":{"name":"TikTok","minutes":"120"},"title":["Chem","test"],"energy":{"level":3},"start":null}],"reply":7}"#)
+        let a = fields(try XCTUnwrap(r.ops.first))
         XCTAssertEqual(a.date, "20261117")
         XCTAssertEqual(a.cancelled, true)
         XCTAssertEqual(a.importance, 3)
@@ -128,8 +130,8 @@ final class RepairTests: XCTestCase {
     }
 
     func testKeySpellings() throws {
-        let r = try dump(#"{"Actions":[{"Type":"add_task","Title":"Lab","estimate_minutes":40,"Estimate Minutes":99,"DUE":"2026-11-20"}],"REPLY":"ok"}"#)
-        let a = try XCTUnwrap(r.actions.first)
+        let r = try dump(#"{"Ops":[{"Op":"upsert","Entity":"task","Fields":{"Title":"Lab","estimate_minutes":40,"Estimate Minutes":99,"DUE":"2026-11-20"}}],"REPLY":"ok"}"#)
+        let a = fields(try XCTUnwrap(r.ops.first))
         XCTAssertEqual(a.title, "Lab")
         XCTAssertEqual(a.due, "2026-11-20")
         XCTAssertNotNil(a.estimateMinutes)
@@ -137,41 +139,35 @@ final class RepairTests: XCTestCase {
     }
 
     func testOtherShapesOfAnAnswer() throws {
-        XCTAssertEqual(try dump(#"{"reply":"Sleep wins."}"#).actions.count, 0)
-        XCTAssertEqual(try dump(#"{"actions":{"type":"mood","mood":2}}"#).actions.first?.mood, 2, "one object for a list")
-        XCTAssertEqual(try dump(#"[{"type":"mood","mood":2},{"type":"routine","routine":"get_ready","minutes":25}]"#).actions.count, 2, "the list alone")
-        XCTAssertEqual(try dump(#"[{"actions":[{"type":"mood","mood":2}],"reply":"ok"}]"#).reply, "ok", "the answer in a list")
-        let bare = try dump(#"{"type":"complete_task","target":"Math worksheet","reply":"Done!"}"#)
-        XCTAssertEqual(bare.actions.first?.target, "Math worksheet", "one action on its own")
+        XCTAssertEqual(try dump(#"{"reply":"Sleep wins."}"#).ops.count, 0)
+        XCTAssertEqual(fields(try dump(#"{"ops":{"op":"upsert","entity":"mood","fields":{"mood":2}}}"#).ops.first).mood, 2, "one object for a list")
+        XCTAssertEqual(try dump(#"[{"op":"upsert","entity":"mood","mood":2},{"op":"upsert","entity":"routine","id":"get_ready","minutes":25}]"#).ops.count, 2, "the list alone")
+        XCTAssertEqual(try dump(#"[{"ops":[{"op":"upsert","entity":"mood","fields":{"mood":2}}],"reply":"ok"}]"#).reply, "ok", "the answer in a list")
+        let bare = try dump(#"{"op":"upsert","entity":"task","target":"Math worksheet","done":true,"reply":"Done!"}"#)
+        XCTAssertEqual(fields(bare.ops.first).target, "Math worksheet", "one operation on its own, fields beside it")
+        XCTAssertEqual(fields(bare.ops.first).done, true)
         XCTAssertEqual(bare.reply, "Done!")
-        XCTAssertEqual(try dump(#"{"action":[{"type":"mood","mood":5}],"message":"Glad to hear it."}"#).reply, "Glad to hear it.")
+        XCTAssertEqual(try dump(#"{"actions":[{"op":"upsert","entity":"mood","fields":{"mood":5}}],"message":"Glad to hear it."}"#).reply, "Glad to hear it.")
         XCTAssertEqual(try dump("Most teens need 8 to 10 hours. Want me to set a target?").reply,
                        "Most teens need 8 to 10 hours. Want me to set a target?", "prose is a reply")
     }
 
     func testNothingUsableIsNotUnderstood() {
-        for text in ["", "   \n", "{}", "[]", #"{"foo":1}"#, "{", #"{"actions":[],"reply":""}"#, "null", "42", "ok", "…",
-                     #"{"actions": [{"ty"#, "Here: {\"actions\": [{\"type\": \"add"] {
+        for text in ["", "   \n", "{}", "[]", #"{"foo":1}"#, "{", #"{"ops":[],"reply":""}"#, "null", "42", "ok", "…",
+                     #"{"ops": [{"o"#, "Here: {\"ops\": [{\"op\": \"ups"] {
             XCTAssertNil(DumpResult.read(response(text)), "should ask again for: \(text)")
         }
     }
 
-    func testActionNames() throws {
-        let r = try dump(#"{"actions":[{"title":"no type"},{"type":"Add Task","title":"Read ch 3","due":"2026-11-20"},null,{"type":"fly_to_moon"}],"reply":"ok"}"#)
-        XCTAssertEqual(r.actions.map(\.type), ["", "add_task", "fly_to_moon"], "names are fixed where they can be")
+    func testOperationNames() throws {
+        let r = try dump(#"{"ops":[{"fields":{"title":"no op"}},{"op":"Create","entity":"Task","fields":{"title":"Read ch 3","due":"2026-11-20"}},null,{"op":"fly_to_moon"}],"reply":"ok"}"#)
+        XCTAssertEqual(r.ops.map(\.op), ["Create", "fly_to_moon"], "an operation with no name is dropped")
+        XCTAssertEqual(r.ops.first?.entity, "task", "names are fixed where they can be")
         var s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
                           moods: [], screen: [], prefs: Preferences())
-        XCTAssertEqual(DumpApplier.apply(r, to: &s, now: Fx.mon(12), calendar: Fx.cal).changes, ["Added Read ch 3"], "the rest are skipped")
-        let names: [String: DumpActionType] = [
-            "add_task": .addTask, "addTask": .addTask, "create-task": .addTask, "new_assignment": .addTask,
-            "mark_done": .completeTask, "finish_task": .completeTask, "remove_task": .deleteTask, "reschedule_task": .updateTask,
-            "create_activity": .addActivity, "remove_activity": .deleteActivity, "edit_commitment": .updateActivity,
-            "screentime": .screenTime, "ScreenTime": .screenTime, "update_settings": .settings, "preferences": .settings,
-            "log_mood": .mood, "set_routine": .routine, "day_change": .changeDay, "checkin": .log, "add_appointment": .addEvent,
-        ]
-        for (raw, want) in names { XCTAssertEqual(DumpActionType(loose: raw), want, raw) }
-        XCTAssertNil(DumpActionType(loose: "fly_to_moon"))
-        XCTAssertNil(DumpActionType(loose: ""))
+        let rep = DumpApplier.apply(r, to: &s, now: Fx.mon(12), calendar: Fx.cal)
+        XCTAssertEqual(rep.changes, ["Added Read ch 3"], "the rest are skipped")
+        XCTAssertEqual(rep.problems.count, 1)
     }
 
     func testOtherSchemas() throws {
@@ -213,9 +209,9 @@ final class RepairTests: XCTestCase {
     func decodes(_ v: JSONValue, _ schema: JSONValue) -> Bool {
         let fitted = StructuredRepair.coerce(v, to: schema)
         if schema == Schemas.dump {
-            // DumpResult alone turns down an answer with no actions and no reply.
-            guard case .object(let o) = fitted, case .array(let actions)? = o["actions"], case .string? = o["reply"] else { return false }
-            return actions.allSatisfy { (try? $0.decode(DumpAction.self)) != nil }
+            // DumpResult alone turns down an answer with no operations and no reply.
+            guard case .object(let o) = fitted, case .array(let ops)? = o["ops"], case .string? = o["reply"] else { return false }
+            return ops.allSatisfy { (try? $0.decode(DumpOp.self)) != nil }
         }
         if schema == Schemas.decomposition { return (try? fitted.decode(Decomposition.self)) != nil }
         if schema == Schemas.weeklyReview { return (try? fitted.decode(WeeklyReview.self)) != nil }
@@ -226,7 +222,7 @@ final class RepairTests: XCTestCase {
     /// Any JSON value at all, fitted to any of the app's schemas, decodes into its Swift type.
     func testAnyValueFitsEverySchema() {
         var rng = Rng(state: 42)
-        let keys = ["actions", "reply", "type", "title", "due", "estimateMinutes", "topics", "weekdays", "apps", "name", "minutes",
+        let keys = ["ops", "op", "entity", "fields", "knob", "value", "actions", "reply", "type", "title", "due", "estimateMinutes", "topics", "weekdays", "apps", "name", "minutes",
                     "cancelled", "steps", "rationale", "kind", "cards", "front", "back", "pieces", "body", "question", "headline",
                     "wins", "suggestions", "changes", "focusBlockMinutes", "mood", "Estimate_Minutes", "x", ""]
         func value(_ depth: Int) -> JSONValue {
