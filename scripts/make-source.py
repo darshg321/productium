@@ -39,6 +39,12 @@ source = {
             "size": size,
             "minOSVersion": "17.0",
         }],
+        # legacy fields: older SideStore/AltStore builds read these instead of versions[]
+        "version": version,
+        "versionDate": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "versionDescription": f"See {base}/releases/tag/v{version}",
+        "downloadURL": f"{base}/releases/latest/download/Productium-free.ipa",
+        "size": size,
         "appPermissions": {"entitlements": [], "privacy": {}},
     }],
     "news": [],

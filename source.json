@@ -19,13 +19,18 @@
         {
           "version": "1.0.0",
           "buildVersion": "1",
-          "date": "2026-11-17T23:31:05Z",
+          "date": "2026-11-17T23:39:53Z",
           "localizedDescription": "See https://github.com/darshg321/productium/releases/tag/v1.0.0",
           "downloadURL": "https://github.com/darshg321/productium/releases/latest/download/Productium-free.ipa",
           "size": 3029780,
           "minOSVersion": "17.0"
         }
       ],
+      "version": "1.0.0",
+      "versionDate": "2026-11-17T23:39:53Z",
+      "versionDescription": "See https://github.com/darshg321/productium/releases/tag/v1.0.0",
+      "downloadURL": "https://github.com/darshg321/productium/releases/latest/download/Productium-free.ipa",
+      "size": 3029780,
       "appPermissions": {
         "entitlements": [],
         "privacy": {}
