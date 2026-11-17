@@ -446,12 +446,15 @@ final class AppModel {
 
     private func syncScreen() {
         let screen = state.screen, now = Date(), cal = self.cal
+        ScrollingApps.register(Friction.log.sessions.map { ($0.app, nil) }, into: &state.scrollingApps)
         let measured = Friction.update { log in
             log.resolve(now: now)
             log.calibrate(with: screen, calendar: cal)
             return log.screenDays(before: now, calendar: cal)
         }
-        if !measured.isEmpty { state.screen = state.screen.merging(measured: measured, calendar: cal) }
+        if !measured.isEmpty {
+            state.screen = state.screen.merging(measured: measured, calendar: cal).map { $0.recomputed(state.scrollingApps) }
+        }
         guard state.integrations.screenTime else { return }
         var byDay = Dictionary(state.screen.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
         for d in ScreenTimeService.shared.usageDays(back: 21) where d.distractingMinutes > 0 || byDay[d.day] == nil {
@@ -578,7 +581,15 @@ final class AppModel {
                          health: state.health.first { cal.isDate($0.day, inSameDayAs: day) },
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
                          screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,
-                         exceptions: state.exceptions, motion: state.motion)
+                         exceptions: state.exceptions, motion: state.motion, scrollSessions: Friction.log.sessions,
+                         scrollingApps: state.scrollingApps)
+    }
+
+    func setScrolling(_ app: String, _ on: Bool) {
+        state.scrollingApps[app] = on
+        state.screen = state.screen.map { $0.recomputed(state.scrollingApps) }
+        state.screenAverages = state.screenAverages.map { $0.recomputed(state.scrollingApps) }
+        replan()
     }
 
     func dayTotals(last n: Int, includeToday: Bool = false) -> [DayTotals] {

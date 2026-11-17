@@ -67,6 +67,8 @@ public struct AppState: Codable, Sendable {
     public var health: [HealthDay] = []
     public var motion: [MotionSpan] = []
     public var screen: [ScreenDay] = []
+    public var screenAverages: [ScreenDay] = []
+    public var scrollingApps: [String: Bool] = [:]
     public var events: [FixedEvent] = []
     public var oneOffs: [FixedEvent] = []
     public var exceptions: [DayException] = []
@@ -96,7 +98,7 @@ public struct AppState: Codable, Sendable {
         get {
             DumpState(items: items, commitments: commitments, exceptions: exceptions, oneOffs: oneOffs, markers: markers,
                       routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy,
-                      progress: progress, beliefs: beliefs)
+                      progress: progress, beliefs: beliefs, scrollingApps: scrollingApps, screenAverages: screenAverages)
         }
         set {
             items = newValue.items
@@ -111,6 +113,8 @@ public struct AppState: Codable, Sendable {
             policy = newValue.policy
             progress = newValue.progress
             beliefs = newValue.beliefs
+            scrollingApps = newValue.scrollingApps
+            screenAverages = newValue.screenAverages
         }
     }
 
@@ -133,6 +137,8 @@ public struct AppState: Codable, Sendable {
         health = v(.health, d.health)
         motion = v(.motion, d.motion)
         screen = v(.screen, d.screen)
+        screenAverages = v(.screenAverages, d.screenAverages)
+        scrollingApps = v(.scrollingApps, d.scrollingApps)
         events = v(.events, d.events)
         oneOffs = v(.oneOffs, d.oneOffs)
         exceptions = v(.exceptions, d.exceptions)

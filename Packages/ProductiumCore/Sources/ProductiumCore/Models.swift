@@ -345,9 +345,11 @@ public struct ScreenDay: Codable, Hashable, Sendable {
     public var totalMinutes: Int?
     public var apps: [AppUsage]?
     public var source: String?
+    public var partial: Bool?
 
     public init(day: Date, distractingMinutes: Int, unlockRequests: Int = 0, totalMinutes: Int? = nil,
-                apps: [AppUsage]? = nil, source: String? = nil) {
+                apps: [AppUsage]? = nil, source: String? = nil, partial: Bool? = nil) {
+        self.partial = partial
         self.day = day
         self.distractingMinutes = distractingMinutes
         self.unlockRequests = unlockRequests

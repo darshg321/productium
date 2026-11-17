@@ -3,12 +3,12 @@ import Foundation
 public struct DumpApp: Codable, Hashable, Sendable {
     public var name: String
     public var minutes: Int
-    public var distracting: Bool?
+    public var category: String?
 
-    public init(name: String, minutes: Int, distracting: Bool? = nil) {
+    public init(name: String, minutes: Int, category: String? = nil) {
         self.name = name
         self.minutes = minutes
-        self.distracting = distracting
+        self.category = category
     }
 }
 
@@ -198,11 +198,15 @@ public struct DumpState: Sendable {
     public var progress: [ProgressEntry]
     public var aboutMe: AboutMe
     public var beliefs: Beliefs
+    public var scrollingApps: [String: Bool] = [:]
+    public var screenAverages: [ScreenDay] = []
 
     public init(items: [WorkItem], commitments: [Commitment], exceptions: [DayException], oneOffs: [FixedEvent],
                 markers: [TimelineEvent], routines: [Routine], moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences,
                 policy: BehaviourPolicy = BehaviourPolicy(), progress: [ProgressEntry] = [], aboutMe: AboutMe = .empty,
-                beliefs: Beliefs = Beliefs()) {
+                beliefs: Beliefs = Beliefs(), scrollingApps: [String: Bool] = [:], screenAverages: [ScreenDay] = []) {
+        self.scrollingApps = scrollingApps
+        self.screenAverages = screenAverages
         self.beliefs = beliefs
         self.progress = progress
         self.aboutMe = aboutMe
@@ -256,7 +260,9 @@ struct DumpFields: Codable, Hashable, Sendable {
     var energy: Int?
     var note: String?
     var screenMinutes: Int?
-    var distractingMinutes: Int?
+    var period: String?
+    var dateLabelShown: String?
+    var partial: Bool?
     var apps: [DumpApp]?
 
     var id: String?
@@ -273,8 +279,8 @@ struct DumpFields: Codable, Hashable, Sendable {
             "weekdays": Schemas.arr(i), "start": s, "end": s, "bufferMinutes": i, "validFrom": s, "validUntil": s,
             "parts": Schemas.arr(part), "periods": Schemas.arr(part), "date": s, "cancelled": b, "wake": s, "activity": s, "category": s, "phase": s,
             "at": s, "minutes": i, "enabled": b, "mood": i, "energy": i, "note": s, "screenMinutes": i,
-            "distractingMinutes": i,
-            "apps": Schemas.arr(Schemas.obj(["name": s, "minutes": i, "distracting": b], required: ["name", "minutes"])),
+            "period": s, "dateLabelShown": s, "partial": b,
+            "apps": Schemas.arr(Schemas.obj(["name": s, "minutes": i, "category": s], required: ["name", "minutes"])),
         ], required: [])
     }()
 

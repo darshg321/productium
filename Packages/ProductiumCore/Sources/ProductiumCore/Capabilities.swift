@@ -152,10 +152,12 @@ public enum Registry {
             FieldSpec("mood", "1-5"), FieldSpec("energy", "1-5"), FieldSpec("note", "their words"),
         ], note: "only if they say how they feel."),
         EntitySpec(name: "screen_time", tier: .data, refPrefix: nil, canDelete: false, fields: [
-            FieldSpec("date", "YYYY-MM-DD"), FieldSpec("screenMinutes", "total"),
-            FieldSpec("distractingMinutes", "social, video, games, feeds"),
-            FieldSpec("apps", "[{name, minutes, distracting}]"),
-        ], note: "one per day shown in a Screen Time screenshot. Unreadable week view: today, with the daily average."),
+            FieldSpec("period", "day|week|average: what the screenshot shows (a week view is a daily average)"),
+            FieldSpec("date", "YYYY-MM-DD of the day shown"), FieldSpec("dateLabelShown", "the label on screen: Today, Yesterday, Mon 16 Nov"),
+            FieldSpec("screenMinutes", "the total shown"),
+            FieldSpec("apps", "[{name, minutes, category as shown}] every app listed"),
+            FieldSpec("partial", "true if the app list is cut off"),
+        ], note: "one per screenshot. Copy the numbers exactly; the app works out scrolling itself. Several screenshots of one day are merged."),
         EntitySpec(name: "routine", tier: .learned, refPrefix: nil, canDelete: false, fields: [
             FieldSpec("minutes", "how long it takes, as they said it"), FieldSpec("enabled", "true|false"),
         ], note: "id is the routine's key (get_ready|to_school|from_school). Only when they state it."),

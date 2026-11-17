@@ -454,12 +454,43 @@ struct ScreenTimeSettings: View {
                 }
             }
             #endif
+            Section {
+                NavigationLink { ScrollingAppsView() } label: {
+                    LabeledContent("Scrolling Apps", value: "\(model.state.scrollingApps.values.filter { $0 }.count) on")
+                }
+            } footer: {
+                Text("This list, not a guess, decides what counts as scrolling in Your Week, Review and the plan.")
+            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Screen Time")
         .familyActivityPicker(isPresented: $showPicker, selection: $selection)
         .onChange(of: selection) { _, s in ScreenTimeService.shared.selection = s; model.replan() }
         .onChange(of: model.state.prefs) { _, _ in model.replan() }
+    }
+}
+
+struct ScrollingAppsView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let apps = model.state.scrollingApps.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        List {
+            if apps.isEmpty {
+                Section { Text("Apps show up here once they appear in a Screen Time screenshot you send the Inbox, or in a Shortcuts automation.") }
+            } else {
+                Section {
+                    ForEach(apps, id: \.self) { name in
+                        Toggle(name, isOn: Binding(get: { model.state.scrollingApps[name] ?? false },
+                                                   set: { model.setScrolling(name, $0) }))
+                    }
+                } footer: {
+                    Text("On means it counts as scrolling. Social, video and games start on; you decide about browsers.")
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Scrolling Apps")
     }
 }
 

@@ -512,15 +512,42 @@ public enum DumpApplier {
         }
 
         func screenTime(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
-            let d = day(a.date)
-            let apps = (a.apps ?? []).map { AppUsage(name: $0.name, minutes: max(0, $0.minutes), distracting: $0.distracting ?? false) }
-            let distracting = a.distractingMinutes ?? apps.filter(\.distracting).reduce(0) { $0 + $1.minutes }
-            let entry = ScreenDay(day: d, distractingMinutes: max(0, distracting), totalMinutes: a.screenMinutes,
-                                  apps: apps.isEmpty ? nil : apps, source: "screenshot")
+            let rawApps = (a.apps ?? []).filter { !$0.name.isEmpty }
+            ScrollingApps.register(rawApps.map { ($0.name, $0.category) }, into: &s.scrollingApps)
+            let apps = rawApps.map { AppUsage(name: $0.name, minutes: max(0, $0.minutes), distracting: false) }
+            let period = (a.period ?? "day").lowercased()
+            var entry = ScreenDay(day: .distantPast, distractingMinutes: 0, totalMinutes: a.screenMinutes.map { max(0, $0) },
+                                  apps: apps.isEmpty ? nil : apps, source: "screenshot", partial: a.partial == true ? true : nil)
+            entry = entry.recomputed(s.scrollingApps)
+            if apps.isEmpty { rep.problems.append("That screenshot shows no apps, so I can't tell how much of it was scrolling") }
+
+            if period.contains("week") || period.contains("average") || period.contains("avg") {
+                entry.day = cal.startOfDay(for: now)
+                entry.source = "screenshot-average"
+                s.screenAverages.removeAll { cal.isDate($0.day, inSameDayAs: entry.day) }
+                s.screenAverages.append(entry)
+                s.screenAverages = Array(s.screenAverages.sorted { $0.day < $1.day }.suffix(12))
+                rep.changes.append(ScreenReceipt.line(entry, label: "Daily average"))
+                if let m = entry.mismatch { rep.problems.append("Daily average doesn't add up: \(m). Which is right?") }
+                return
+            }
+
+            let label = a.dateLabelShown?.lowercased() ?? ""
+            let today = cal.startOfDay(for: now)
+            var d = day(a.date)
+            if label.contains("today") { d = today }
+            else if label.contains("yesterday") { d = cal.date(byAdding: .day, value: -1, to: today) ?? today }
+            entry.day = d
+            if let existing = s.screen.first(where: { cal.isDate($0.day, inSameDayAs: d) }), existing.source == "screenshot" {
+                entry = existing.merged(with: entry, s.scrollingApps)
+            }
             s.screen.removeAll { cal.isDate($0.day, inSameDayAs: d) }
             s.screen.append(entry)
             s.screen.sort { $0.day < $1.day }
-            rep.changes.append("Screen time saved")
+            rep.changes.append(ScreenReceipt.line(entry, label: DateFormatter.local("EEE d MMM", cal).string(from: d)))
+            if let m = entry.mismatch {
+                rep.problems.append("Screen Time for \(DateFormatter.local("EEE d MMM", cal).string(from: d)) doesn't add up: \(m). Tell me which number is right.")
+            }
         }
 
         func routine(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {

@@ -234,11 +234,16 @@ public struct DayInputs: Sendable {
     public var prefs: Preferences
     public var exceptions: [DayException]
     public var motion: [MotionSpan]
+    public var scrollSessions: [ScrollSession]
+    public var scrollingApps: [String: Bool]
 
     public init(day: Date, events: [TimelineEvent], commitments: [Commitment], fixedEvents: [FixedEvent] = [],
                 routines: [Routine], outcomes: [BlockOutcome], itemsById: [UUID: WorkItem] = [:],
                 health: HealthDay?, nextHealth: HealthDay? = nil, screen: ScreenDay?, prefs: Preferences,
-                exceptions: [DayException] = [], motion: [MotionSpan] = []) {
+                exceptions: [DayException] = [], motion: [MotionSpan] = [], scrollSessions: [ScrollSession] = [],
+                scrollingApps: [String: Bool] = [:]) {
+        self.scrollSessions = scrollSessions
+        self.scrollingApps = scrollingApps
         self.motion = motion
         self.exceptions = exceptions
         self.day = day
@@ -319,6 +324,17 @@ public enum TimelineBuilder {
             paint(bed, dayEnd, .sleep, "Sleep", observed: true)
         }
 
+        // Timed scrolling is exact where nothing else is known; school and sleep keep their time.
+        for sess in d.scrollSessions where sess.app.isEmpty == false && cal.isDate(sess.openedAt, inSameDayAs: dayStart) {
+            guard ScrollingApps.isScrolling(sess.app, d.scrollingApps) else { continue }
+            let end = sess.endedAt ?? min(now ?? dayEnd, sess.openedAt.addingTimeInterval(Double(ScrollLog.estimateCap) * 60))
+            let i = idx(sess.openedAt), j = idx(end)
+            guard j > i else { continue }
+            for m in i..<j where cat[m] == nil || cat[m] == .routine || cat[m] == .commute {
+                cat[m] = .screen; label[m] = sess.app; inferred[m] = sess.isEstimated || sess.isOpen
+            }
+        }
+
         for o in d.outcomes where o.status != .skipped && cal.isDate(o.plannedStart, inSameDayAs: dayStart) {
             let title = o.itemId.flatMap { d.itemsById[$0]?.title } ?? "Study"
             paint(o.plannedStart, o.plannedStart.addingTimeInterval(Double(o.actualMinutes) * 60), .study, title, observed: true)
@@ -386,10 +402,13 @@ public enum TimelineBuilder {
     public static func totals(_ segments: [Segment], screen: ScreenDay?) -> [TimeCategory: Int] {
         var t: [TimeCategory: Int] = [:]
         for s in segments { t[s.category, default: 0] += s.minutes }
+        // Timed sessions are already in the strip; screenshot minutes beyond them have no timestamps,
+        // so they're carved out of free time as an estimate.
         if let scr = screen?.distractingMinutes, scr > 0 {
-            let carved = min(scr, t[.free] ?? 0)
+            let extra = max(0, scr - (t[.screen] ?? 0))
+            let carved = min(extra, t[.free] ?? 0)
             t[.free, default: 0] -= carved
-            t[.screen, default: 0] += scr
+            t[.screen, default: 0] += extra
         }
         return t
     }
