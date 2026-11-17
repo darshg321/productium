@@ -221,6 +221,11 @@ public enum NudgePlanner {
                       blockId: b.id, itemId: b.itemId))
         }
 
+        for b in plan.blocks where b.kind == .event && b.itemId != nil && b.end > now && b.start < end {
+            add(PlannedNudge(id: "plan.errand.\(b.id)", kind: .start, at: b.start, title: "At school: \(b.title)",
+                      body: b.hint ?? "Do this between classes.", blockId: b.id, itemId: b.itemId))
+        }
+
         if let wind = plan.blocks.first(where: { $0.kind == .windDown && $0.start > now.addingTimeInterval(30 * 60) && $0.start < end }) {
             add(PlannedNudge(id: "plan.checkin", kind: .checkIn, at: wind.start.addingTimeInterval(-30 * 60),
                       title: "20-second check-in",

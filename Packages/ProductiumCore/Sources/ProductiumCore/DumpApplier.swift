@@ -194,6 +194,7 @@ public enum DumpApplier {
                 return
             }
             item.notes = a.notes
+            item.atSchool = a.atSchool
             if let m = a.doneMinutes { item.completedMinutes = max(0, m) }
             if case .some(let c)? = colour(a.color) { item.color = c }
             if let parent { item.due = min(item.due, parent.due); item.subject = item.subject ?? parent.subject }
@@ -219,6 +220,7 @@ public enum DumpApplier {
             if let m = a.importance { s.items[i].importance = max(1, min(5, m)); changed = true }
             if let m = a.difficulty { s.items[i].difficulty = max(1, min(3, m)); changed = true }
             if let m = a.doneMinutes { s.items[i].completedMinutes = max(0, m); changed = true }
+            if let v = a.atSchool { s.items[i].atSchool = v; changed = true }
             if let t = a.topics { s.items[i].topics = t; changed = true }
             if let n = a.notes { s.items[i].notes = n.isEmpty ? nil : n; changed = true }
             if case .some(let c)? = colour(a.color) { s.items[i].color = c; changed = true }

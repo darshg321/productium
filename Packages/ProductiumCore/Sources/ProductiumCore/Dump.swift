@@ -230,6 +230,7 @@ struct DumpFields: Codable, Hashable, Sendable {
     var difficulty: Int?
     var doneMinutes: Int?
     var done: Bool?
+    var atSchool: Bool?
     var topics: [String]?
     var notes: String?
     var parent: String?
@@ -268,7 +269,7 @@ struct DumpFields: Codable, Hashable, Sendable {
                                required: ["title", "start", "end"])
         return Schemas.obj([
             "target": s, "title": s, "kind": s, "subject": s, "due": s, "estimateMinutes": i, "importance": i,
-            "difficulty": i, "doneMinutes": i, "done": b, "topics": Schemas.arr(s), "notes": s, "parent": s, "color": s,
+            "difficulty": i, "doneMinutes": i, "done": b, "atSchool": b, "topics": Schemas.arr(s), "notes": s, "parent": s, "color": s,
             "weekdays": Schemas.arr(i), "start": s, "end": s, "bufferMinutes": i, "validFrom": s, "validUntil": s,
             "parts": Schemas.arr(part), "periods": Schemas.arr(part), "date": s, "cancelled": b, "wake": s, "activity": s, "category": s, "phase": s,
             "at": s, "minutes": i, "enabled": b, "mood": i, "energy": i, "note": s, "screenMinutes": i,

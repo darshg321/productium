@@ -154,3 +154,47 @@ final class PlannerTests: XCTestCase {
         measure { _ = Planner.plan(Fx.input(now: Fx.mon(7, 0), items: items, horizon: 21)) }
     }
 }
+
+final class AtSchoolTests: XCTestCase {
+    let cal = Fx.cal
+
+    func psych() -> WorkItem {
+        WorkItem(title: "Ask psych teacher for recommendation", kind: .chore, due: Fx.mon(15), estimateMinutes: 10)
+    }
+
+    func testTeacherChoreIsAnErrandAndGetsASchoolSlot() {
+        let item = psych()
+        XCTAssertTrue(item.isAtSchoolErrand)
+        XCTAssertFalse(WorkItem(title: "Clean room", kind: .chore, due: Fx.mon(15)).isAtSchoolErrand)
+        let plan = Planner.plan(Fx.input(now: Fx.mon(13), items: [item]))
+        XCTAssertTrue(plan.warnings.isEmpty, "\(plan.warnings.map(\.message))")
+        XCTAssertTrue(plan.shortfalls.isEmpty)
+        let slot = plan.blocks.first { $0.itemId == item.id }
+        XCTAssertNotNil(slot)
+        XCTAssertFalse(slot?.isStudy ?? true)
+        XCTAssertGreaterThanOrEqual(slot!.start, Fx.mon(13))
+        XCTAssertLessThanOrEqual(slot!.end, Fx.mon(15))
+        XCTAssertEqual(slot!.minutes, 10)
+    }
+
+    func testErrandGetsAReminderAtItsSlot() {
+        let item = psych()
+        let plan = Planner.plan(Fx.input(now: Fx.mon(13), items: [item]))
+        let nudges = NudgePlanner.plan(NudgeInput(now: Fx.mon(12, 30), calendar: cal, plan: plan, items: [item], settings: NudgeSettings()))
+        XCTAssertTrue(nudges.contains { $0.id.hasPrefix("plan.errand.") && $0.title.hasPrefix("At school") })
+    }
+
+    func testFlagWorksForAnyTaskAndNoSlotBeforeDueWarns() {
+        var item = WorkItem(title: "Hand in form", kind: .assignment, due: Fx.mon(12), estimateMinutes: 10, atSchool: true)
+        XCTAssertTrue(item.isAtSchoolErrand)
+        let plan = Planner.plan(Fx.input(now: Fx.mon(18), items: [item]))
+        XCTAssertTrue(plan.blocks.allSatisfy { $0.itemId != item.id })
+        item.due = Fx.mon(12, plusDays: 1)
+        XCTAssertFalse(Planner.plan(Fx.input(now: Fx.mon(18), items: [item])).blocks.filter { $0.itemId == item.id }.isEmpty)
+    }
+
+    func testWarningMinutesAreInTheStudentsTerms() {
+        let t = WorkItem(title: "Quick thing", kind: .chore, due: Fx.mon(15), estimateMinutes: 10)
+        XCTAssertEqual(Planner.shownMinutes(15, for: t, learned: LearnedModel()), 10)
+    }
+}

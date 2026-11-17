@@ -271,7 +271,7 @@ public enum Planner {
         func buildDemands() -> [Demand] {
             let parents = Set(input.items.filter { !$0.isDone }.compactMap(\.parentId))
             var out: [Demand] = []
-            for item in input.items where !item.isDone && !parents.contains(item.id) {
+            for item in input.items where !item.isDone && !parents.contains(item.id) && !item.isAtSchoolErrand {
                 let left = remainingMinutes(item)
                 guard left > 0 else { continue }
                 if item.due <= input.now { continue }
@@ -379,7 +379,44 @@ public enum Planner {
             return arr
         }
 
+        /// Errands at school (ask a teacher) go in a school-hours slot with a reminder, not a study block.
+        mutating func placeErrands() {
+            let parents = Set(input.items.filter { !$0.isDone }.compactMap(\.parentId))
+            var usedUntil: [Int: Date] = [:]
+            let errands = input.items.filter { !$0.isDone && $0.isAtSchoolErrand && !parents.contains($0.id) && $0.due > input.now }
+            for item in errands.sorted(by: { $0.due < $1.due }) {
+                let length = Double(max(5, item.estimateMinutes - item.completedMinutes)) * 60
+                var placed = false
+                for day in days where day.isSchoolDay && day.start < item.due && !placed {
+                    for o in Commitment.occurrences(input.commitments, on: day.start, exceptions: input.exceptions, calendar: cal)
+                    where o.commitment.kind == .school && !placed {
+                        let wd = cal.component(.weekday, from: day.start)
+                        let breakWords = ["lunch", "break", "recess", "advisory", "homeroom"]
+                        let breakStart = (o.commitment.periods ?? []).first { p in
+                            p.applies(on: wd) && breakWords.contains(where: { p.title.lowercased().contains($0) })
+                        }.map { at(day.start, $0.start) }
+                        var start = max(breakStart ?? o.start.addingTimeInterval(10 * 60), o.start)
+                        if day.index == 0 { start = max(start, nowRounded) }
+                        start = max(start, usedUntil[day.index] ?? start)
+                        let end = start.addingTimeInterval(length)
+                        guard end <= min(o.end, item.due) else { continue }
+                        usedUntil[day.index] = end
+                        blocks.append(PlannedBlock(id: Planner.stableUUID("x|\(item.id)|\(Int(start.timeIntervalSince1970))"),
+                                                   kind: .event, start: start, end: end, title: item.title, itemId: item.id,
+                                                   hint: "At school: do this between classes, not in a study block."))
+                        placed = true
+                    }
+                }
+                if !placed {
+                    warnings.append(PlanWarning(level: .caution,
+                        message: "No school slot before “\(item.title)” is due. Catch them at the start of the next school day or send a message.",
+                        itemId: item.id))
+                }
+            }
+        }
+
         mutating func allocate(_ demandsIn: [Demand]) {
+            placeErrands()
             let demands = demandsIn.sorted {
                 if $0.latest != $1.latest { return $0.latest < $1.latest }
                 return $0.value > $1.value
@@ -615,6 +652,7 @@ public enum Planner {
                 let advice = item.kind.isMemoryBased
                     ? "Focus on practice questions for the highest-weight topics."
                     : "Aim for a complete, solid version rather than a perfect one, or ask for an extension now, not the night before."
+                let mins = Planner.shownMinutes(mins, for: item, learned: input.learned)
                 warnings.append(PlanWarning(level: item.importance >= 4 ? .critical : .caution,
                                             message: "≈\(mins) min of “\(item.title)” doesn't fit before it's due. \(advice)", itemId: id))
             }
@@ -634,6 +672,13 @@ public enum Planner {
         func stableId(_ prefix: String, _ key: String, _ day: Date) -> UUID {
             Planner.stableUUID("\(prefix)|\(key)|\(Int(day.timeIntervalSince1970))")
         }
+    }
+
+    /// The planner works in corrected, chunk-rounded minutes; the warning speaks in yours.
+    static func shownMinutes(_ planned: Int, for item: WorkItem, learned: LearnedModel) -> Int {
+        let factor = max(0.5, learned.estimateFactor(for: item.kind))
+        let left = max(5, item.estimateMinutes - item.completedMinutes)
+        return max(5, min(left, Int((Double(planned) / factor).rounded())))
     }
 
     static func subtract(_ base: [Interval], _ busy: [Interval]) -> [Interval] {

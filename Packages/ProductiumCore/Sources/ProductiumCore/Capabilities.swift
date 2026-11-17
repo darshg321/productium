@@ -124,7 +124,8 @@ public enum Registry {
             FieldSpec("subject", "text"), FieldSpec("due", "YYYY-MM-DDTHH:mm (no time: tests 08:00, submissions 23:59)"),
             FieldSpec("estimateMinutes", "realistic minutes"), FieldSpec("importance", "1-5"), FieldSpec("difficulty", "1-3"),
             FieldSpec("doneMinutes", "minutes done so far in total (absolute, never added)"),
-            FieldSpec("done", "true|false"), FieldSpec("topics", "list"), FieldSpec("notes", "text"),
+            FieldSpec("done", "true|false"), FieldSpec("atSchool", "true: done in school hours (ask a teacher), gets a school slot"),
+            FieldSpec("topics", "list"), FieldSpec("notes", "text"),
             FieldSpec("color", colorFormat), FieldSpec("parent", "a task id, for a step"),
         ], note: "homework, tests, projects. One per deadline on an assignment sheet."),
         EntitySpec(name: "activity", tier: .data, refPrefix: "a", canDelete: true, fields: [
