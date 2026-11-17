@@ -470,8 +470,9 @@ public enum DumpApplier {
         func log(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
             guard var act = a.activity?.lowercased(), !act.isEmpty else { rep.problems.append("A marker needs an activity"); return }
             var phase = MarkerPhase(rawValue: a.phase ?? "end") ?? .end
-            var category = TimeCategory(rawValue: a.category ?? "") ?? .free
-            if let (k, p) = SleepEstimator.normalised(activity: act, phase: phase) { act = k; phase = p; category = .sleep }
+            if let (k, p) = SleepEstimator.normalised(activity: act, phase: phase) { act = k; phase = p }
+            let category = MarkerCategory.infer(activity: act, commitments: s.commitments,
+                                                model: TimeCategory(rawValue: a.category ?? ""))
             s.markers.append(TimelineEvent(at: when(a.at), phrase: a.note ?? act, activity: act,
                                            category: category, phase: phase, source: .voice))
             rep.changes.append("Logged \(act.replacingOccurrences(of: "_", with: " "))")

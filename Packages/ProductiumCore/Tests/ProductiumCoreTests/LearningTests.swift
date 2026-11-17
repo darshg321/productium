@@ -136,3 +136,27 @@ final class StabilityTests: XCTestCase {
         XCTAssertEqual(p.windDownMinutes, Preferences().windDownMinutes)
     }
 }
+
+final class MarkerCategoryTests: XCTestCase {
+    func testCategoryComesFromTheNameNotTheModelsDefault() {
+        let c = [Fx.school, Fx.soccer]
+        XCTAssertEqual(MarkerCategory.infer(activity: "to_school", commitments: c, model: .free), .commute)
+        XCTAssertEqual(MarkerCategory.infer(activity: "from_school", commitments: c), .commute)
+        XCTAssertEqual(MarkerCategory.infer(activity: "in_bed", commitments: c, model: .free), .sleep)
+        XCTAssertEqual(MarkerCategory.infer(activity: "wake", commitments: c, model: .free), .sleep)
+        XCTAssertEqual(MarkerCategory.infer(activity: "get_ready", commitments: c, model: .free), .routine)
+        XCTAssertEqual(MarkerCategory.infer(activity: "soccer", commitments: c, model: .free), .activities)
+        XCTAssertEqual(MarkerCategory.infer(activity: "homework", commitments: c, model: .free), .study)
+        XCTAssertEqual(MarkerCategory.infer(activity: "gaming", commitments: c, model: .screen), .screen)
+        XCTAssertEqual(MarkerCategory.infer(activity: "gaming", commitments: c), .free)
+    }
+
+    func testBoxMarkerIsFiledUnderTravelNotFree() {
+        var s = DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [],
+                          routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpApplier.apply(DumpResult(ops: [.upsert("marker", ["activity": .string("to_school"), "phase": .string("start"), "at": .string("2026-11-16T13:02")]),
+                                           .upsert("marker", ["activity": .string("in_bed"), "at": .string("2026-11-17T00:59")])], reply: ""),
+                          to: &s, now: Fx.mon(14), calendar: Fx.cal)
+        XCTAssertEqual(s.markers.map(\.category), [.commute, .sleep])
+    }
+}

@@ -116,6 +116,26 @@ public enum MarkerParser {
     }
 }
 
+public enum MarkerCategory {
+    static let studyWords = ["study", "homework", "revis", "essay", "assignment", "application", "draft", "reading"]
+
+    /// The category a marker belongs in, decided from its name; the model's own value is only the last resort.
+    public static func infer(activity: String, commitments: [Commitment], model: TimeCategory? = nil) -> TimeCategory {
+        let key = activity.lowercased().replacingOccurrences(of: " ", with: "_")
+        switch key {
+        case "to_school", "from_school", "travel", "commute": return .commute
+        case "get_ready": return .routine
+        default: break
+        }
+        if SleepEstimator.normalised(activity: activity, phase: .start) != nil
+            || SleepEstimator.normalised(activity: activity, phase: .end) != nil { return .sleep }
+        let norm = MarkerParser.normalise(activity.replacingOccurrences(of: "_", with: " "))
+        if let c = commitments.first(where: { MarkerParser.normalise($0.title) == norm }) { return TimeCategory.from(c.kind) }
+        if studyWords.contains(where: { norm.contains($0) }) { return .study }
+        return model ?? .free
+    }
+}
+
 public enum RoutineLearner {
     public static func learn(day events: [TimelineEvent], healthWake: Date?, routines: [Routine]) -> [Routine] {
         var out = routines

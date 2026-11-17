@@ -139,7 +139,8 @@ public enum EvidenceRouter {
                 return (MarkerParser.normalise(c.title), TimeCategory.from(c.kind), c.title)
             }
             let key = words.split(whereSeparator: { !$0.isLetter }).prefix(3).joined(separator: "_")
-            return (key.isEmpty ? "activity" : key, kind == .activity ? .activities : .free, words)
+            let act = key.isEmpty ? "activity" : key
+            return (act, MarkerCategory.infer(activity: act, commitments: commitments, model: kind == .activity ? .activities : .free), words)
         case .study: return ("study", .study, "study")
         }
     }
