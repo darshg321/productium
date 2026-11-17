@@ -303,8 +303,10 @@ struct OnboardingView: View {
     private func askAll() async {
         workingPermissions = true
         model.state.integrations.notifications = await NotificationService.requestAuthorization()
-        try? await HealthService.shared.requestAuthorization()
-        model.state.integrations.health = HealthService.shared.available
+        var healthAnswered = false
+        do { try await HealthService.shared.requestAuthorization(); healthAnswered = true } catch {}
+        model.state.integrations.health = HealthService.shared.available && healthAnswered
+        model.state.integrations.healthNeedsRequest = await HealthService.shared.requestNeeded()
         model.state.integrations.calendarImport = await CalendarService.shared.requestAccess()
         model.state.integrations.alarms = await AlarmService.requestAuthorization()
         LocationService.shared.requestAlways()

@@ -18,6 +18,13 @@ final class HealthService {
         try await store.requestAuthorization(toShare: [HKCategoryType(.mindfulSession)], read: readTypes)
     }
 
+    /// True when iOS still has to ask. It says nothing about whether read access was granted.
+    func requestNeeded() async -> Bool {
+        guard available else { return false }
+        let status = try? await store.statusForAuthorizationRequest(toShare: [HKCategoryType(.mindfulSession)], read: readTypes)
+        return status == .shouldRequest
+    }
+
     func days(back n: Int, calendar cal: Calendar = .current) async -> [HealthDay] {
         guard available else { return [] }
         let today = cal.startOfDay(for: Date())

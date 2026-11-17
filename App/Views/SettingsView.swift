@@ -612,8 +612,9 @@ struct ConnectionSettings: View {
         List {
             Section {
                 toggle("Health", "heart.fill", .pink, model.state.integrations.health) { on in
-                    if on { try? await HealthService.shared.requestAuthorization() }
-                    m.state.integrations.health = on
+                    var answered = !on
+                    if on { do { try await HealthService.shared.requestAuthorization(); answered = true } catch {} }
+                    m.state.integrations.health = on && answered
                     await model.refresh(full: false)
                 }
                 toggle("Read Calendar", "calendar", .red, model.state.integrations.calendarImport) { on in
@@ -627,6 +628,9 @@ struct ConnectionSettings: View {
                 toggle("Motion", "figure.walk.motion", .green, model.state.integrations.motion) { on in
                     m.state.integrations.motion = on ? await MotionService.shared.requestAccess() : false
                     await model.refresh(full: false)
+                }
+                if model.state.integrations.health {
+                    LabeledContent("Health Status", value: model.healthStatus.title)
                 }
             } footer: {
                 Text("Health brings in sleep, steps and daylight. Motion notices walks and rides (not where), so your commute is learned and your day fills in by itself. The plan is written to a separate “Productium” calendar.")

@@ -74,6 +74,10 @@ struct ReviewView: View {
                 if let src = sleepSource {
                     Text(src).font(.subheadline).foregroundStyle(.secondary)
                 }
+                if model.healthStatus == .noSleepSource {
+                    Text("Nothing on your phone records sleep, so these are estimates. For measured sleep, turn on Sleep Schedule in the Health app or wear a Watch.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 if let b = before {
                     let d = s - b
                     Text(abs(d) < 10 ? "About the same as the week before." : "\(durationLabel(abs(d))) \(d > 0 ? "more" : "less") than the week before.")
@@ -93,7 +97,7 @@ struct ReviewView: View {
                 .chartYAxis { AxisMarks(position: .trailing) }
                 .frame(height: 110)
             } else {
-                Text("Turn on Health in Settings, or tell the Inbox when you woke up.")
+                Text(model.healthStatus.emptyMessage ?? "No sleep recorded yet. Tell the Inbox when you woke up.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
         }

@@ -418,6 +418,7 @@ final class AppModel {
 
     private func syncHealth() async {
         guard state.integrations.health else { return }
+        state.integrations.healthNeedsRequest = await HealthService.shared.requestNeeded()
         let days = await HealthService.shared.days(back: 21, calendar: cal)
         guard !days.isEmpty else { return }
         var byDay = Dictionary(state.health.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
@@ -484,6 +485,11 @@ final class AppModel {
     private func learnCapacities() {
         state.beliefs = CapacityLearner.learn(state.beliefs, days: dayRecords(back: CapacityLearner.window), outcomes: state.outcomes,
                                               markers: state.markers, now: Date(), calendar: cal)
+    }
+
+    var healthStatus: HealthStatus {
+        HealthStatus.resolve(wantsHealth: state.integrations.health, requestNeeded: state.integrations.healthNeedsRequest,
+                             days: state.health)
     }
 
     func estimateSleep() {

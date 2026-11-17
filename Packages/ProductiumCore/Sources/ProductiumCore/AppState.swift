@@ -26,6 +26,7 @@ public struct Integrations: Codable, Hashable, Sendable {
     public var liveActivities = true
     public var notifications = false
     public var motion = false
+    public var healthNeedsRequest = false
 
     public init() {}
 
@@ -35,6 +36,7 @@ public struct Integrations: Codable, Hashable, Sendable {
         health = v(.health, false); calendarImport = v(.calendarImport, false); calendarExport = v(.calendarExport, false)
         screenTime = v(.screenTime, false); location = v(.location, false); alarms = v(.alarms, false)
         liveActivities = v(.liveActivities, true); notifications = v(.notifications, false); motion = v(.motion, false)
+        healthNeedsRequest = v(.healthNeedsRequest, false)
     }
 }
 
