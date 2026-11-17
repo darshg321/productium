@@ -26,13 +26,14 @@ final class ExportTests: XCTestCase {
         s.exceptions = [DayException(day: Fx.mon(0, plusDays: 1), kind: .school, cancelled: true)]
         s.learned.adherenceSamples = 3
         s.policy.maxBlockMinutes = 45
+        _ = s.beliefs.state("study.schoolDayCapacity", 120, now: now)
         s.taper.baselineMinutes = 130
         s.flashcards = [Flashcard(itemId: task.id, subject: nil, front: "Q", back: "A")]
         s.reads = [ReadPiece(title: "T", body: "B", subject: nil, question: "Q", source: "Claude")]
         s.plan = Planner.plan(Fx.input(now: Fx.mon(7), items: [task]))
         s.places = [SavedPlace(id: "home", name: "Home", latitude: 43.6, longitude: -79.4)]
         s.integrations.health = true
-        s.review = WeeklyReview(headline: "Good week", wins: ["Slept"], suggestions: [], changes: nil)
+        s.review = WeeklyReview(headline: "Good week", wins: ["Slept"], suggestions: [])
         s.reviewAt = now
         var c = Conversation(startedAt: now)
         c.add(ConversationTurn(at: now, text: "hi", images: [AIImage(mediaType: "image/png", base64: "aGk=")],

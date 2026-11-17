@@ -238,10 +238,14 @@ public struct DumpState: Sendable {
     public var progress: [ProgressEntry]
     /// about-me.md.
     public var aboutMe: AboutMe
+    /// What the app believes (capacities, dinner, chronotype). Tier 1: stated or learned.
+    public var beliefs: Beliefs
 
     public init(items: [WorkItem], commitments: [Commitment], exceptions: [DayException], oneOffs: [FixedEvent],
                 markers: [TimelineEvent], routines: [Routine], moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences,
-                policy: BehaviourPolicy = BehaviourPolicy(), progress: [ProgressEntry] = [], aboutMe: AboutMe = .empty) {
+                policy: BehaviourPolicy = BehaviourPolicy(), progress: [ProgressEntry] = [], aboutMe: AboutMe = .empty,
+                beliefs: Beliefs = Beliefs()) {
+        self.beliefs = beliefs
         self.progress = progress
         self.aboutMe = aboutMe
         self.items = items

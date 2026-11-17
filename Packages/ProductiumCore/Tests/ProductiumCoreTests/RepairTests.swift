@@ -184,8 +184,6 @@ final class RepairTests: XCTestCase {
             .decoded(WeeklyReview.self, schema: Schemas.weeklyReview)
         XCTAssertEqual(review?.wins, ["Slept well"])
         XCTAssertEqual(review?.suggestions, [])
-        XCTAssertEqual(review?.changes?.focusBlockMinutes, 30)
-        XCTAssertNil(review?.changes?.windDownMinutes)
         XCTAssertNil(response("I can't make cards for that.").decoded(CardBatch.self, schema: Schemas.cards), "no JSON: ask again")
         XCTAssertNil(response(#"{"cards":[]}"#).decoded(CardBatch.self, schema: Schemas.cards) { !$0.usable.isEmpty }, "empty: ask again")
     }

@@ -54,13 +54,6 @@ struct ReviewView: View {
                 ForEach(r.wins + r.suggestions, id: \.self) { line in
                     Text(line).font(.subheadline).fixedSize(horizontal: false, vertical: true)
                 }
-                if r.changes != nil {
-                    Button { model.applyReviewChanges() } label: {
-                        Text("Apply Suggested Changes").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .padding(.top, 4)
-                }
             } else if model.busy.contains("review") {
                 HStack(spacing: 10) { ProgressView(); Text("Claude is reading your week…").foregroundStyle(.secondary) }
             } else {

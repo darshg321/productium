@@ -73,15 +73,15 @@ final class LearningTests: XCTestCase {
     func testScreenTaper() {
         var t = ScreenTaper()
         var days = (1...7).map { ScreenDay(day: Fx.mon(0, plusDays: -$0), distractingMinutes: 180) }
-        XCTAssertNotNil(t.update(days: days, now: Fx.mon(9), goalMinutes: 45, calendar: cal))
+        XCTAssertNotNil(t.update(days: days, now: Fx.mon(9), calendar: cal))
         XCTAssertEqual(t.targetMinutes, 180)
         // Next week, stayed under every day → step down 15%.
         days += (0..<7).map { ScreenDay(day: Fx.mon(0, plusDays: $0), distractingMinutes: 150) }
-        t.update(days: days, now: Fx.mon(9, plusDays: 7), goalMinutes: 45, calendar: cal)
+        t.update(days: days, now: Fx.mon(9, plusDays: 7), calendar: cal)
         XCTAssertEqual(t.targetMinutes, 153)
         // A hard week holds or loosens, never punishes.
         days += (7..<14).map { ScreenDay(day: Fx.mon(0, plusDays: $0), distractingMinutes: 300) }
-        t.update(days: days, now: Fx.mon(9, plusDays: 14), goalMinutes: 45, calendar: cal)
+        t.update(days: days, now: Fx.mon(9, plusDays: 14), calendar: cal)
         XCTAssertGreaterThanOrEqual(t.targetMinutes!, 153)
     }
 
@@ -94,13 +94,6 @@ final class LearningTests: XCTestCase {
         XCTAssertEqual(c.box, 1)
     }
 
-    func testAIGuardRailsNeverTouchSleep() {
-        let p = Preferences()
-        let changed = AIMapper.apply(PreferenceChanges(focusBlockMinutes: 90, maxStudyMinutesSchoolDay: 600), to: p)
-        XCTAssertEqual(changed.focusBlockMinutes, 50)        // +10 max
-        XCTAssertEqual(changed.maxStudyMinutesSchoolDay, 190)
-        XCTAssertEqual(changed.sleepNeedMinutes, p.sleepNeedMinutes)
-    }
 
     func testExportsAndBackupRoundTrip() throws {
         let csv = Exporter.csv(["a", "b"], [["x,y", "say \"hi\""]])
@@ -143,6 +136,6 @@ final class StabilityTests: XCTestCase {
     func testPreferencesDecodeWithMissingKeys() throws {
         let p = try JSONDecoder().decode(Preferences.self, from: Data(#"{"sleepNeedMinutes": 500}"#.utf8))
         XCTAssertEqual(p.sleepNeedMinutes, 500)
-        XCTAssertEqual(p.focusBlockMinutes, Preferences().focusBlockMinutes)
+        XCTAssertEqual(p.windDownMinutes, Preferences().windDownMinutes)
     }
 }

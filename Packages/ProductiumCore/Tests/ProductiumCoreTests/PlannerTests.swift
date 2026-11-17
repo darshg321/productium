@@ -51,7 +51,7 @@ final class PlannerTests: XCTestCase {
         let plan = Planner.plan(Fx.input(now: Fx.mon(7, 0), items: hw))
         let monday = plan.blocks(on: Fx.mon(12), calendar: cal)
         let free = monday.filter { $0.kind == .free || $0.kind == .gap }.reduce(0) { $0 + $1.minutes }
-        XCTAssertGreaterThanOrEqual(free, Preferences().minFreeMinutesSchoolDay)
+        XCTAssertGreaterThanOrEqual(free, Beliefs().minutes("study.schoolDayFreeTime"))
     }
 
     func testSleepNeverBorrowedForTests() {

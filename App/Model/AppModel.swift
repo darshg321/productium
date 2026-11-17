@@ -89,7 +89,8 @@ final class AppModel {
         syncCalendar()
         syncScreen()
         learnFromPastDays()
-        if let note = state.taper.update(days: state.screen, now: Date(), goalMinutes: state.prefs.screenTimeGoalMinutes, calendar: cal) {
+        learnCapacities()
+        if let note = state.taper.update(days: state.screen, now: Date(), calendar: cal) {
             toast = note
         }
         state.prune(now: Date())
@@ -120,7 +121,7 @@ final class AppModel {
         let input = PlannerInput(now: now, calendar: cal, items: state.items, commitments: state.commitments,
                                  events: state.events + state.oneOffs, preferences: state.prefs, learned: state.learned,
                                  health: state.health, moods: state.moods, locked: locked, routines: state.routines,
-                                 exceptions: state.exceptions, horizonDays: 14, policy: state.policy)
+                                 exceptions: state.exceptions, horizonDays: 14, policy: state.policy, beliefs: state.beliefs)
         state.plan = Planner.merge(previous: state.plan, new: Planner.plan(input), now: now, calendar: cal)
         save()
         applyPlanEffects()
@@ -413,6 +414,23 @@ final class AppModel {
         }
     }
 
+    /// Study capacity, free time, focus length and dinner, from the last three weeks.
+    private func learnCapacities() {
+        let today = cal.startOfDay(for: Date())
+        let days = (1...CapacityLearner.window).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
+        let records = CapacityLearner.records(
+            days: days, outcomes: state.outcomes, progress: state.progress,
+            isSchoolDay: { SchoolDay.isSchoolDay($0, prefs: self.state.prefs, commitments: self.state.commitments,
+                                                exceptions: self.state.exceptions, calendar: self.cal) },
+            eveningFree: { d in
+                let segs = self.segments(on: d)
+                guard let lastFixed = segs.filter({ [.school, .activities].contains($0.category) }).map(\.end).max() else { return nil }
+                return segs.filter { $0.category == .free && $0.start >= lastFixed }.reduce(0) { $0 + $1.minutes }
+            }, calendar: cal)
+        state.beliefs = CapacityLearner.learn(state.beliefs, days: records, outcomes: state.outcomes, markers: state.markers,
+                                              now: Date(), calendar: cal)
+    }
+
     /// Nights Health didn't measure, from check-ins, stillness and phone use (SleepEstimator).
     func estimateSleep() {
         let today = cal.startOfDay(for: Date())
@@ -669,13 +687,6 @@ final class AppModel {
         save()
     }
 
-    func applyReviewChanges() {
-        guard let c = state.review?.changes else { return }
-        state.prefs = AIMapper.apply(c, to: state.prefs)
-        state.review?.changes = nil
-        toast = "Settings adjusted."
-        replan()
-    }
 
     // MARK: - Brain dump (the main way anything gets in or gets fixed)
 

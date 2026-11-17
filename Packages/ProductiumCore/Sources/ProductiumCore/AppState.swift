@@ -81,6 +81,8 @@ public struct AppState: Codable, Sendable {
     public var oneOffs: [FixedEvent] = []         // one-off busy time from the brain dump
     public var exceptions: [DayException] = []    // one-day changes ("no school today")
     public var learned = LearnedModel()
+    /// What the app believes about the student (capacities, dinner, chronotype…).
+    public var beliefs = Beliefs()
     /// Tier 2: how the app behaves. Changed only by approved proposals.
     public var policy = BehaviourPolicy()
     public var taper = ScreenTaper()
@@ -109,7 +111,7 @@ public struct AppState: Codable, Sendable {
         get {
             DumpState(items: items, commitments: commitments, exceptions: exceptions, oneOffs: oneOffs, markers: markers,
                       routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy,
-                      progress: progress)
+                      progress: progress, beliefs: beliefs)
         }
         set {
             items = newValue.items
@@ -123,6 +125,7 @@ public struct AppState: Codable, Sendable {
             prefs = newValue.prefs
             policy = newValue.policy
             progress = newValue.progress
+            beliefs = newValue.beliefs
         }
     }
 
@@ -148,6 +151,7 @@ public struct AppState: Codable, Sendable {
         oneOffs = v(.oneOffs, d.oneOffs)
         exceptions = v(.exceptions, d.exceptions)
         learned = v(.learned, d.learned)
+        beliefs = v(.beliefs, d.beliefs)
         policy = v(.policy, d.policy)
         taper = v(.taper, d.taper)
         flashcards = v(.flashcards, d.flashcards)

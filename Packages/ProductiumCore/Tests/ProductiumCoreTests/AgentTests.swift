@@ -133,24 +133,25 @@ final class AgentTests: XCTestCase {
     func testEveryNamedKnob() {
         var s = state()
         let r = run(&s, [
-            .set("dinner", "19:15"),
-            .set("focus_block_minutes", "50"),
+            .set("dinnerTime", "19:15"),
+            .set("study.focusMinutes", "50"),
             .set("schoolDays", "2,3,4,5"),
             .set("nudgeLevel", "gentle"),
             .set("sleepNeedMinutes", "7h"),
             .set("freeDayWake", "9:30am"),
-            .set("chronotype", "sometimes"),
+            .set("sleep.chronotype", "sometimes"),
             .set("warpDrive", "on"),
         ])
-        XCTAssertEqual(s.prefs.dinner, TimeOfDay(19, 15))
-        XCTAssertEqual(s.prefs.focusBlockMinutes, 50)
+        XCTAssertEqual(s.beliefs.minutes("routines.dinnerTime"), 19 * 60 + 15)
+        XCTAssertEqual(s.beliefs["routines.dinnerTime"]?.confidence, .stated)
+        XCTAssertEqual(s.beliefs.minutes("study.focusMinutes"), 50)
         XCTAssertEqual(s.prefs.schoolDays, [2, 3, 4, 5])
         XCTAssertEqual(s.prefs.nudges.level, .gentle)
         XCTAssertEqual(s.prefs.sleepNeedMinutes, 450, "7h asked, the floor holds")
         XCTAssertEqual(s.prefs.freeDayWake, TimeOfDay(9, 30))
         XCTAssertEqual(r.problems.count, 2)
-        run(&s, [.set("dinner", "none")])
-        XCTAssertNil(s.prefs.dinner)
+        run(&s, [.set("routines.dinnerMinutes", "0")])
+        XCTAssertEqual(s.beliefs.minutes("routines.dinnerMinutes"), 0, "no dinner block")
     }
 
     /// Tier 2 is how the app behaves: the box (Sonnet) can't change it, only an approved reflection proposal.
@@ -228,7 +229,7 @@ final class AgentTests: XCTestCase {
                                                        calendarEvents: [FixedEvent(id: "EK:1", title: "Grandma", start: Fx.mon(18), end: Fx.mon(20))],
                                                        plan: plan, warnings: plan.warnings))
         for needle in [Ref.activity(Fx.school.id), Ref.activity(Fx.soccer.id), Ref.task(s.items[0].id), Ref.event(s.oneOffs[0].id),
-                       Ref.dayChange(s.exceptions[0].id), "color pink", "Colours set: free green", "dinner 18:30",
+                       Ref.dayChange(s.exceptions[0].id), "color pink", "Colours set: free green", "routines.dinnerTime 18:30 assumed",
                        "Calendar (read-only): Grandma", "Plan today:", "Plan tomorrow:", "all school cancelled"] {
             XCTAssertTrue(ctx.contains(needle), "context is missing \(needle)\n\(ctx)")
         }

@@ -219,6 +219,11 @@ public struct FixedEvent: Codable, Identifiable, Hashable, Sendable {
 public enum Chronotype: String, Codable, CaseIterable, Sendable {
     case early, intermediate, late
 
+    /// The chronotype whose shift is closest to `shiftHours` (a learned belief).
+    public static func nearest(shiftHours h: Double) -> Chronotype {
+        allCases.min { abs($0.shiftHours - h) < abs($1.shiftHours - h) } ?? .intermediate
+    }
+
     /// Peak-alertness shift in hours, relative to an intermediate chronotype.
     public var shiftHours: Double {
         switch self {
@@ -229,28 +234,21 @@ public enum Chronotype: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// What the student decides. Everything the app can learn instead (study capacity, free time,
+/// focus and break length, dinner, chronotype, a screen-time goal) is a belief (Beliefs.swift).
 public struct Preferences: Codable, Hashable, Sendable {
-    /// Teens 13-18 need 8-10 h (AASM consensus, Paruthi et al. 2016).
+    /// Teens 13-18 need 8-10 h (AASM consensus, Paruthi et al. 2016). Changed only by the student,
+    /// or by an approved reflection proposal with evidence.
     public var sleepNeedMinutes: Int
     /// Absolute floor that sleep trade-offs can never go under.
     public var sleepFloorMinutes: Int
+    /// Used when Auto Wake is off, and as the latest wake on free days.
     public var schoolDayWake: TimeOfDay
     public var freeDayWake: TimeOfDay
     public var windDownMinutes: Int
-    public var dinner: TimeOfDay?
-    public var dinnerMinutes: Int
-    public var focusBlockMinutes: Int
-    public var breakMinutes: Int
-    public var maxStudyMinutesSchoolDay: Int
-    public var maxStudyMinutesFreeDay: Int
-    public var minFreeMinutesSchoolDay: Int
-    public var minFreeMinutesFreeDay: Int
     public var allowSleepTradeoffs: Bool
-    public var chronotype: Chronotype
     /// Calendar weekday numbers that are school days (default Mon–Fri).
     @SortedSet public var schoolDays: Set<Int>
-    /// A floor goal for distracting-app minutes per day. The taper heads toward it.
-    public var screenTimeGoalMinutes: Int
     public var interests: [String]
     /// Work wake-up time back from the first commitment and the learned commute.
     public var autoWake: Bool
@@ -262,38 +260,23 @@ public struct Preferences: Codable, Hashable, Sendable {
 
     public init(sleepNeedMinutes: Int = 540, sleepFloorMinutes: Int = 420,
                 schoolDayWake: TimeOfDay = TimeOfDay(6, 45), freeDayWake: TimeOfDay = TimeOfDay(8, 30),
-                windDownMinutes: Int = 30, dinner: TimeOfDay? = TimeOfDay(18, 30), dinnerMinutes: Int = 30,
-                focusBlockMinutes: Int = 40, breakMinutes: Int = 10,
-                maxStudyMinutesSchoolDay: Int = 180, maxStudyMinutesFreeDay: Int = 300,
-                minFreeMinutesSchoolDay: Int = 60, minFreeMinutesFreeDay: Int = 180,
-                allowSleepTradeoffs: Bool = true, chronotype: Chronotype = .late,
-                schoolDays: Set<Int> = [2, 3, 4, 5, 6], screenTimeGoalMinutes: Int = 45,
-                interests: [String] = [], autoWake: Bool = true, nudges: NudgeSettings = NudgeSettings(),
-                colors: [String: String] = [:]) {
+                windDownMinutes: Int = 30, allowSleepTradeoffs: Bool = true,
+                schoolDays: Set<Int> = [2, 3, 4, 5, 6], interests: [String] = [], autoWake: Bool = true,
+                nudges: NudgeSettings = NudgeSettings(), colors: [String: String] = [:]) {
         self.sleepNeedMinutes = sleepNeedMinutes
         self.sleepFloorMinutes = sleepFloorMinutes
         self.schoolDayWake = schoolDayWake
         self.freeDayWake = freeDayWake
         self.windDownMinutes = windDownMinutes
-        self.dinner = dinner
-        self.dinnerMinutes = dinnerMinutes
-        self.focusBlockMinutes = focusBlockMinutes
-        self.breakMinutes = breakMinutes
-        self.maxStudyMinutesSchoolDay = maxStudyMinutesSchoolDay
-        self.maxStudyMinutesFreeDay = maxStudyMinutesFreeDay
-        self.minFreeMinutesSchoolDay = minFreeMinutesSchoolDay
-        self.minFreeMinutesFreeDay = minFreeMinutesFreeDay
         self.allowSleepTradeoffs = allowSleepTradeoffs
-        self.chronotype = chronotype
         self.schoolDays = schoolDays
-        self.screenTimeGoalMinutes = screenTimeGoalMinutes
         self.interests = interests
         self.autoWake = autoWake
         self.nudges = nudges
         self.colors = colors
     }
 
-    /// Missing keys fall back to defaults, so adding a preference in an update keeps the rest.
+    /// Missing keys fall back to defaults, so a build that adds a preference keeps the rest.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = Preferences()
@@ -303,22 +286,17 @@ public struct Preferences: Codable, Hashable, Sendable {
         schoolDayWake = v(.schoolDayWake, d.schoolDayWake)
         freeDayWake = v(.freeDayWake, d.freeDayWake)
         windDownMinutes = v(.windDownMinutes, d.windDownMinutes)
-        dinner = v(.dinner, d.dinner)
-        dinnerMinutes = v(.dinnerMinutes, d.dinnerMinutes)
-        focusBlockMinutes = v(.focusBlockMinutes, d.focusBlockMinutes)
-        breakMinutes = v(.breakMinutes, d.breakMinutes)
-        maxStudyMinutesSchoolDay = v(.maxStudyMinutesSchoolDay, d.maxStudyMinutesSchoolDay)
-        maxStudyMinutesFreeDay = v(.maxStudyMinutesFreeDay, d.maxStudyMinutesFreeDay)
-        minFreeMinutesSchoolDay = v(.minFreeMinutesSchoolDay, d.minFreeMinutesSchoolDay)
-        minFreeMinutesFreeDay = v(.minFreeMinutesFreeDay, d.minFreeMinutesFreeDay)
         allowSleepTradeoffs = v(.allowSleepTradeoffs, d.allowSleepTradeoffs)
-        chronotype = v(.chronotype, d.chronotype)
         schoolDays = v(.schoolDays, d.schoolDays)
-        screenTimeGoalMinutes = v(.screenTimeGoalMinutes, d.screenTimeGoalMinutes)
         interests = v(.interests, d.interests)
         autoWake = v(.autoWake, d.autoWake)
         nudges = v(.nudges, d.nudges)
         colors = v(.colors, d.colors)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sleepNeedMinutes, sleepFloorMinutes, schoolDayWake, freeDayWake, windDownMinutes, allowSleepTradeoffs
+        case schoolDays, interests, autoWake, nudges, colors
     }
 }
 

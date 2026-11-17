@@ -40,8 +40,15 @@ public struct ScreenTaper: Codable, Hashable, Sendable {
     }
 
     /// Call daily. Returns a note when the target changed.
+    /// The floor the taper heads for: half the baseline, at least 30 minutes (no goal to guess).
+    public var goalMinutes: Int {
+        guard let b = baselineMinutes else { return 45 }
+        return max(30, Int((Double(b) / 2 / 5).rounded()) * 5)
+    }
+
     @discardableResult
-    public mutating func update(days: [ScreenDay], now: Date, goalMinutes: Int, calendar cal: Calendar) -> String? {
+    public mutating func update(days: [ScreenDay], now: Date, calendar cal: Calendar) -> String? {
+        let goalMinutes = self.goalMinutes
         let today = cal.startOfDay(for: now)
         let past = days.filter { $0.day < today }.sorted { $0.day < $1.day }
         guard let weekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start else { return nil }

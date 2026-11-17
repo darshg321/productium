@@ -19,13 +19,17 @@ public struct PlannerInput: Sendable {
     public var horizonDays: Int
     /// Tier 2 behaviour knobs (approved changes only).
     public var policy: BehaviourPolicy
+    /// Learned capacities (study per day type, free time, break, dinner, chronotype).
+    public var beliefs: Beliefs
 
     public init(now: Date, calendar: Calendar = .current, items: [WorkItem], commitments: [Commitment] = [],
                 events: [FixedEvent] = [], preferences: Preferences = Preferences(),
                 learned: LearnedModel = LearnedModel(), health: [HealthDay] = [], moods: [MoodEntry] = [],
                 locked: [PlannedBlock] = [], routines: [Routine] = Routine.defaults,
-                exceptions: [DayException] = [], horizonDays: Int = 14, policy: BehaviourPolicy = BehaviourPolicy()) {
+                exceptions: [DayException] = [], horizonDays: Int = 14, policy: BehaviourPolicy = BehaviourPolicy(),
+                beliefs: Beliefs = Beliefs()) {
         self.policy = policy
+        self.beliefs = beliefs
         self.now = now
         self.calendar = calendar
         self.items = items
@@ -151,7 +155,7 @@ public enum Planner {
             self.input = input
             self.cal = input.calendar
             self.prefs = input.preferences
-            self.chronotype = input.learned.inferredChronotype ?? input.preferences.chronotype
+            self.chronotype = input.learned.inferredChronotype ?? Chronotype.nearest(shiftHours: input.beliefs.value("sleep.chronotype"))
             let t = input.now.timeIntervalSinceReferenceDate
             self.nowRounded = Date(timeIntervalSinceReferenceDate: (t / Planner.step).rounded(.up) * Planner.step)
         }
@@ -170,6 +174,13 @@ public enum Planner {
             WakePlanner.plan(for: day, commitments: input.commitments, events: input.events,
                              routines: input.routines, prefs: prefs, calendar: cal, exceptions: input.exceptions)
         }
+
+        /// Most study a day of this type holds: the learned capacity.
+        func capacity(_ school: Bool) -> Int {
+            input.beliefs.minutes(school ? "study.schoolDayCapacity" : "study.freeDayCapacity")
+        }
+
+        var breakMinutes: Int { input.beliefs.minutes("study.breakMinutes") }
 
         func routine(_ id: String) -> Routine? { input.routines.first { $0.id == id && $0.enabled } }
 
@@ -230,8 +241,10 @@ public enum Planner {
                     busy.append(Interval(start: b.start, end: b.end))
                     fixed.append(b)
                 }
-                if let dinner = prefs.dinner {
-                    let s = at(day, dinner), e = s.addingTimeInterval(Double(prefs.dinnerMinutes) * 60)
+                let beliefs = input.beliefs
+                if beliefs.minutes("routines.dinnerMinutes") > 0 {
+                    let dinner = TimeOfDay(minutes: beliefs.minutes("routines.dinnerTime"))
+                    let s = at(day, dinner), e = s.addingTimeInterval(Double(beliefs.minutes("routines.dinnerMinutes")) * 60)
                     if !busy.contains(where: { $0.start < e && s < $0.end }) {
                         busy.append(Interval(start: s, end: e))
                         fixed.append(PlannedBlock(id: stableId("m", "dinner", day), kind: .meal,
@@ -243,10 +256,10 @@ public enum Planner {
                 let free = Planner.subtract(window, busy).filter { $0.minutes >= 5 }
                 let freeTotal = free.reduce(0) { $0 + $1.minutes }
 
-                var cap = Double(school ? prefs.maxStudyMinutesSchoolDay : prefs.maxStudyMinutesFreeDay) * loadFactor
+                var cap = Double(capacity(school)) * loadFactor
                     * input.policy.capacityMultiplier
                 if i == 0 { cap *= todayFactor }
-                let floor = Int(Double(school ? prefs.minFreeMinutesSchoolDay : prefs.minFreeMinutesFreeDay)
+                let floor = Int(Double(input.beliefs.minutes(school ? "study.schoolDayFreeTime" : "study.freeDayFreeTime"))
                     * input.policy.freeTimeMultiplier)
 
                 days.append(Day(index: i, start: day, isSchoolDay: school, wake: wakeT, workEnd: workEnd,
@@ -548,12 +561,12 @@ public enum Planner {
                 if start > iv.start { pieces.append(Interval(start: iv.start, end: start)) }
                 // Systematic short break after each block (Biwer et al. 2023).
                 var after = end
-                if iv.end.timeIntervalSince(end) >= Double(prefs.breakMinutes + 5) * 60 {
-                    let bEnd = end.addingTimeInterval(Double(prefs.breakMinutes) * 60)
+                if iv.end.timeIntervalSince(end) >= Double(breakMinutes + 5) * 60 {
+                    let bEnd = end.addingTimeInterval(Double(breakMinutes) * 60)
                     blocks.append(PlannedBlock(id: Planner.stableUUID("k|\(Int(end.timeIntervalSince1970))"),
                                                kind: .breakTime, start: end, end: bEnd, title: "Break",
                                                hint: "Stand up, water, look out a window. Not your feed: scrolling doesn't let attention rest."))
-                    day.consumed += prefs.breakMinutes
+                    day.consumed += breakMinutes
                     after = bEnd
                 }
                 if iv.end > after { pieces.append(Interval(start: after, end: iv.end)) }
@@ -681,7 +694,7 @@ public enum Planner {
             if borrowed > 0 {
                 warnings.append(PlanWarning(level: .caution, message: "This plan borrows \(borrowed) min of sleep. It's limited to deadline-critical writing, never study for a test."))
             }
-            for day in days where day.studyUsed > Int(Double(day.isSchoolDay ? prefs.maxStudyMinutesSchoolDay : prefs.maxStudyMinutesFreeDay) * 1.1) {
+            for day in days where day.studyUsed > Int(Double(capacity(day.isSchoolDay)) * 1.1) {
                 let f = DateFormatter(); f.calendar = cal; f.timeZone = cal.timeZone; f.dateFormat = "EEEE"
                 warnings.append(PlanWarning(level: .caution, message: "\(f.string(from: day.start)) is heavy (\(minutesLabel(day.studyUsed)) of work). Starting earlier this week makes it lighter."))
             }

@@ -80,7 +80,7 @@ extension Prompts {
         them, look there first; ask only if it isn't there.
         - Several things at once: one operation each, in order. Fix rather than duplicate. If unsure, do the \
         likely thing and say so.
-        - Values the app learns (routines, sleep need, wake times, study limits) change only when the student \
+        - Values the app learns (routines, beliefs, sleep need, wake times) change only when the student \
         states them. How the planner behaves isn't yours to change: say what you'd suggest instead.
 
         Formats: times 24h HH:mm, dates YYYY-MM-DD, date-times local YYYY-MM-DDTHH:mm. weekdays 1=Sun..7=Sat.
@@ -122,13 +122,11 @@ extension Prompts {
 
         let p = s.prefs
         l.append("Settings: sleepNeedMinutes \(p.sleepNeedMinutes), schoolDayWake \(p.schoolDayWake.label), freeDayWake "
-                 + "\(p.freeDayWake.label), autoWake \(p.autoWake), windDownMinutes \(p.windDownMinutes), dinner "
-                 + "\(p.dinner?.label ?? "none") (\(p.dinnerMinutes)m), focusBlockMinutes \(p.focusBlockMinutes), breakMinutes "
-                 + "\(p.breakMinutes), maxStudyMinutes school/free \(p.maxStudyMinutesSchoolDay)/\(p.maxStudyMinutesFreeDay), "
-                 + "minFreeMinutes school/free \(p.minFreeMinutesSchoolDay)/\(p.minFreeMinutesFreeDay), allowSleepTradeoffs "
-                 + "\(p.allowSleepTradeoffs), chronotype \(p.chronotype.rawValue), schoolDays \(days(p.schoolDays)), "
-                 + "screenTimeGoalMinutes \(p.screenTimeGoalMinutes), nudgeLevel \(p.nudges.level.rawValue), alarms "
+                 + "\(p.freeDayWake.label), autoWake \(p.autoWake), windDownMinutes \(p.windDownMinutes), allowSleepTradeoffs "
+                 + "\(p.allowSleepTradeoffs), schoolDays \(days(p.schoolDays)), nudgeLevel \(p.nudges.level.rawValue), alarms "
                  + "\(p.nudges.alarms), interests \(p.interests.isEmpty ? "none" : p.interests.joined(separator: ", "))")
+        l.append("Beliefs (set by knob when they state one): " + s.beliefs.items.map { "\($0.id) \($0.display) \($0.confidence.title.lowercased())" }
+            .joined(separator: ", "))
         if !p.colors.isEmpty {
             l.append("Colours set: " + p.colors.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))
         }

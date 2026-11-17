@@ -284,28 +284,16 @@ public struct Decomposition: Codable, Hashable, Sendable {
     public var rationale: String
 }
 
-public struct PreferenceChanges: Codable, Hashable, Sendable {
-    public var focusBlockMinutes: Int?
-    public var maxStudyMinutesSchoolDay: Int?
-    public var maxStudyMinutesFreeDay: Int?
-    public var minFreeMinutesSchoolDay: Int?
-    public var windDownMinutes: Int?
-
-    public init(focusBlockMinutes: Int? = nil, maxStudyMinutesSchoolDay: Int? = nil, maxStudyMinutesFreeDay: Int? = nil,
-                minFreeMinutesSchoolDay: Int? = nil, windDownMinutes: Int? = nil) {
-        self.focusBlockMinutes = focusBlockMinutes
-        self.maxStudyMinutesSchoolDay = maxStudyMinutesSchoolDay
-        self.maxStudyMinutesFreeDay = maxStudyMinutesFreeDay
-        self.minFreeMinutesSchoolDay = minFreeMinutesSchoolDay
-        self.windDownMinutes = windDownMinutes
-    }
-}
-
 public struct WeeklyReview: Codable, Hashable, Sendable {
     public var headline: String
     public var wins: [String]
     public var suggestions: [String]
-    public var changes: PreferenceChanges?
+
+    public init(headline: String, wins: [String], suggestions: [String]) {
+        self.headline = headline
+        self.wins = wins
+        self.suggestions = suggestions
+    }
 }
 
 public struct CardBatch: Codable, Hashable, Sendable {
@@ -347,8 +335,6 @@ public enum Schemas {
 
     public static let weeklyReview: JSONValue = obj([
         "headline": str, "wins": arr(str), "suggestions": arr(str),
-        "changes": obj(["focusBlockMinutes": int, "maxStudyMinutesSchoolDay": int, "maxStudyMinutesFreeDay": int,
-                        "minFreeMinutesSchoolDay": int, "windDownMinutes": int], required: []),
     ], required: ["headline", "wins", "suggestions"])
 
     public static let cards: JSONValue = obj(["cards": arr(obj(["front": str, "back": str], required: ["front", "back"]))],
@@ -400,7 +386,7 @@ public enum Prompts {
         Write the student's weekly review from the data. Headline under 10 words. wins: 1-2 short sentences on what \
         went well. suggestions: at most 2 small, specific, research-backed tweaks (sleep regularity, spacing, \
         self-testing, shorter blocks, planning less if follow-through is low, phone out of the room). Be \
-        self-compassionate about misses. changes: optional ±10 min tweaks to their settings; never reduce sleep.
+        self-compassionate about misses. You can't change settings: the app learns them.
         """
     }
 
@@ -505,21 +491,5 @@ public enum AIMapper {
         TimelineEvent(at: now.addingTimeInterval(-Double(max(0, min(600, p.minutesAgo ?? 0))) * 60), phrase: p.phrase,
                       activity: p.activity.lowercased(), category: TimeCategory(rawValue: p.category) ?? .free,
                       phase: MarkerPhase(rawValue: p.phase) ?? .point, source: .voice)
-    }
-
-    /// AI-suggested setting changes are clamped to safe, modest ranges, and they can
-    /// never touch sleep need, the sleep floor, or the sleep trade-off switch.
-    public static func apply(_ c: PreferenceChanges, to p: Preferences) -> Preferences {
-        var out = p
-        func nudge(_ cur: Int, _ new: Int?, _ lo: Int, _ hi: Int) -> Int {
-            guard let new else { return cur }
-            return max(lo, min(hi, max(cur - 10, min(cur + 10, new))))
-        }
-        out.focusBlockMinutes = nudge(p.focusBlockMinutes, c.focusBlockMinutes, 20, 60)
-        out.maxStudyMinutesSchoolDay = nudge(p.maxStudyMinutesSchoolDay, c.maxStudyMinutesSchoolDay, 45, 300)
-        out.maxStudyMinutesFreeDay = nudge(p.maxStudyMinutesFreeDay, c.maxStudyMinutesFreeDay, 45, 420)
-        out.minFreeMinutesSchoolDay = nudge(p.minFreeMinutesSchoolDay, c.minFreeMinutesSchoolDay, 30, 240)
-        out.windDownMinutes = nudge(p.windDownMinutes, c.windDownMinutes, 15, 60)
-        return out
     }
 }

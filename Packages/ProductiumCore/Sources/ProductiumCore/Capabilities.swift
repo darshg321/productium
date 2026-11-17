@@ -190,11 +190,15 @@ public enum Registry {
         KnobSpec("sleepFloorMinutes", .learned, "360-480", reflectionForbidden: true),
         KnobSpec("allowSleepTradeoffs", .learned, "true|false", reflectionForbidden: true),
         KnobSpec("schoolDayWake", .learned, "HH:mm"), KnobSpec("freeDayWake", .learned, "HH:mm"),
-        KnobSpec("dinner", .learned, "HH:mm or none"), KnobSpec("dinnerMinutes", .learned, "10-120"),
-        KnobSpec("focusBlockMinutes", .learned, "15-90"), KnobSpec("breakMinutes", .learned, "0-30"),
-        KnobSpec("maxStudyMinutesSchoolDay", .learned, "30-480"), KnobSpec("maxStudyMinutesFreeDay", .learned, "30-600"),
-        KnobSpec("minFreeMinutesSchoolDay", .learned, "0-300"), KnobSpec("minFreeMinutesFreeDay", .learned, "0-600"),
-        KnobSpec("chronotype", .learned, "early|intermediate|late"), KnobSpec("screenTimeGoalMinutes", .learned, "0-600"),
+        // Beliefs: what they say becomes "You said", until the data has 3 samples.
+        KnobSpec("study.schoolDayCapacity", .learned, "minutes", range: 30...480),
+        KnobSpec("study.freeDayCapacity", .learned, "minutes", range: 30...600),
+        KnobSpec("study.schoolDayFreeTime", .learned, "minutes", range: 0...360),
+        KnobSpec("study.freeDayFreeTime", .learned, "minutes", range: 0...600),
+        KnobSpec("study.focusMinutes", .learned, "minutes", range: 15...90),
+        KnobSpec("study.breakMinutes", .learned, "minutes", range: 0...30),
+        KnobSpec("routines.dinnerTime", .learned, "HH:mm"), KnobSpec("routines.dinnerMinutes", .learned, "minutes, 0 = none", range: 0...120),
+        KnobSpec("sleep.chronotype", .learned, "early|intermediate|late"),
         // Tier 2: behaviour. Proposed by the reflection only, applied after the student approves.
         KnobSpec("planner.capacityMultiplier", .behaviour, "0.6-1.3", range: 0.6...1.3, maxStep: 0.1,
                  note: "how much of the learned study capacity to plan"),
@@ -220,7 +224,7 @@ public enum Registry {
         if k.lowercased().hasPrefix("color") || k.lowercased().hasPrefix("colour") { return knobs[0] }
         let p = k.lowercased().filter { $0.isLetter || $0 == "." }
         return knobs.first { $0.key.lowercased().filter { $0.isLetter || $0 == "." } == p }
-            ?? knobs.first { $0.tier == .behaviour && $0.key.split(separator: ".").last.map { $0.lowercased() == p } == true }
+            ?? knobs.first { $0.key.contains(".") && $0.key.split(separator: ".").last.map { $0.lowercased() == p } == true }
     }
 
     /// The box's view of the registry (tiers 0 and 1; tier 2 isn't the box's to change).
@@ -300,6 +304,19 @@ public enum Knobs {
             write(spec.key, v, in: &s.policy)
             return .changed("\(spec.key) → \(Self.value(spec.key, in: s.policy).map(format) ?? value)")
         }
+        if spec.key.contains("."), s.beliefs[spec.key] != nil {
+            let t = value.trimmingCharacters(in: .whitespaces).lowercased()
+            var v: Double?
+            if spec.key == "routines.dinnerTime" { v = DumpApplier.timeOfDay(t).map { Double($0.minutesFromMidnight) } }
+            else if spec.key == "sleep.chronotype" { v = Chronotype(rawValue: t)?.shiftHours }
+            else if let n = Double(t.prefix { $0.isNumber || $0 == "." }) {
+                v = t.contains("h") && !t.contains("min") && n <= 12 ? n * 60 : n
+            }
+            guard var x = v else { return .refused("Couldn't set \(spec.key) to “\(value)”") }
+            if let r = spec.range { x = max(r.lowerBound, min(r.upperBound, x)) }
+            _ = s.beliefs.state(spec.key, x, now: Date())
+            return .changed("\(s.beliefs[spec.key]?.label ?? spec.key): you said \(s.beliefs[spec.key]?.display ?? value)")
+        }
         if spec.key == "color.<category>" {
             let name = String(rawKey.drop { $0 != "." }.dropFirst())
             guard let cat = Palette.category(name) else { return .refused("“\(name)” isn't a category I can colour") }
@@ -352,22 +369,11 @@ enum PreferenceKnobs {
         case "freedaywake": guard let x = time() else { return nil }; p.freeDayWake = x
         case "autowake": guard let b = bool() else { return nil }; p.autoWake = b
         case "winddownminutes": guard let n = int(0, 90) else { return nil }; p.windDownMinutes = n
-        case "dinner":
-            if ["none", "off", "no", "false", "skip"].contains(lower) { p.dinner = nil } else { guard let x = time() else { return nil }; p.dinner = x }
-        case "dinnerminutes": guard let n = int(10, 120) else { return nil }; p.dinnerMinutes = n
-        case "focusblockminutes": guard let n = int(15, 90) else { return nil }; p.focusBlockMinutes = n
-        case "breakminutes": guard let n = int(0, 30) else { return nil }; p.breakMinutes = n
-        case "maxstudyminutesschoolday": guard let n = int(30, 480) else { return nil }; p.maxStudyMinutesSchoolDay = n
-        case "maxstudyminutesfreeday": guard let n = int(30, 600) else { return nil }; p.maxStudyMinutesFreeDay = n
-        case "minfreeminutesschoolday": guard let n = int(0, 300) else { return nil }; p.minFreeMinutesSchoolDay = n
-        case "minfreeminutesfreeday": guard let n = int(0, 600) else { return nil }; p.minFreeMinutesFreeDay = n
         case "allowsleeptradeoffs": guard let b = bool() else { return nil }; p.allowSleepTradeoffs = b
-        case "chronotype": guard let c = Chronotype(rawValue: lower) else { return nil }; p.chronotype = c
         case "schooldays":
             let days = Set(t.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }.filter { (1...7).contains($0) })
             guard !days.isEmpty || lower == "none" else { return nil }
             p.schoolDays = days
-        case "screentimegoalminutes": guard let n = int(0, 600) else { return nil }; p.screenTimeGoalMinutes = n
         case "interests":
             p.interests = t.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         case "nudgelevel":

@@ -45,7 +45,7 @@ struct SettingsView: View {
             Section {
                 row("Connections", "link", .green, nil) { ConnectionSettings() }
                 row("Places", "location.fill", .blue, model.state.integrations.location ? "On" : "Off") { PlacesSettings() }
-                row("Routines", "figure.walk", .orange, nil) { RoutineSettings() }
+                row("What Productium Thinks", "brain.head.profile", .orange, nil) { ThinksView() }
                 row("About You", "person.text.rectangle.fill", .teal, nil) { AboutYouView() }
             }
 
@@ -366,8 +366,10 @@ struct SleepSettings: View {
             }
             Section {
                 Toggle("Work Back from First Class", isOn: $m.state.prefs.autoWake)
-                TimePicker(label: model.state.prefs.autoWake ? "Latest School-Day Wake" : "School-Day Wake", time: $m.state.prefs.schoolDayWake)
-                TimePicker(label: "Free-Day Wake", time: $m.state.prefs.freeDayWake)
+                if !model.state.prefs.autoWake {
+                    TimePicker(label: "School-Day Wake", time: $m.state.prefs.schoolDayWake)
+                    TimePicker(label: "Free-Day Wake", time: $m.state.prefs.freeDayWake)
+                }
             } header: { Text("Wake Up") } footer: {
                 Text("Keeping free-day wake within about an hour of school days avoids “social jet lag”.")
             }
@@ -378,6 +380,8 @@ struct SleepSettings: View {
     }
 }
 
+/// Only what's truly the student's choice. How much they can study, how much free time they keep,
+/// focus and break length are learned (Settings → What Productium Thinks).
 struct StudySettings: View {
     @Environment(AppModel.self) private var model
 
@@ -385,20 +389,14 @@ struct StudySettings: View {
         @Bindable var m = model
         List {
             Section {
-                Stepper(value: $m.state.prefs.maxStudyMinutesSchoolDay, in: 30...360, step: 15) {
-                    LabeledContent("Most on a school day", value: durationLabel(model.state.prefs.maxStudyMinutesSchoolDay))
-                }
-                Stepper(value: $m.state.prefs.maxStudyMinutesFreeDay, in: 30...480, step: 15) {
-                    LabeledContent("Most on a free day", value: durationLabel(model.state.prefs.maxStudyMinutesFreeDay))
-                }
-                Stepper(value: $m.state.prefs.minFreeMinutesSchoolDay, in: 30...300, step: 15) {
-                    LabeledContent("Protected free time", value: durationLabel(model.state.prefs.minFreeMinutesSchoolDay))
-                }
-            }
-            Section {
                 Toggle("Small Sleep Trade-offs for Deadlines", isOn: $m.state.prefs.allowSleepTradeoffs)
             } footer: {
                 Text("Capped at 1 hour on rare nights, only for high-stakes writing or projects, and never before a test. Sleep is when studying gets stored.")
+            }
+            Section {
+                NavigationLink { ThinksView() } label: { Label("How Much You Study, Learned", systemImage: "brain.head.profile") }
+            } footer: {
+                Text("Productium learns how much you actually get done on school and free days, the free time you keep, and your focus length. Tell the Inbox if it's wrong (“I can do about 2 hours on school days”).")
             }
         }
         .listStyle(.insetGrouped)
@@ -459,9 +457,7 @@ struct ScreenTimeSettings: View {
             }
             if model.state.integrations.screenTime {
                 Section {
-                    Stepper(value: $m.state.prefs.screenTimeGoalMinutes, in: 0...240, step: 15) {
-                        LabeledContent("Daily goal", value: durationLabel(model.state.prefs.screenTimeGoalMinutes))
-                    }
+                    LabeledContent("Heading for", value: durationLabel(model.state.taper.goalMinutes))
                     if let t = model.state.taper.targetMinutes {
                         LabeledContent("Today's limit", value: durationLabel(t))
                     }
@@ -710,7 +706,7 @@ struct RoutineSettings: View {
             }
             Section {
                 Button("Re-learn Routines", role: .destructive) {
-                    for i in m.state.routines.indices { m.state.routines[i].samples = [] }
+                    for i in m.state.routines.indices { m.state.routines[i].samples = []; m.state.routines[i].learnedFrom = [] }
                     model.replan()
                 }
             }

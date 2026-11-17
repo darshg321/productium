@@ -194,3 +194,65 @@ final class SleepTests: XCTestCase {
                                          calendar: cal).first?.sleepMinutes)
     }
 }
+
+final class BeliefTests: XCTestCase {
+    let cal = Fx.cal
+
+    /// 3 weeks of fixture days move the caps toward what happened, within bounds.
+    func testThreeWeeksMoveCapsTowardObservedBehaviour() {
+        let now = Fx.mon(9)
+        var days: [DayRecord] = []
+        for i in 1...21 {
+            let d = Fx.mon(0, plusDays: -i)
+            let wd = cal.component(.weekday, from: d)
+            let school = (2...6).contains(wd)
+            days.append(DayRecord(day: d, isSchoolDay: school, planned: school ? 150 : 240,
+                                  done: school ? 90 + (i % 4) * 10 : 200 + (i % 3) * 20, eveningFree: school ? 120 : 240))
+        }
+        let outcomes = (1...8).map { i in
+            BlockOutcome(blockId: UUID(), itemId: nil, kind: .essay, plannedStart: Fx.mon(19, plusDays: -i), plannedMinutes: 40,
+                         actualMinutes: 30, status: .done)
+        }
+        let dinner = (1...6).flatMap { i -> [TimelineEvent] in
+            [TimelineEvent(at: Fx.mon(19, 0, plusDays: -i), phrase: "dinner", activity: "dinner", category: .routine, phase: .start),
+             TimelineEvent(at: Fx.mon(19, 25, plusDays: -i), phrase: "done", activity: "dinner", category: .routine, phase: .end)]
+        }
+        let b = CapacityLearner.learn(Beliefs(), days: days, outcomes: outcomes, markers: dinner, now: now, calendar: cal)
+        let school = b["study.schoolDayCapacity"]!
+        XCTAssertEqual(school.samples, 15)
+        XCTAssertLessThan(school.value, 180, "moved down from the prior")
+        XCTAssertGreaterThan(school.value, 110, "toward the 75th percentile (~120), shrunk a little to the prior")
+        XCTAssertEqual(school.confidence, .learned)
+        XCTAssertLessThan(b.value("study.freeDayCapacity"), 300)
+        XCTAssertGreaterThan(b.value("study.schoolDayFreeTime"), 60, "they keep more free time than the prior")
+        XCTAssertEqual(b.value("study.focusMinutes"), (40 * 5 + 30 * 8) / 13.0, accuracy: 0.1)
+        XCTAssertEqual(b.minutes("routines.dinnerTime"), 18 * 60 + 46, "from the 18:30 prior toward 19:00")
+        // A week of nothing done can't drop below the bound.
+        let lazy = (1...21).map { DayRecord(day: Fx.mon(0, plusDays: -$0), isSchoolDay: true, planned: 100, done: 1) }
+        XCTAssertGreaterThanOrEqual(CapacityLearner.learn(Beliefs(), days: lazy, now: now, calendar: cal).value("study.schoolDayCapacity"), 30)
+        // The planner reads the learned cap.
+        let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 4), estimateMinutes: 900)
+        func monday(_ beliefs: Beliefs) -> Int {
+            Planner.plan(PlannerInput(now: Fx.mon(6), calendar: cal, items: [essay], commitments: [Fx.school], beliefs: beliefs))
+                .blocks(on: Fx.mon(12), calendar: cal).filter(\.isStudy).reduce(0) { $0 + $1.minutes }
+        }
+        var low = Beliefs(); _ = low.state("study.schoolDayCapacity", 60, now: now)
+        XCTAssertLessThan(monday(low), monday(Beliefs()), "\(monday(low)) vs \(monday(Beliefs()))")
+    }
+
+    func testStatedThenLearnedThenConfirmed() {
+        var b = Beliefs()
+        XCTAssertEqual(b["study.schoolDayCapacity"]?.confidence, .assumed)
+        XCTAssertTrue(b.state("study.schoolDayCapacity", 120, now: Fx.mon(9)))
+        XCTAssertEqual(b.value("study.schoolDayCapacity"), 120, "what they said wins until 3 samples")
+        var x = b["study.schoolDayCapacity"]!
+        x.samples = 5; x.value = 125
+        b["study.schoolDayCapacity"] = x
+        XCTAssertEqual(b["study.schoolDayCapacity"]?.confidence, .confirmed)
+        x.value = 60; b["study.schoolDayCapacity"] = x
+        XCTAssertEqual(b["study.schoolDayCapacity"]?.disagreement, "You said 2 h, it's been 1 h lately")
+        b.reset("study.schoolDayCapacity")
+        XCTAssertEqual(b["study.schoolDayCapacity"]?.confidence, .assumed)
+        XCTAssertEqual(Beliefs.routines(Routine.defaults).first?.group, "routines")
+    }
+}
