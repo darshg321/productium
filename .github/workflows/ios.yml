@@ -1,7 +1,7 @@
 # Builds Productium without a Mac.
 #  • core-tests: the planning engine, on Linux (every push)
 #  • ios-compile: compile-check the whole app + extensions for the simulator, unsigned (every push)
-#  • ios-free-ipa: .ipa for signing with a FREE Apple ID on Linux (manual; no Screen Time features)
+#  • ios-free-ipa: on a push to main only: versions, builds the free-account .ipa and publishes a release
 #  • ios-device: signed development .ipa, needs the paid Apple Developer Program (manual)
 # Setup: docs/NO_MAC.md
 name: ios
@@ -10,10 +10,6 @@ on:
   push:
   workflow_dispatch:
     inputs:
-      free_build:
-        description: "Free-account .ipa (sign it yourself with Impactor/SideStore)"
-        type: boolean
-        default: true
       device_build:
         description: "Signed dev .ipa (paid Apple Developer Program + secrets)"
         type: boolean
@@ -52,13 +48,36 @@ jobs:
         with: { name: build-log, path: build.log }
 
   ios-free-ipa:
-    if: github.event_name == 'workflow_dispatch' && inputs.free_build
-    needs: [core-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [core-tests, ios-compile]
     runs-on: macos-26
     permissions:
       contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Work out the version
+        id: version
+        run: |
+          last=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          if [ -z "$last" ]; then
+            v=1.0.0
+          else
+            IFS=. read -r major minor patch <<< "${last#v}"
+            log=$(git log "$last"..HEAD --format='%s%n%b')
+            if echo "$log" | grep -qE 'BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:'; then
+              major=$((major+1)); minor=0; patch=0
+            elif echo "$log" | grep -qE '^feat(\([^)]*\))?:'; then
+              minor=$((minor+1)); patch=0
+            else
+              patch=$((patch+1))
+            fi
+            v="$major.$minor.$patch"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: maxim-lobanov/setup-xcode@v1
         with: { xcode-version: latest-stable }
       - run: brew install xcodegen uv
@@ -69,6 +88,8 @@ jobs:
           set -o pipefail
           xcodebuild -project Productium.xcodeproj -scheme Productium -configuration Release \
             -destination 'generic/platform=iOS' -derivedDataPath build \
+            MARKETING_VERSION=${{ steps.version.outputs.version }} \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -30
       - name: Package .ipa (ad-hoc signed so the re-signer keeps the HealthKit entitlement)
         run: |
@@ -85,19 +106,13 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/Productium.app Payload/
           codesign -f -s - --entitlements app.ent Payload/Productium.app
           zip -qry Productium-free.ipa Payload
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Productium-free-ipa
-          path: Productium-free.ipa
-          retention-days: 14
-      - name: Publish as the "free-latest" release (download it on the phone for SideStore)
+      - name: Release (the stable asset name keeps releases/latest/download/Productium-free.ipa current for SideStore)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view free-latest >/dev/null 2>&1 || \
-            gh release create free-latest --prerelease --title "Latest free build" \
-              --notes "Open this page on your iPhone, download Productium-free.ipa, then add it in SideStore (+)."
-          gh release upload free-latest Productium-free.ipa --clobber
+          gh release create "v${{ steps.version.outputs.version }}" Productium-free.ipa \
+            --target "${{ github.sha }}" --title "v${{ steps.version.outputs.version }}" \
+            --generate-notes --latest
 
   ios-device:
     if: github.event_name == 'workflow_dispatch' && inputs.device_build

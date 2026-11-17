@@ -1,0 +1,61 @@
+import Foundation
+import FoundationNetworking
+import ProductiumCore
+
+let base = URL(string: ProcessInfo.processInfo.environment["CS_URL"]!)!
+let key = ProcessInfo.processInfo.environment["CS_KEY"]!
+var cal = Calendar(identifier: .gregorian)
+cal.timeZone = TimeZone(identifier: "America/Vancouver")!
+let now = cal.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: 19, minute: 10))!
+
+let school = Commitment(title: "School", kind: .school, weekdays: [2, 3, 4, 5, 6], start: TimeOfDay(8, 30), end: TimeOfDay(15, 0))
+let soccer = Commitment(title: "Soccer practice", kind: .extracurricular, weekdays: [2, 4], start: TimeOfDay(16), end: TimeOfDay(17, 30))
+var s = DumpState(items: [
+    WorkItem(title: "Calc problem set 5", kind: .assignment, subject: "Math", due: now.addingTimeInterval(2 * 86400)),
+    WorkItem(title: "Bio quiz on cells", kind: .quiz, subject: "Biology", due: now.addingTimeInterval(3 * 86400), topics: ["mitosis"]),
+    WorkItem(title: "Gatsby essay", kind: .essay, subject: "English", due: now.addingTimeInterval(8 * 86400)),
+], commitments: [school, soccer], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults, moods: [], screen: [],
+   prefs: Preferences())
+var convo = Conversation(startedAt: now)
+
+func send(_ req: AIRequest) async throws -> AIResponse {
+    var r = URLRequest(url: base.appendingPathComponent("v1/messages"))
+    r.httpMethod = "POST"
+    r.setValue(key, forHTTPHeaderField: "x-api-key")
+    r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    r.timeoutInterval = 300
+    r.httpBody = try JSONEncoder().encode(req)
+    let (d, resp) = try await URLSession.shared.data(for: r)
+    guard (resp as! HTTPURLResponse).statusCode == 200 else { fatalError(String(data: d, encoding: .utf8)!) }
+    return try JSONDecoder().decode(AIResponse.self, from: d)
+}
+
+let turns = CommandLine.arguments.dropFirst()
+var outTotal = 0
+for (n, text) in turns.enumerated() {
+    let plan = Planner.plan(PlannerInput(now: now, calendar: cal, items: s.items, commitments: s.commitments, events: s.oneOffs,
+                                         preferences: s.prefs, routines: s.routines, exceptions: s.exceptions))
+    let ctx = Prompts.dumpContext(DumpContextInput(now: now, calendar: cal, state: s, plan: plan, warnings: plan.warnings))
+    let content = ConversationPolicy.userContent(for: convo, text: text, images: [], fullContext: ctx)
+    let req = convo.request(system: Prompts.dump(), tool: ConversationPolicy.tool(schema: Schemas.dump),
+                            userContent: content, maxTokens: 3000)
+    let res = try await send(req)
+    outTotal += res.tokens.output
+    guard let r = DumpResult.read(res) else { print("UNREADABLE:", res.text); exit(1) }
+    let rep = DumpApplier.apply(r, to: &s, now: now, calendar: cal)
+    convo.add(ConversationTurn(at: now, text: text, userContent: content, assistantContent: res.rawContent, reply: r.reply,
+                               applied: AppliedReport(changes: rep.changes, problems: rep.problems), tokens: res.tokens, context: ctx))
+    print("\n===== TURN \(n + 1): \(text)")
+    print("tokens out \(res.tokens.output), in \(res.tokens.input)+\(res.tokens.cacheRead)c, truncated \(res.isTruncated)")
+    print("ops:", r.ops.map { o in [o.op, o.entity, o.id, o.knob, o.value].compactMap { $0 }.joined(separator: " ")
+        + (o.fields.map { " " + ($0.keys.sorted().joined(separator: ",")) } ?? "") })
+    print("reply:", r.reply)
+    print("changes:", rep.changes)
+    print("problems:", rep.problems)
+    let wd = ["", "Su", "M", "Tu", "W", "Th", "F", "Sa"]
+    for c in s.commitments.sorted(by: { ($0.start, $0.title) < ($1.start, $1.title) }) {
+        print("  ", c.title, c.kind.rawValue, c.weekdays.sorted().map { wd[$0] }.joined(), c.start.label, "-", c.end.label, "buf", c.bufferMinutes, c.color ?? "")
+    }
+    print("  colors:", s.prefs.colors, "items:", s.items.map { "\($0.title)=\($0.color ?? "-")" })
+}
+print("\nTOTAL OUTPUT TOKENS", outTotal)

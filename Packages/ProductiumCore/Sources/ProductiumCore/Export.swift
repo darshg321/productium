@@ -1,39 +1,117 @@
 import Foundation
 
-/// Full local backup. The student owns their data: export, restore, delete.
-public struct Backup: Codable, Sendable {
+public struct ExportBundle: Codable, Sendable {
+    public static let formatID = "productium-export"
+    public static let currentVersion = 3
+
+    public struct Device: Codable, Hashable, Sendable {
+        public var appVersion: String?
+        public var appBuild: String?
+        public var systemVersion: String?
+        public var model: String?
+        public var timeZone: String
+        public init(appVersion: String? = nil, appBuild: String? = nil, systemVersion: String? = nil, model: String? = nil,
+                    timeZone: String = TimeZone.current.identifier) {
+            self.appVersion = appVersion
+            self.appBuild = appBuild
+            self.systemVersion = systemVersion
+            self.model = model
+            self.timeZone = timeZone
+        }
+    }
+
+    public struct Notification: Codable, Hashable, Sendable {
+        public var id: String
+        public var title: String
+        public var body: String
+        public var at: Date?
+        public var category: String?
+        public var userInfo: JSONValue?
+        public init(id: String, title: String, body: String, at: Date? = nil, category: String? = nil, userInfo: JSONValue? = nil) {
+            self.id = id
+            self.title = title
+            self.body = body
+            self.at = at
+            self.category = category
+            self.userInfo = userInfo
+        }
+    }
+
+    public var format: String
     public var version: Int
     public var exportedAt: Date
-    public var preferences: Preferences
-    public var items: [WorkItem]
-    public var commitments: [Commitment]
-    public var routines: [Routine]
-    public var markers: [TimelineEvent]
-    public var outcomes: [BlockOutcome]
-    public var moods: [MoodEntry]
-    public var health: [HealthDay]
-    public var screen: [ScreenDay]
-    public var learned: LearnedModel
-    public var taper: ScreenTaper
-    public var flashcards: [Flashcard]
+    public var device: Device
 
-    public init(version: Int = 1, exportedAt: Date, preferences: Preferences, items: [WorkItem], commitments: [Commitment],
-                routines: [Routine], markers: [TimelineEvent], outcomes: [BlockOutcome], moods: [MoodEntry],
-                health: [HealthDay], screen: [ScreenDay], learned: LearnedModel, taper: ScreenTaper, flashcards: [Flashcard]) {
-        self.version = version
+    public var state: AppState
+    public var aboutMe: String
+    public var callLog: AICallLog
+    public var sharedDefaults: [String: JSONValue]
+    public var appDefaults: [String: JSONValue]
+    public var files: [String: String]
+
+    public var pendingNotifications: [Notification]
+    public var deliveredNotifications: [Notification]
+    public var permissions: [String: String]
+    public var serverSnapshots: [String: JSONValue]
+
+    public init(exportedAt: Date, device: Device, state: AppState, aboutMe: String = "", callLog: AICallLog = AICallLog(),
+                sharedDefaults: [String: JSONValue] = [:], appDefaults: [String: JSONValue] = [:], files: [String: String] = [:],
+                pendingNotifications: [Notification] = [], deliveredNotifications: [Notification] = [],
+                permissions: [String: String] = [:], serverSnapshots: [String: JSONValue] = [:]) {
+        self.format = ExportBundle.formatID
+        self.version = ExportBundle.currentVersion
         self.exportedAt = exportedAt
-        self.preferences = preferences
-        self.items = items
-        self.commitments = commitments
-        self.routines = routines
-        self.markers = markers
-        self.outcomes = outcomes
-        self.moods = moods
-        self.health = health
-        self.screen = screen
-        self.learned = learned
-        self.taper = taper
-        self.flashcards = flashcards
+        self.device = device
+        self.state = state
+        self.aboutMe = aboutMe
+        self.callLog = callLog
+        self.sharedDefaults = sharedDefaults
+        self.appDefaults = appDefaults
+        self.files = files
+        self.pendingNotifications = pendingNotifications
+        self.deliveredNotifications = deliveredNotifications
+        self.permissions = permissions
+        self.serverSnapshots = serverSnapshots
+    }
+
+    public static let nonStateStores = ["aboutMe", "callLog", "sharedDefaults", "appDefaults", "files"]
+
+    public static func encoder() -> JSONEncoder {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return e
+    }
+
+    public static func decoder() -> JSONDecoder {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }
+
+    public enum ReadError: Error, CustomStringConvertible {
+        case notAnExport, oldFormat(Int)
+        public var description: String {
+            switch self {
+            case .notAnExport: return "That file isn't a Productium export."
+            case .oldFormat(let v): return "That export is format \(v), from an older Productium. Only format 3 and later can be imported."
+            }
+        }
+    }
+
+    public static func read(_ data: Data) throws -> ExportBundle {
+        struct Head: Decodable { var format: String?; var version: Int? }
+        let head = try? decoder().decode(Head.self, from: data)
+        guard let head, head.format == formatID || head.format == "productium-backup" else { throw ReadError.notAnExport }
+        guard (head.version ?? 0) >= currentVersion, head.format == formatID else { throw ReadError.oldFormat(head.version ?? 0) }
+        return try decoder().decode(ExportBundle.self, from: data)
+    }
+
+    public var summary: String {
+        let s = state
+        let prompts = s.conversation.turns.count + s.archive.conversations.reduce(0) { $0 + $1.turns.count }
+        return "\(s.items.count) tasks, \(s.commitments.count) activities, \(s.markers.count) check-ins, "
+            + "\(s.outcomes.count) study sessions, \(prompts) prompts, \(callLog.calls.count) AI calls and all settings."
     }
 }
 
@@ -99,7 +177,6 @@ public enum Exporter {
             m.map { [iso($0.at), $0.phrase, $0.activity, $0.category.rawValue, $0.phase.rawValue, $0.source.rawValue] })
     }
 
-    /// The plan as an .ics file (import into Google Calendar, etc.).
     public static func ics(_ plan: Plan, includeKinds: Set<BlockKind> = [.work, .review, .windDown]) -> String {
         func stamp(_ d: Date) -> String {
             let f = DateFormatter()
@@ -124,15 +201,6 @@ public enum Exporter {
     }
 
     public static func json<T: Encodable>(_ value: T) throws -> Data {
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        enc.dateEncodingStrategy = .iso8601
-        return try enc.encode(value)
-    }
-
-    public static func decodeBackup(_ data: Data) throws -> Backup {
-        let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
-        return try dec.decode(Backup.self, from: data)
+        try ExportBundle.encoder().encode(value)
     }
 }

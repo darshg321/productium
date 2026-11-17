@@ -22,7 +22,6 @@ final class ShieldActionExtension: ShieldActionDelegate {
         switch action {
         case .primaryButtonPressed:
             if SharedConfig.defaults.bool(forKey: SharedConfig.Key.nudgeOnShield) {
-                // Extensions can't open the app, but a notification can.
                 SharedConfig.defaults.set("productium://gap", forKey: SharedConfig.Key.pendingDeepLink)
                 let c = UNMutableNotificationContent()
                 c.title = "2 minutes, better spent"

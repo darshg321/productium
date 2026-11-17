@@ -16,3 +16,4 @@ Packages/ProductiumCore/.build/
 *.key.pem
 .DS_Store
 project-free.yml
+scripts/repair/input/

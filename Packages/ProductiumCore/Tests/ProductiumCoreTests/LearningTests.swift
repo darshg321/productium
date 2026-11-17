@@ -73,15 +73,13 @@ final class LearningTests: XCTestCase {
     func testScreenTaper() {
         var t = ScreenTaper()
         var days = (1...7).map { ScreenDay(day: Fx.mon(0, plusDays: -$0), distractingMinutes: 180) }
-        XCTAssertNotNil(t.update(days: days, now: Fx.mon(9), goalMinutes: 45, calendar: cal))
+        XCTAssertNotNil(t.update(days: days, now: Fx.mon(9), calendar: cal))
         XCTAssertEqual(t.targetMinutes, 180)
-        // Next week, stayed under every day → step down 15%.
         days += (0..<7).map { ScreenDay(day: Fx.mon(0, plusDays: $0), distractingMinutes: 150) }
-        t.update(days: days, now: Fx.mon(9, plusDays: 7), goalMinutes: 45, calendar: cal)
+        t.update(days: days, now: Fx.mon(9, plusDays: 7), calendar: cal)
         XCTAssertEqual(t.targetMinutes, 153)
-        // A hard week holds or loosens, never punishes.
         days += (7..<14).map { ScreenDay(day: Fx.mon(0, plusDays: $0), distractingMinutes: 300) }
-        t.update(days: days, now: Fx.mon(9, plusDays: 14), goalMinutes: 45, calendar: cal)
+        t.update(days: days, now: Fx.mon(9, plusDays: 14), calendar: cal)
         XCTAssertGreaterThanOrEqual(t.targetMinutes!, 153)
     }
 
@@ -94,25 +92,12 @@ final class LearningTests: XCTestCase {
         XCTAssertEqual(c.box, 1)
     }
 
-    func testAIGuardRailsNeverTouchSleep() {
-        let p = Preferences()
-        let changed = AIMapper.apply(PreferenceChanges(focusBlockMinutes: 90, maxStudyMinutesSchoolDay: 600), to: p)
-        XCTAssertEqual(changed.focusBlockMinutes, 50)        // +10 max
-        XCTAssertEqual(changed.maxStudyMinutesSchoolDay, 190)
-        XCTAssertEqual(changed.sleepNeedMinutes, p.sleepNeedMinutes)
-    }
-
     func testExportsAndBackupRoundTrip() throws {
         let csv = Exporter.csv(["a", "b"], [["x,y", "say \"hi\""]])
         XCTAssertEqual(csv, "a,b\n\"x,y\",\"say \"\"hi\"\"\"\n")
         let plan = Planner.plan(Fx.input(now: Fx.mon(7), items: [WorkItem(title: "HW, part 1", kind: .assignment, due: Fx.mon(23, plusDays: 2))]))
         let ics = Exporter.ics(plan)
         XCTAssertTrue(ics.contains("BEGIN:VEVENT") && ics.contains("HW\\, part 1"))
-        let b = Backup(exportedAt: Fx.mon(7), preferences: Preferences(), items: [], commitments: [Fx.school], routines: Routine.defaults,
-                       markers: [], outcomes: [], moods: [MoodEntry(at: Fx.mon(7), mood: 4)], health: [], screen: [],
-                       learned: LearnedModel(), taper: ScreenTaper(), flashcards: [])
-        let back = try Exporter.decodeBackup(try Exporter.json(b))
-        XCTAssertEqual(back.commitments, [Fx.school])
         let totals = DayTotals(day: Fx.mon(0), minutes: [.study: 30], plannedStudy: 40, doneStudy: 30, mood: 4, sleep: 500, screen: 60, screenTarget: 90, steps: 8000)
         let json = String(data: try Exporter.json(totals), encoding: .utf8)!
         XCTAssertTrue(json.contains("\"study\" : 30"), json)
@@ -148,6 +133,96 @@ final class StabilityTests: XCTestCase {
     func testPreferencesDecodeWithMissingKeys() throws {
         let p = try JSONDecoder().decode(Preferences.self, from: Data(#"{"sleepNeedMinutes": 500}"#.utf8))
         XCTAssertEqual(p.sleepNeedMinutes, 500)
-        XCTAssertEqual(p.focusBlockMinutes, Preferences().focusBlockMinutes)
+        XCTAssertEqual(p.windDownMinutes, Preferences().windDownMinutes)
+    }
+}
+
+final class MarkerCategoryTests: XCTestCase {
+    func testCategoryComesFromTheNameNotTheModelsDefault() {
+        let c = [Fx.school, Fx.soccer]
+        XCTAssertEqual(MarkerCategory.infer(activity: "to_school", commitments: c, model: .free), .commute)
+        XCTAssertEqual(MarkerCategory.infer(activity: "from_school", commitments: c), .commute)
+        XCTAssertEqual(MarkerCategory.infer(activity: "in_bed", commitments: c, model: .free), .sleep)
+        XCTAssertEqual(MarkerCategory.infer(activity: "wake", commitments: c, model: .free), .sleep)
+        XCTAssertEqual(MarkerCategory.infer(activity: "get_ready", commitments: c, model: .free), .routine)
+        XCTAssertEqual(MarkerCategory.infer(activity: "soccer", commitments: c, model: .free), .activities)
+        XCTAssertEqual(MarkerCategory.infer(activity: "homework", commitments: c, model: .free), .study)
+        XCTAssertEqual(MarkerCategory.infer(activity: "gaming", commitments: c, model: .screen), .screen)
+        XCTAssertEqual(MarkerCategory.infer(activity: "gaming", commitments: c), .free)
+    }
+
+    func testBoxMarkerIsFiledUnderTravelNotFree() {
+        var s = DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [],
+                          routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpApplier.apply(DumpResult(ops: [.upsert("marker", ["activity": .string("to_school"), "phase": .string("start"), "at": .string("2026-11-16T13:02")]),
+                                           .upsert("marker", ["activity": .string("in_bed"), "at": .string("2026-11-17T00:59")])], reply: ""),
+                          to: &s, now: Fx.mon(14), calendar: Fx.cal)
+        XCTAssertEqual(s.markers.map(\.category), [.commute, .sleep])
+    }
+}
+
+final class StatedRoutineTests: XCTestCase {
+    func testStatedIsThePriorUntilThreeSamplesThenTheMedianTakesOver() {
+        var r = Routine(id: "to_school", name: "To school", anchor: .beforeFirstCommitment, category: .commute, defaultMinutes: 20)
+        XCTAssertEqual(r.confidence, .assumed)
+        r.stated = 25
+        XCTAssertEqual(r.minutes, 25)
+        XCTAssertEqual(r.confidence, .stated)
+        r.observe(14)
+        XCTAssertEqual(r.minutes, 25, "one real sample doesn't override what you said")
+        r.observe(14); r.observe(15)
+        XCTAssertEqual(r.minutes, 14)
+        XCTAssertEqual(r.confidence, .learned)
+        XCTAssertEqual(r.disagreement, "You said 25 min, it's been 14 min lately")
+    }
+
+    func testStatedAndLearnedAgreeIsConfirmed() {
+        var r = Routine(id: "get_ready", name: "Get ready", anchor: .afterWake, category: .routine, defaultMinutes: 40, samples: [34, 35, 36])
+        XCTAssertEqual(r.confidence, .learned)
+        r.stated = 35
+        XCTAssertEqual(r.confidence, .confirmed)
+        XCTAssertNil(r.disagreement)
+    }
+
+    func testStatingARoutineThroughTheBoxWritesNoFakeSamples() {
+        var s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [],
+                          routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpApplier.apply(DumpResult(ops: [.upsert("routine", id: "to_school", ["minutes": .number(25)])], reply: ""),
+                          to: &s, now: Fx.mon(14), calendar: Fx.cal)
+        let r = s.routines.first { $0.id == "to_school" }!
+        XCTAssertEqual(r.stated, 25)
+        XCTAssertTrue(r.samples.isEmpty)
+        XCTAssertEqual(Beliefs.routines(s.routines).first { $0.key == "to_school" }?.confidence, .stated)
+    }
+}
+
+final class MarkerMergeTests: XCTestCase {
+    func testTheThreeLeftHomesBecomeOneAndTeachTheWalkOnce() {
+        let day = Fx.mon(0)
+        func at(_ h: Int, _ m: Int, _ sec: Int = 0) -> Date { day.addingTimeInterval(Double(h * 3600 + m * 60 + sec)) }
+        func mk(_ t: Date, _ p: MarkerPhase, _ src: MarkerSource) -> TimelineEvent {
+            TimelineEvent(at: t, phrase: "x", activity: "to_school", category: .commute, phase: p, source: src)
+        }
+        var log: [TimelineEvent] = []
+        MarkerLog.add([mk(at(13, 4, 58), .start, .geofence)], to: &log)
+        MarkerLog.add([mk(at(13, 5, 16), .start, .geofence)], to: &log)
+        MarkerLog.add([mk(at(13, 2), .start, .voice)], to: &log)
+        MarkerLog.add([mk(at(13, 16), .end, .voice)], to: &log)
+        XCTAssertEqual(log.count, 2)
+        let start = log.first { $0.phase == .start }!
+        XCTAssertEqual(start.at, at(13, 2), "the earliest time is kept")
+        XCTAssertEqual(start.source, .voice, "the best source is kept")
+        var routines = RoutineLearner.learn(day: log, healthWake: nil, routines: Routine.defaults)
+        routines = RoutineLearner.learn(day: log, healthWake: nil, routines: routines)
+        XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
+    }
+
+    func testAMarkerFarFromTheFirstIsKept() {
+        var log: [TimelineEvent] = []
+        let a = TimelineEvent(at: Fx.mon(8), phrase: "x", activity: "study", category: .study, phase: .start)
+        let b = TimelineEvent(at: Fx.mon(8, 10), phrase: "x", activity: "study", category: .study, phase: .start)
+        MarkerLog.add([a, b], to: &log)
+        XCTAssertEqual(log.count, 2)
+        XCTAssertEqual(MarkerLog.merged([b, a, a]).count, 2)
     }
 }

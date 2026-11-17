@@ -28,11 +28,11 @@ public struct DayTotals: Codable, Hashable, Sendable {
 public struct PeriodSummary: Codable, Hashable, Sendable {
     public var days: Int
     public var averageMinutes: [TimeCategory: Int]
-    public var followThrough: Double?     // done / planned study
+    public var followThrough: Double?
     public var averageSleep: Int?
     public var averageMood: Double?
     public var averageScreen: Int?
-    public var bestHours: [Int]           // when the student actually gets work done
+    public var bestHours: [Int]
     public var estimateFactors: [String: Double]
     public var patterns: [String]
 }
@@ -43,8 +43,8 @@ public enum Insights {
         let segs = TimelineBuilder.segments(inputs, calendar: cal, now: now)
         let totals = TimelineBuilder.totals(segs, screen: inputs.screen)
         let dayMoods = moods.filter { cal.isDate($0.at, inSameDayAs: inputs.day) }.map { Double($0.mood) }
-        let done = inputs.outcomes.filter { cal.isDate($0.plannedStart, inSameDayAs: inputs.day) }
-            .reduce(0) { $0 + ($1.status == .skipped ? 0 : $1.actualMinutes) }
+        let done = WorkDone.minutes(on: inputs.day, outcomes: inputs.outcomes, progress: inputs.progress,
+                                    markers: inputs.events, calendar: cal)
         return DayTotals(day: cal.startOfDay(for: inputs.day), minutes: totals, plannedStudy: plannedStudy, doneStudy: done,
                          mood: dayMoods.isEmpty ? nil : dayMoods.reduce(0, +) / Double(dayMoods.count),
                          sleep: inputs.health?.sleepMinutes, screen: inputs.screen?.distractingMinutes,

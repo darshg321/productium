@@ -2,9 +2,6 @@ import SwiftUI
 import AppIntents
 import ProductiumCore
 
-/// Step-by-step Shortcuts recipes. Each automation is something the app can't do alone: notice
-/// another app opening, react to a Wi-Fi network or NFC tag, or use actions only Shortcuts has
-/// (grayscale, Focus). Every step names the exact button to tap.
 struct ShortcutsGuideView: View {
     @Environment(\.dismiss) private var dismiss
     var inSheet = false
@@ -145,7 +142,6 @@ struct RecipeView: View {
     }
 }
 
-/// One automation, written as taps. Shortcuts' own wording is in bold.
 struct Recipe: Identifiable {
     struct Part { var title: String; var steps: [String]; var note: String? = nil }
     var id: String
@@ -158,7 +154,6 @@ struct Recipe: Identifiable {
     var copy: [String] = []
     var tip: String? = nil
 
-    /// The same opening for every automation.
     static func start(_ trigger: String) -> [String] {
         ["In Shortcuts, open the **Automation** tab and tap **+** (top right). If you have no automations yet, tap **New Automation**.",
          trigger]
@@ -186,18 +181,39 @@ struct Recipe: Identifiable {
                 ]),
                ],
                copy: ["productium://gap"],
-               tip: "Pick apps in the same automation instead of making one per app. Then do “Count Scrolling Time” with the same apps."),
+               tip: "Make one automation per app and type that app's name in the **App** field of the action. That's how Productium tells Instagram from Discord, and how it ends one session when you switch to the other. Then do “Count Scrolling Time” the same way."),
         Recipe(id: "count", title: "Count Scrolling Time", trigger: "When those apps are closed",
                symbol: "timer", color: .indigo,
-               why: "Tells Productium when you leave one of those apps, so it can count your minutes each day (your weekly limit uses them, no screenshot needed) and stop the “still scrolling?” check-ins once you're out.",
+               why: "Tells Productium when you leave one of those apps, so it can count your minutes each day. Be aware: iOS's “Is Closed” trigger is unreliable. It fires when you switch apps from the app switcher, but it can miss going Home or locking the phone. That's why the next two recipes exist, and why a session with no clear end is counted as your usual length (marked estimated), never as the whole evening.",
                parts: [
                 Part(title: "Steps", steps: start("Tap **App**.") + [
-                    "Tap **Choose** and tick the same apps as your pause automation. Tap **Done**.",
+                    "Tap **Choose** and tick one scrolling app. Tap **Done**.",
                     "Untick **Is Opened** and tick **Is Closed**.",
                     runNow, blank,
-                    "Search for **Closed a Distracting App** (Productium), tap it, then **Done**.",
+                    "Search for **Closed a Distracting App** (Productium), tap it, type the app's name in **App**, then **Done**.",
                 ], note: "Without this, check-ins arrive on a timer even if you already closed the app."),
                ]),
+        Recipe(id: "other", title: "End Scrolling When You Open Another App", trigger: "When Messages, Safari, Camera… is opened",
+               symbol: "arrow.left.arrow.right", color: .teal,
+               why: "Opening any other app proves you stopped scrolling. Productium ends the session at that moment, so “Is Closed” missing a Home or lock doesn't cost you a long, made-up session. This one matters most.",
+               parts: [
+                Part(title: "Steps", steps: start("Tap **App**.") + [
+                    "Tap **Choose** and tick the apps you use that aren't scrolling: Messages, Safari, Camera, Slack, Notes. Tap **Done**.",
+                    "Leave **Is Opened** ticked and untick **Is Closed**.",
+                    runNow, blank,
+                    "Search for **Closed a Distracting App** (Productium) and tap it. Leave **App** empty, which means any. Tap **Done**.",
+                ]),
+               ]),
+        Recipe(id: "stop", title: "Stop Counting at Night", trigger: "Charger connected, alarm stopped, a Focus turns on",
+               symbol: "powerplug.fill", color: .mint,
+               why: "Plugging in, stopping your alarm, or turning on a Sleep, Work or Driving Focus almost always means you're done scrolling. Productium ends any open session then, and cancels the “still scrolling?” check-ins that would otherwise keep firing on a locked phone.",
+               parts: [
+                Part(title: "Make one for each", steps: start("Choose **Charger** → **Is Connected**, or **Alarm** → **Is Stopped**, or **Sleep**, **Work** or **Driving** (Focus) → **Turns On**.") + [
+                    runNow, blank,
+                    "Search for **Probably Stopped Scrolling** (Productium), tap it, and pick what happened: **Charger connected**, **Alarm stopped** or **A Focus turned on**. Tap **Done**.",
+                ], note: "Opening Productium, or running any of its actions, also ends a session."),
+               ],
+               tip: "When you answer “No, I stopped” to a check-in, the session ends at the later of your last “yes” and your usual session length. No answer ends it the same way."),
         Recipe(id: "gray", title: "Grayscale at Night", trigger: "Add to your pause automation",
                symbol: "circle.lefthalf.filled", color: .gray,
                why: "A gray screen is less rewarding to scroll. This turns it on only when the plan says wind-down or sleep, so it never gets in the way during the day.",

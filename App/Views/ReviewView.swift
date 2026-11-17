@@ -2,16 +2,13 @@ import SwiftUI
 import Charts
 import ProductiumCore
 
-/// The last seven days as Health-style highlight cards: Claude's weekly note, then sleep,
-/// work and scrolling (one number, one comparison, one small chart each), then the week
-/// drawn as it actually went.
 struct ReviewView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         NavigationStack {
-            let this = model.dayTotals(last: 7)
-            let prev = Array(model.dayTotals(last: 14).prefix(7))
+            let this = model.dayTotals(last: 7, includeToday: true)
+            let prev = Array(model.dayTotals(last: 14, includeToday: true).prefix(7))
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     note
@@ -21,7 +18,7 @@ struct ReviewView: View {
                     screenCard(this)
                     SectionTitle("Your Week")
                     Card {
-                        CardHeader(title: "As It Went", symbol: "calendar", color: .secondary, detail: "Last 7 days")
+                        CardHeader(title: "As It Went", symbol: "calendar", color: .secondary, detail: "Today so far and the 6 days before")
                         WeekAsLived(days: lastDays)
                     }
                 }
@@ -38,12 +35,10 @@ struct ReviewView: View {
     private var lastDays: [Date] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        return (1...7).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
+        return (0...6).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
     }
 
     private func avg(_ xs: [Int]) -> Int? { xs.isEmpty ? nil : xs.reduce(0, +) / xs.count }
-
-    // MARK: Cards
 
     @ViewBuilder private var note: some View {
         Card {
@@ -54,13 +49,6 @@ struct ReviewView: View {
                 ForEach(r.wins + r.suggestions, id: \.self) { line in
                     Text(line).font(.subheadline).fixedSize(horizontal: false, vertical: true)
                 }
-                if r.changes != nil {
-                    Button { model.applyReviewChanges() } label: {
-                        Text("Apply Suggested Changes").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .padding(.top, 4)
-                }
             } else if model.busy.contains("review") {
                 HStack(spacing: 10) { ProgressView(); Text("Claude is reading your week…").foregroundStyle(.secondary) }
             } else {
@@ -70,12 +58,26 @@ struct ReviewView: View {
         }
     }
 
+    private var sleepSource: String? {
+        let week = model.state.health.filter { $0.sleepMinutes != nil && $0.day > Date().addingTimeInterval(-8 * 86400) }
+        let sources = Set(week.map { $0.sleepSource ?? .health })
+        guard !sources.isEmpty else { return nil }
+        return sources.count == 1 ? sources.first!.label.prefix(1).uppercased() + sources.first!.label.dropFirst() : "From Health and your check-ins"
+    }
+
     private func sleepCard(_ this: [DayTotals], _ prev: [DayTotals]) -> some View {
         let s = avg(this.compactMap(\.sleep)), before = avg(prev.compactMap(\.sleep))
         return Card {
             CardHeader(title: "Sleep", symbol: "bed.double.fill", color: Theme.sleep, detail: "Average")
             if let s {
                 DurationValue(minutes: s)
+                if let src = sleepSource {
+                    Text(src).font(.subheadline).foregroundStyle(.secondary)
+                }
+                if model.healthStatus == .noSleepSource {
+                    Text("Nothing on your phone records sleep, so these are estimates. For measured sleep, turn on Sleep Schedule in the Health app or wear a Watch.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 if let b = before {
                     let d = s - b
                     Text(abs(d) < 10 ? "About the same as the week before." : "\(durationLabel(abs(d))) \(d > 0 ? "more" : "less") than the week before.")
@@ -95,7 +97,7 @@ struct ReviewView: View {
                 .chartYAxis { AxisMarks(position: .trailing) }
                 .frame(height: 110)
             } else {
-                Text("Turn on Health in Settings, or tell the Inbox when you woke up.")
+                Text(model.healthStatus.emptyMessage ?? "No sleep recorded yet. Tell the Inbox when you woke up.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
         }
@@ -143,8 +145,6 @@ struct ReviewView: View {
     }
 }
 
-/// Seven strips, one per day, showing what the time actually went to (observed or
-/// assumed), with a legend.
 struct WeekAsLived: View {
     @Environment(AppModel.self) private var model
     let days: [Date]

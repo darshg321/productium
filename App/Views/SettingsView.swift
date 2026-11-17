@@ -4,8 +4,6 @@ import UniformTypeIdentifiers
 import Charts
 import ProductiumCore
 
-/// Settings, laid out like the iOS Settings app: the account-style Claude row on top,
-/// then coloured icon rows that each open one page.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
 
@@ -22,6 +20,11 @@ struct SettingsView: View {
                         }
                     }
                     .padding(.vertical, 4)
+                }
+                NavigationLink { PastPromptsView() } label: {
+                    LabeledContent { Text("\(model.state.archive.conversations.count)") } label: {
+                        SettingsLabel(title: "Past Prompts", symbol: "tray.full.fill", color: .blue)
+                    }
                 }
                 NavigationLink { UsageView(inSheet: false) } label: {
                     LabeledContent { Text("\(tokensLabel(model.tokensToday)) today") } label: {
@@ -45,15 +48,14 @@ struct SettingsView: View {
             Section {
                 row("Connections", "link", .green, nil) { ConnectionSettings() }
                 row("Places", "location.fill", .blue, model.state.integrations.location ? "On" : "Off") { PlacesSettings() }
-                row("Routines", "figure.walk", .orange, nil) { RoutineSettings() }
+                row("What Productium Thinks", "brain.head.profile", .orange, nil) { ThinksView() }
+                row("About You", "person.text.rectangle.fill", .teal, nil) { AboutYouView() }
             }
 
             Section {
                 row("Backup & Restore", "externaldrive.fill", .gray, nil) { BackupSettings() }
-                if Signature.isFreeTier || model.signatureExpiry != nil {
-                    row("Keeping It Installed", "arrow.clockwise", .indigo,
-                        model.signatureExpiry.map { $0.formatted(.dateTime.month(.abbreviated).day()) }) { InstallSettings() }
-                }
+                row("Keeping It Installed", "arrow.clockwise", .indigo,
+                    UpdateChecker.shared.available.map { "\($0) available" } ?? "v\(UpdateChecker.installed)") { InstallSettings() }
             }
 
             Section {
@@ -81,8 +83,6 @@ struct SettingsView: View {
         }
     }
 }
-
-// MARK: - Claude
 
 struct ClaudeSettings: View {
     @Environment(AppModel.self) private var model
@@ -133,10 +133,10 @@ struct ClaudeSettings: View {
             }
 
             Section {
-                LabeledContent("Model", value: "Sonnet")
-                LabeledContent("Effort", value: "Low")
+                LabeledContent("Inbox, screenshots, reads", value: AIFeature.box.route.title)
+                LabeledContent("Reflection (rare, needs your OK)", value: AIFeature.reflection.route.title)
             } header: { Text("Model") } footer: {
-                Text("Everything uses Sonnet at low effort. On this app's own requests it wrote a little over half the tokens Haiku 5.5 did, because Haiku's thinking can't be turned off. Flashcards and short reads are made in small batches, only when you open a gap.")
+                Text("Everything uses Sonnet at low effort, except the rare reflection, which uses Opus at medium effort and only ever proposes changes for you to approve. On this app's own requests it wrote a little over half the tokens Haiku 5.5 did, because Haiku's thinking can't be turned off. Flashcards and short reads are made in small batches, only when you open a gap.")
             }
         }
         .listStyle(.insetGrouped)
@@ -145,10 +145,6 @@ struct ClaudeSettings: View {
     }
 }
 
-// MARK: - AI usage
-
-/// The detail behind the toolbar meter: today against the budget, where tokens went,
-/// the last week, and what the server itself counted.
 struct UsageView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -233,6 +229,8 @@ struct UsageView: View {
                 Text("The Inbox always works. Flashcards, short reads, project steps and the weekly note wait until tomorrow once the budget is spent.")
             }
 
+            SubscriptionSection()
+
             Section {
                 if let u = model.serverUsage {
                     LabeledContent("Today (server day, UTC)", value: "\(tokensLabel(u.todayTokens)) · \(u.todayRequests)×")
@@ -249,9 +247,13 @@ struct UsageView: View {
             }
 
             let recent = Array(ledger.records.suffix(8).reversed())
-            if !recent.isEmpty {
-                Section("Recent Requests") {
-                    ForEach(recent, id: \.at) { r in
+            Section {
+                ForEach(recent, id: \.at) { r in
+                    NavigationLink {
+                        if let c = model.call(r.callId) { AICallDetailView(call: c) }
+                        else { ContentUnavailableView("Not kept", systemImage: "doc.text.magnifyingglass",
+                                                      description: Text("This request is older than the saved log, or from before it existed.")) }
+                    } label: {
                         HStack(spacing: 12) {
                             IconTile(symbol: Theme.symbol(for: r.feature), color: Theme.color(for: r.feature), size: 24)
                             VStack(alignment: .leading, spacing: 1) {
@@ -266,18 +268,29 @@ struct UsageView: View {
                         }
                     }
                 }
+                NavigationLink {
+                    AICallListView()
+                } label: {
+                    LabeledContent("All Requests", value: "\(model.callLog.calls.count)")
+                }
+            } header: { Text("Recent Requests") } footer: {
+                Text("Tap one to see the exact prompt that was sent and the reply that came back, failed ones included.")
             }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("AI Usage")
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.refreshServerUsage() }
+        .task {
+            while !Task.isCancelled {
+                await model.refreshSubscription()
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
         .onChange(of: model.state.usage.dailyBudget) { _, _ in model.save() }
         .onChange(of: model.state.usage.pauseBackgroundOverBudget) { _, _ in model.save() }
     }
 }
-
-// MARK: - Schedule, sleep, study
 
 struct ScheduleSettings: View {
     @Environment(AppModel.self) private var model
@@ -290,21 +303,34 @@ struct ScheduleSettings: View {
                 WeekdayToggles(days: $m.state.prefs.schoolDays, label: "School Days")
             }
             Section {
-                ForEach(model.state.commitments) { c in
+                let sorted = model.state.commitments.sorted { ($0.kind == .school ? 0 : 1, $0.start, $0.title) < ($1.kind == .school ? 0 : 1, $1.start, $1.title) }
+                ForEach(sorted) { c in
                     Button { editing = c } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(c.title).foregroundStyle(.primary)
+                            HStack(spacing: 6) {
+                                Circle().fill(Theme.named(Palette.color(for: c, colors: model.state.prefs.colors)) ?? Theme.fixed)
+                                    .frame(width: 8, height: 8)
+                                Text(c.title).foregroundStyle(.primary)
+                            }
                             Text("\(c.weekdays.sorted().map { Calendar.current.shortWeekdaySymbols[$0 - 1] }.joined(separator: " ")), \(c.start.label) to \(c.end.label)")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
-                .onDelete { m.state.commitments.remove(atOffsets: $0); model.replan() }
+                .onDelete { offsets in
+                    let ids = Set(offsets.map { sorted[$0].id })
+                    m.state.commitments.removeAll { ids.contains($0.id) }
+                    m.state.exceptions.removeAll { $0.commitmentId.map(ids.contains) ?? false }
+                    model.replan()
+                }
                 Button {
                     editing = Commitment(title: "", kind: .extracurricular, weekdays: [2, 4], start: TimeOfDay(16), end: TimeOfDay(17, 30))
                 } label: { Label("Add Class or Activity", systemImage: "plus") }
             } header: { Text("Classes & Activities") } footer: {
-                Text("Or just tell the Inbox: “soccer mon and wed 4 to 5:30”.")
+                Text("Or just tell the Inbox: “soccer mon and wed 4 to 5:30”, or “split school into my periods” with your timetable.")
+            }
+            Section {
+                NavigationLink { ColorSettings() } label: { Label("Colours", systemImage: "paintpalette") }
             }
         }
         .listStyle(.insetGrouped)
@@ -332,8 +358,10 @@ struct SleepSettings: View {
             }
             Section {
                 Toggle("Work Back from First Class", isOn: $m.state.prefs.autoWake)
-                TimePicker(label: model.state.prefs.autoWake ? "Latest School-Day Wake" : "School-Day Wake", time: $m.state.prefs.schoolDayWake)
-                TimePicker(label: "Free-Day Wake", time: $m.state.prefs.freeDayWake)
+                if !model.state.prefs.autoWake {
+                    TimePicker(label: "School-Day Wake", time: $m.state.prefs.schoolDayWake)
+                    TimePicker(label: "Free-Day Wake", time: $m.state.prefs.freeDayWake)
+                }
             } header: { Text("Wake Up") } footer: {
                 Text("Keeping free-day wake within about an hour of school days avoids “social jet lag”.")
             }
@@ -351,20 +379,14 @@ struct StudySettings: View {
         @Bindable var m = model
         List {
             Section {
-                Stepper(value: $m.state.prefs.maxStudyMinutesSchoolDay, in: 30...360, step: 15) {
-                    LabeledContent("Most on a school day", value: durationLabel(model.state.prefs.maxStudyMinutesSchoolDay))
-                }
-                Stepper(value: $m.state.prefs.maxStudyMinutesFreeDay, in: 30...480, step: 15) {
-                    LabeledContent("Most on a free day", value: durationLabel(model.state.prefs.maxStudyMinutesFreeDay))
-                }
-                Stepper(value: $m.state.prefs.minFreeMinutesSchoolDay, in: 30...300, step: 15) {
-                    LabeledContent("Protected free time", value: durationLabel(model.state.prefs.minFreeMinutesSchoolDay))
-                }
-            }
-            Section {
                 Toggle("Small Sleep Trade-offs for Deadlines", isOn: $m.state.prefs.allowSleepTradeoffs)
             } footer: {
                 Text("Capped at 1 hour on rare nights, only for high-stakes writing or projects, and never before a test. Sleep is when studying gets stored.")
+            }
+            Section {
+                NavigationLink { ThinksView() } label: { Label("How Much You Study, Learned", systemImage: "brain.head.profile") }
+            } footer: {
+                Text("Productium learns how much you actually get done on school and free days, the free time you keep, and your focus length. Tell the Inbox if it's wrong (“I can do about 2 hours on school days”).")
             }
         }
         .listStyle(.insetGrouped)
@@ -386,18 +408,21 @@ struct ScreenTimeSettings: View {
                 Text("Blocking and measuring apps uses Apple's Screen Time API, which needs a paid developer account. This build was signed with a free one.")
             }
             Section {
-                NavigationLink { RecipeView(recipe: Recipe.scrolling[0]) } label: { RecipeRow(recipe: Recipe.scrolling[0]) }
-                NavigationLink { RecipeView(recipe: Recipe.scrolling[1]) } label: { RecipeRow(recipe: Recipe.scrolling[1]) }
-                NavigationLink { RecipeView(recipe: Recipe.scrolling[2]) } label: { RecipeRow(recipe: Recipe.scrolling[2]) }
+                ForEach(Recipe.scrolling) { r in NavigationLink { RecipeView(recipe: r) } label: { RecipeRow(recipe: r) } }
             } header: { Text("Add a Pause Instead") } footer: {
-                Text("Opening one of those apps brings up a short pause with something better to do. “Go back anyway” skips it for 10 minutes. With the second automation, Productium also counts your minutes.")
+                Text("Opening one of those apps brings up a short pause with something better to do. “Go back anyway” skips it for 10 minutes. With the others, Productium counts your minutes and notices when you stop, even if iOS misses you going Home or locking the phone.")
             }
             let log = Friction.log
             if let d = log.today(Date(), calendar: .current) {
-                Section("Today") {
+                Section {
                     LabeledContent("Opened", value: "\(d.opens)×")
                     LabeledContent("Paused", value: "\(d.pauses)×")
-                    if log.measuresClosing { LabeledContent("Time in those apps", value: durationLabel(d.minutes)) }
+                    if log.measuresClosing {
+                        let mins = log.minutes(on: Date(), calendar: .current).values.reduce(0, +)
+                        LabeledContent("Time in those apps", value: durationLabel(mins))
+                    }
+                } header: { Text("Today") } footer: {
+                    Text("“App is closed” can miss going Home or locking the phone, so a session with no clear end counts as your usual length (marked estimated), never the whole evening.")
                 }
             }
             #else
@@ -420,9 +445,7 @@ struct ScreenTimeSettings: View {
             }
             if model.state.integrations.screenTime {
                 Section {
-                    Stepper(value: $m.state.prefs.screenTimeGoalMinutes, in: 0...240, step: 15) {
-                        LabeledContent("Daily goal", value: durationLabel(model.state.prefs.screenTimeGoalMinutes))
-                    }
+                    LabeledContent("Heading for", value: durationLabel(model.state.taper.goalMinutes))
                     if let t = model.state.taper.targetMinutes {
                         LabeledContent("Today's limit", value: durationLabel(t))
                     }
@@ -432,6 +455,13 @@ struct ScreenTimeSettings: View {
                 }
             }
             #endif
+            Section {
+                NavigationLink { ScrollingAppsView() } label: {
+                    LabeledContent("Scrolling Apps", value: "\(model.state.scrollingApps.values.filter { $0 }.count) on")
+                }
+            } footer: {
+                Text("This list, not a guess, decides what counts as scrolling in Your Week, Review and the plan.")
+            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Screen Time")
@@ -441,9 +471,30 @@ struct ScreenTimeSettings: View {
     }
 }
 
-// MARK: - Notifications
+struct ScrollingAppsView: View {
+    @Environment(AppModel.self) private var model
 
-/// How much the phone interrupts, what with, and a preview of what's actually coming.
+    var body: some View {
+        let apps = model.state.scrollingApps.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        List {
+            if apps.isEmpty {
+                Section { Text("Apps show up here once they appear in a Screen Time screenshot you send the Inbox, or in a Shortcuts automation.") }
+            } else {
+                Section {
+                    ForEach(apps, id: \.self) { name in
+                        Toggle(name, isOn: Binding(get: { model.state.scrollingApps[name] ?? false },
+                                                   set: { model.setScrolling(name, $0) }))
+                    }
+                } footer: {
+                    Text("On means it counts as scrolling. Social, video and games start on; you decide about browsers.")
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Scrolling Apps")
+    }
+}
+
 struct NudgeSettingsView: View {
     @Environment(AppModel.self) private var model
 
@@ -496,7 +547,7 @@ struct NudgeSettingsView: View {
                     SettingsLabel(title: "Scrolling Check-ins", symbol: "hand.raised.fill", color: .purple)
                 }
             } footer: {
-                Text("“When you get home” needs Places. Scrolling check-ins come after “Go back anyway” in a pause: \(model.state.prefs.nudges.level.scrollCheckIns.map { "\($0)" }.joined(separator: ", ")) minutes in, and stop when you close the app (with the Count Scrolling Time automation).")
+                Text("“When you get home” needs Places. Scrolling check-ins come after “Go back anyway” in a pause: \(model.state.prefs.nudges.level.scrollCheckIns.map { "\($0)" }.joined(separator: ", ")) minutes in, and the next only comes if you answer Yes, so they stop on a locked phone.")
             }
 
             Section {
@@ -549,8 +600,6 @@ struct NudgeSettingsView: View {
     }
 }
 
-// MARK: - Connections, places, routines
-
 struct ConnectionSettings: View {
     @Environment(AppModel.self) private var model
 
@@ -559,8 +608,9 @@ struct ConnectionSettings: View {
         List {
             Section {
                 toggle("Health", "heart.fill", .pink, model.state.integrations.health) { on in
-                    if on { try? await HealthService.shared.requestAuthorization() }
-                    m.state.integrations.health = on
+                    var answered = !on
+                    if on { do { try await HealthService.shared.requestAuthorization(); answered = true } catch {} }
+                    m.state.integrations.health = on && answered
                     await model.refresh(full: false)
                 }
                 toggle("Read Calendar", "calendar", .red, model.state.integrations.calendarImport) { on in
@@ -571,8 +621,15 @@ struct ConnectionSettings: View {
                     m.state.integrations.calendarExport = on ? await CalendarService.shared.requestAccess() : false
                     model.replan()
                 }
+                toggle("Motion", "figure.walk.motion", .green, model.state.integrations.motion) { on in
+                    m.state.integrations.motion = on ? await MotionService.shared.requestAccess() : false
+                    await model.refresh(full: false)
+                }
+                if model.state.integrations.health {
+                    LabeledContent("Health Status", value: model.healthStatus.title)
+                }
             } footer: {
-                Text("Health brings in sleep, steps and daylight. The plan is written to a separate “Productium” calendar.")
+                Text("Health brings in sleep, steps and daylight. Motion notices walks and rides (not where), so your commute is learned and your day fills in by itself. The plan is written to a separate “Productium” calendar.")
             }
             Section {
                 toggle("Notifications", "bell.badge.fill", .red, model.state.integrations.notifications) { on in
@@ -611,12 +668,22 @@ struct PlacesSettings: View {
             Section {
                 Toggle("Auto Check-in with Places", isOn: Binding(get: { model.state.integrations.location }, set: { on in
                     m.state.integrations.location = on
+                    LocationService.shared.visitsWanted = on
                     if on { LocationService.shared.requestAlways() }
+                    LocationService.shared.monitorVisits(on)
                     LocationService.shared.monitor(on ? model.state.places : [])
                     model.save()
                 }))
+                LabeledContent("Location Access", value: LocationService.shared.statusText)
+                if LocationService.shared.needsSettings {
+                    Button("Open Settings → Location → Always") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                }
             } footer: {
-                Text("Leaving home and arriving at school get logged on their own, so your commute is learned without tapping. Only arrive/leave events are kept, never a location history.")
+                Text(LocationService.shared.status == .authorizedWhenInUse
+                     ? "Only While Using: leaving home and arriving at school are missed when the app is closed. Choose Always in Settings so they're noticed on their own."
+                     : "Leaving home and arriving at school get logged on their own, so your commute is learned without tapping. Only arrive/leave events are kept, never a location history.")
             }
             Section("Saved Places") {
                 ForEach(["home", "school"], id: \.self) { id in
@@ -657,7 +724,7 @@ struct RoutineSettings: View {
                     Toggle(isOn: $r.enabled) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(r.name)
-                            Text(r.isLearned ? "Usually \(r.minutes) min (learned)" : "About \(r.defaultMinutes) min (still learning)")
+                            Text(r.disagreement ?? "\(r.confidence.title) · \(r.minutes) min")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -667,7 +734,7 @@ struct RoutineSettings: View {
             }
             Section {
                 Button("Re-learn Routines", role: .destructive) {
-                    for i in m.state.routines.indices { m.state.routines[i].samples = [] }
+                    for i in m.state.routines.indices { m.state.routines[i].samples = []; m.state.routines[i].stated = nil; m.state.routines[i].learnedFrom = [] }
                     model.replan()
                 }
             }
@@ -678,9 +745,6 @@ struct RoutineSettings: View {
     }
 }
 
-// MARK: - Backup & restore
-
-/// The backup as a document, so the system save sheet can put it anywhere (Files, iCloud Drive…).
 struct BackupDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
     var data: Data
@@ -704,11 +768,13 @@ struct BackupSettings: View {
         List {
             Section {
                 Button {
-                    do {
-                        document = BackupDocument(data: try model.backupData())
-                        exporting = true
-                    } catch {
-                        errorText = error.localizedDescription
+                    Task {
+                        do {
+                            document = BackupDocument(data: try await model.backupData())
+                            exporting = true
+                        } catch {
+                            errorText = error.localizedDescription
+                        }
                     }
                 } label: {
                     SettingsLabel(title: "Back Up All Data", symbol: "square.and.arrow.down.fill", color: .blue)
@@ -717,7 +783,7 @@ struct BackupSettings: View {
                     LabeledContent("Last Backup", value: Date(timeIntervalSince1970: lastBackup).formatted(date: .abbreviated, time: .shortened))
                 }
             } footer: {
-                Text("Saves everything in Productium to one file you choose where to keep: tasks, schedule, check-ins, sleep and screen-time history, flashcards, what it has learned about you, AI usage and all settings. Your API key isn't included.")
+                Text("Saves every byte Productium keeps to one file you choose where to keep: tasks, schedule, check-ins, sleep and screen-time history, flashcards, what it has learned about you, About You, every prompt you've sent (with its screenshots) and every AI reply, AI usage, all settings, and a snapshot of notifications and permissions for debugging. Your API key isn't included: it stays in the Keychain.")
             }
 
             Section {
@@ -760,7 +826,7 @@ struct BackupSettings: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { r in
             switch r {
             case .success(let url):
-                do { pending = try model.readBackup(from: url) } catch { errorText = "That file isn't a Productium backup." }
+                do { pending = try model.readBackup(from: url) } catch { errorText = (error as? ExportBundle.ReadError)?.description ?? "That file isn't a Productium export." }
             case .failure(let e):
                 errorText = e.localizedDescription
             }
@@ -785,24 +851,69 @@ struct BackupSettings: View {
     }
 }
 
+struct AboutYouView: View {
+    @Environment(AppModel.self) private var model
+    @State private var text = ""
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            TextEditor(text: $text)
+                .font(.callout.monospaced())
+                .padding(.horizontal, 12)
+            Text("What Productium knows about you. Lines you write or change end in (you), and the AI never overwrites them. Stated lines come from what you tell the Inbox; Inferred and Patterns lines come from the weekly reflection.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(16)
+        }
+        .navigationTitle("About You")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") { model.saveAboutMe(editedText: text); text = model.aboutMe.markdown }
+                    .disabled(text == model.aboutMe.markdown)
+            }
+        }
+        .onAppear {
+            guard !loaded else { return }
+            text = model.aboutMe.markdown
+            loaded = true
+        }
+    }
+}
+
 struct InstallSettings: View {
     @Environment(AppModel.self) private var model
+    @State private var updates = UpdateChecker.shared
 
     var body: some View {
         List {
+            Section {
+                LabeledContent("Version", value: "\(UpdateChecker.installed) (\(UpdateChecker.build))")
+                if let v = updates.available, let url = updates.latest.flatMap({ URL(string: $0.url) }) {
+                    Link(destination: url) { Label("\(v) is available", systemImage: "arrow.down.circle.fill") }
+                } else if updates.latest != nil {
+                    Label("You're up to date", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("Checked once a day against this app's public GitHub releases. Nothing about you is sent.")
+            }
             if let e = model.signatureExpiry {
                 Section { LabeledContent("Works Until", value: e.formatted(date: .abbreviated, time: .shortened)) }
             }
+            if Signature.isFreeTier || model.signatureExpiry != nil {
             Section {
                 Text("Free signing lasts 7 days. SideStore re-signs it on your phone over Wi-Fi: open SideStore, connect LocalDevVPN, tap Refresh All.")
                 Text("To make it automatic, add a daily Shortcuts automation with SideStore's “Refresh All Apps” action.")
                     .foregroundStyle(.secondary)
             }
             .font(.subheadline)
+            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Keeping It Installed")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await updates.checkIfDue() }
     }
 }
 
@@ -859,6 +970,7 @@ struct CommitmentEditor: View {
                 TimePicker(label: "Starts", time: $commitment.start)
                 TimePicker(label: "Ends", time: $commitment.end)
                 Stepper("Travel buffer: \(commitment.bufferMinutes) min", value: $commitment.bufferMinutes, in: 0...60, step: 5)
+                ColorChoice(color: $commitment.color, automatic: Theme.fixed)
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

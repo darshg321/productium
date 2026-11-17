@@ -26,7 +26,6 @@ extension ManagedSettingsStore.Name {
     static let windDown = Self("productium.winddown")
 }
 
-/// Shield logic used by the app, the DeviceActivity monitor and the shield action.
 enum ScreenShield {
     static let usageSteps = Array(stride(from: 15, through: 240, by: 15))
 
@@ -39,7 +38,6 @@ enum ScreenShield {
         if let d = try? JSONEncoder().encode(s) { SharedConfig.defaults.set(d, forKey: SharedConfig.Key.selection) }
     }
 
-    /// Shields the selected distracting apps, categories and websites in the given store.
     static func apply(_ store: ManagedSettingsStore.Name, reason: String) {
         guard let sel = loadSelection() else { return }
         let s = ManagedSettingsStore(named: store)
@@ -58,7 +56,6 @@ enum ScreenShield {
         [ManagedSettingsStore.Name.focus, .limit, .windDown].forEach(clear)
     }
 
-    // Usage minutes (threshold events give "at least N minutes today").
     static func recordUsage(_ minutes: Int, on date: Date = Date()) {
         let key = SharedConfig.Key.usagePrefix + SharedConfig.dayKey(date)
         if minutes > SharedConfig.defaults.integer(forKey: key) { SharedConfig.defaults.set(minutes, forKey: key) }
@@ -77,9 +74,6 @@ enum ScreenShield {
         return v ?? 3
     }
 
-    /// "15 more minutes": lift the limit shield and re-apply it when the window ends.
-    /// Every unlock is a deliberate tap past a pause, the friction that cut app openings
-    /// by more than half in Grüning et al. 2023.
     @discardableResult
     static func grantUnlock(minutes: Int = 15) -> Bool {
         let used = unlocksUsed()
@@ -88,7 +82,6 @@ enum ScreenShield {
         clear(.limit)
         let cal = Calendar.current
         let now = Date()
-        // DeviceActivity schedules must be ≥ 15 min; add one minute of margin.
         let end = now.addingTimeInterval(Double(max(15, minutes) + 1) * 60)
         let schedule = DeviceActivitySchedule(
             intervalStart: cal.dateComponents([.hour, .minute, .second], from: now),
@@ -97,7 +90,6 @@ enum ScreenShield {
         let center = DeviceActivityCenter()
         center.stopMonitoring([.unlock])
         do { try center.startMonitoring(.unlock, during: schedule) } catch {
-            // Couldn't schedule the re-lock, so don't leave it unlocked.
             apply(.limit, reason: "limit")
             return false
         }

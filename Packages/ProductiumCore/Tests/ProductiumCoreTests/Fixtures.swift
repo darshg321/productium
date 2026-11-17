@@ -9,7 +9,6 @@ enum Fx {
         return c
     }()
 
-    /// Monday 2026-11-16 at the given time.
     static func mon(_ h: Int, _ m: Int = 0, plusDays d: Int = 0) -> Date {
         let base = cal.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: h, minute: m))!
         return cal.date(byAdding: .day, value: d, to: base)!

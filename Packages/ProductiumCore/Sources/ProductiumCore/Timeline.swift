@@ -1,7 +1,5 @@
 import Foundation
 
-// MARK: - Categories of time
-
 public enum TimeCategory: String, Codable, CaseIterable, Sendable {
     case sleep, school, activities, study, commute, routine, screen, free
 
@@ -27,8 +25,6 @@ public enum TimeCategory: String, Codable, CaseIterable, Sendable {
     }
 }
 
-// MARK: - Check-in markers ("left home", "at school", "finished math")
-
 public enum MarkerPhase: String, Codable, Sendable { case start, end, point }
 public enum MarkerSource: String, Codable, Sendable { case manual, voice, geofence, notification, health, inferred }
 
@@ -36,7 +32,6 @@ public struct TimelineEvent: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var at: Date
     public var phrase: String
-    /// Normalised activity key (e.g. "to_school", "school", "math", "soccer").
     public var activity: String
     public var category: TimeCategory
     public var phase: MarkerPhase
@@ -54,9 +49,6 @@ public struct TimelineEvent: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-/// Turns tiny free-text check-ins into timeline markers, on the device and
-/// instantly. Anything it doesn't recognise goes to Claude, then comes back as
-/// the same `TimelineEvent`.
 public enum MarkerParser {
     public static func parse(_ raw: String, at: Date, commitments: [Commitment], calendar cal: Calendar,
                              source: MarkerSource = .manual) -> [TimelineEvent] {
@@ -110,7 +102,6 @@ public enum MarkerParser {
             return [ev(normalise(c.title), TimeCategory.from(c.kind), phase)]
         }
         if studyWords.contains(where: { subject.contains($0) }) { return [ev("study", .study, phase)] }
-        // A class name we don't know as a commitment, said during school hours: school.
         let hour = cal.component(.hour, from: at)
         let schoolish = ["math", "english", "history", "science", "bio", "chem", "physics", "french", "spanish", "art", "gym", "pe", "lunch", "period"]
         if schoolish.contains(where: { subject.contains($0) }) && (7...16).contains(hour) {
@@ -125,34 +116,93 @@ public enum MarkerParser {
     }
 }
 
-// MARK: - Learning from markers
+public enum MarkerLog {
+    public static let mergeWindow: TimeInterval = 3 * 60
+
+    static func rank(_ s: MarkerSource) -> Int {
+        switch s {
+        case .manual: return 5
+        case .voice: return 4
+        case .notification: return 3
+        case .geofence: return 2
+        case .health: return 1
+        case .inferred: return 0
+        }
+    }
+
+    /// Adds markers, folding a repeat of the same transition within 3 minutes into the existing one:
+    /// earliest time, best source. Returns what ended up new.
+    @discardableResult
+    public static func add(_ new: [TimelineEvent], to markers: inout [TimelineEvent]) -> [TimelineEvent] {
+        var added: [TimelineEvent] = []
+        for m in new {
+            if let i = markers.firstIndex(where: {
+                $0.activity == m.activity && $0.phase == m.phase && $0.phase != .point
+                    && abs($0.at.timeIntervalSince(m.at)) <= mergeWindow }) {
+                if m.at < markers[i].at { markers[i].at = m.at }
+                if rank(m.source) > rank(markers[i].source) {
+                    markers[i].source = m.source
+                    markers[i].phrase = m.phrase
+                }
+            } else {
+                markers.append(m)
+                added.append(m)
+            }
+        }
+        return added
+    }
+
+    /// Merges duplicates already stored (a voice and two geofence "left home"s become one).
+    public static func merged(_ markers: [TimelineEvent]) -> [TimelineEvent] {
+        var out: [TimelineEvent] = []
+        add(markers.sorted { $0.at < $1.at }, to: &out)
+        return out
+    }
+}
+
+public enum MarkerCategory {
+    static let studyWords = ["study", "homework", "revis", "essay", "assignment", "application", "draft", "reading"]
+
+    /// The category a marker belongs in, decided from its name; the model's own value is only the last resort.
+    public static func infer(activity: String, commitments: [Commitment], model: TimeCategory? = nil) -> TimeCategory {
+        let key = activity.lowercased().replacingOccurrences(of: " ", with: "_")
+        switch key {
+        case "to_school", "from_school", "travel", "commute": return .commute
+        case "get_ready": return .routine
+        default: break
+        }
+        if SleepEstimator.normalised(activity: activity, phase: .start) != nil
+            || SleepEstimator.normalised(activity: activity, phase: .end) != nil { return .sleep }
+        let norm = MarkerParser.normalise(activity.replacingOccurrences(of: "_", with: " "))
+        if let c = commitments.first(where: { MarkerParser.normalise($0.title) == norm }) { return TimeCategory.from(c.kind) }
+        if studyWords.contains(where: { norm.contains($0) }) { return .study }
+        return model ?? .free
+    }
+}
 
 public enum RoutineLearner {
-    /// Looks at one day's markers and teaches the routines how long they take.
-    /// Returns the routines with new samples added.
     public static func learn(day events: [TimelineEvent], healthWake: Date?, routines: [Routine]) -> [Routine] {
         var out = routines
         let sorted = events.sorted { $0.at < $1.at }
-        func observe(_ id: String, from a: Date?, to b: Date?) {
-            guard let a, let b, b > a, let idx = out.firstIndex(where: { $0.id == id }) else { return }
-            out[idx].observe(Int((b.timeIntervalSince(a) / 60).rounded()))
+        func observe(_ id: String, from a: Date?, to b: TimelineEvent?) {
+            guard let a, let b, b.at > a, let idx = out.firstIndex(where: { $0.id == id }),
+                  !out[idx].learnedFrom.contains(b.id) else { return }
+            if out[idx].observe(Int((b.at.timeIntervalSince(a) / 60).rounded())) { out[idx].learnedFrom.insert(b.id) }
         }
-        func first(_ activity: String, _ phase: MarkerPhase, after: Date? = nil) -> Date? {
-            sorted.first { $0.activity == activity && $0.phase == phase && (after == nil || $0.at > after!) }?.at
+        func first(_ activity: String, _ phase: MarkerPhase, after: Date? = nil) -> TimelineEvent? {
+            sorted.first { $0.activity == activity && $0.phase == phase && (after == nil || $0.at > after!) }
         }
         let leftHome = first("to_school", .start)
-        let atSchool = first("to_school", .end, after: leftHome)
-        observe("to_school", from: leftHome, to: atSchool)
+        observe("to_school", from: leftHome?.at, to: first("to_school", .end, after: leftHome?.at))
         let leftSchool = first("from_school", .start)
-        observe("from_school", from: leftSchool, to: first("from_school", .end, after: leftSchool))
-        let wake = first("wake", .end) ?? first("sleep", .end) ?? healthWake
-        if let wake, let leftHome, leftHome.timeIntervalSince(wake) < 3 * 3600 {
+        observe("from_school", from: leftSchool?.at, to: first("from_school", .end, after: leftSchool?.at))
+        let wake = first("wake", .end)?.at ?? first("sleep", .end)?.at ?? healthWake
+        if let wake, let leftHome, leftHome.at.timeIntervalSince(wake) < 3 * 3600 {
             observe("get_ready", from: wake, to: leftHome)
         }
         return out
     }
 
-    /// How long a named commitment really runs (e.g. practice that always goes 20 min over).
     public static func observedDuration(of activity: String, in events: [TimelineEvent]) -> Int? {
         let s = events.sorted { $0.at < $1.at }
         guard let a = s.first(where: { $0.activity == activity && $0.phase == .start }),
@@ -161,14 +211,11 @@ public enum RoutineLearner {
     }
 }
 
-// MARK: - A day reconstructed: where the time actually went
-
 public struct Segment: Codable, Hashable, Sendable {
     public var start: Date
     public var end: Date
     public var category: TimeCategory
     public var label: String
-    /// True when filled in from routines/schedule rather than observed.
     public var inferred: Bool
     public var minutes: Int { Int(end.timeIntervalSince(start) / 60) }
 }
@@ -186,11 +233,20 @@ public struct DayInputs: Sendable {
     public var screen: ScreenDay?
     public var prefs: Preferences
     public var exceptions: [DayException]
+    public var motion: [MotionSpan]
+    public var scrollSessions: [ScrollSession]
+    public var scrollingApps: [String: Bool]
+    public var progress: [ProgressEntry]
 
     public init(day: Date, events: [TimelineEvent], commitments: [Commitment], fixedEvents: [FixedEvent] = [],
                 routines: [Routine], outcomes: [BlockOutcome], itemsById: [UUID: WorkItem] = [:],
                 health: HealthDay?, nextHealth: HealthDay? = nil, screen: ScreenDay?, prefs: Preferences,
-                exceptions: [DayException] = []) {
+                exceptions: [DayException] = [], motion: [MotionSpan] = [], scrollSessions: [ScrollSession] = [],
+                scrollingApps: [String: Bool] = [:], progress: [ProgressEntry] = []) {
+        self.progress = progress
+        self.scrollSessions = scrollSessions
+        self.scrollingApps = scrollingApps
+        self.motion = motion
         self.exceptions = exceptions
         self.day = day
         self.events = events
@@ -207,8 +263,6 @@ public struct DayInputs: Sendable {
 }
 
 public enum TimelineBuilder {
-    /// Paints a 1440-minute day in priority layers: schedule and routines (inferred) <
-    /// sleep < logged study < explicit check-ins. Untouched awake minutes are free time.
     public static func segments(_ d: DayInputs, calendar cal: Calendar, now: Date? = nil) -> [Segment] {
         let dayStart = cal.startOfDay(for: d.day)
         guard let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart) else { return [] }
@@ -224,14 +278,20 @@ public enum TimelineBuilder {
         }
         func at(_ t: TimeOfDay) -> Date { cal.date(bySettingHour: t.hour, minute: t.minute, second: 0, of: dayStart) ?? dayStart }
 
-        // Layer 1: schedule + routines (assumed to have happened).
         let occ = Commitment.occurrences(d.commitments, on: dayStart, exceptions: d.exceptions, calendar: cal)
         let todays = occ.map(\.commitment)
-        for o in occ { paint(o.start, o.end, TimeCategory.from(o.commitment.kind), o.commitment.title, observed: false) }
+        let weekday = cal.component(.weekday, from: dayStart)
+        for o in occ {
+            paint(o.start, o.end, TimeCategory.from(o.commitment.kind), o.commitment.title, observed: false)
+            for p in o.commitment.periods ?? [] where p.applies(on: weekday) {
+                paint(max(o.start, at(p.start)), min(o.end, at(p.end)), TimeCategory.from(o.commitment.kind), p.title, observed: false)
+            }
+        }
         for e in d.fixedEvents where cal.isDate(e.start, inSameDayAs: dayStart) {
             paint(e.start, e.end, TimeCategory.from(e.kind), e.title, observed: false)
         }
-        for r in d.routines where r.enabled {
+        let checkedIn = Set(d.events.filter { cal.isDate($0.at, inSameDayAs: dayStart) }.map(\.activity))
+        for r in d.routines where r.enabled && !checkedIn.contains(r.id) {
             let anchored = occ.filter { r.anchorKind == nil || $0.commitment.kind == r.anchorKind }
             switch r.anchor {
             case .beforeFirstCommitment:
@@ -249,29 +309,39 @@ public enum TimelineBuilder {
             }
         }
 
-        // Layer 2: sleep (HealthKit, or the planned sleep window).
+        for m in d.motion where m.end > dayStart && m.start < dayEnd {
+            guard let (c, l) = MotionTimeline.segment(m) else { continue }
+            paint(max(m.start, dayStart), min(m.end, dayEnd), c, l, observed: false)
+        }
+
         if let h = d.health, let wake = h.wake {
             let bed = h.bedtime ?? wake.addingTimeInterval(-Double(h.sleepMinutes ?? d.prefs.sleepNeedMinutes) * 60)
-            paint(max(bed, dayStart), wake, .sleep, "Sleep", observed: true)
+            paint(max(bed, dayStart), wake, .sleep, "Sleep", observed: h.sleepSource != .motion && h.sleepSource != .plan)
         } else {
-            // No Health data: assume the planned wake-up, which already knows about
-            // exceptions (no school today means a free-day wake).
             let w = WakePlanner.plan(for: dayStart, commitments: d.commitments, events: d.fixedEvents, routines: d.routines,
                                      prefs: d.prefs, calendar: cal, exceptions: d.exceptions).wake
             paint(dayStart, w, .sleep, "Sleep", observed: false)
         }
         if let next = d.nextHealth, let bed = next.bedtime, cal.isDate(bed, inSameDayAs: dayStart) {
-            // The night that starts this evening (its bedtime is today).
             paint(bed, dayEnd, .sleep, "Sleep", observed: true)
         }
 
-        // Layer 3: study the student actually did (block outcomes).
+        // Timed scrolling is exact where nothing else is known; school and sleep keep their time.
+        for sess in d.scrollSessions where sess.app.isEmpty == false && cal.isDate(sess.openedAt, inSameDayAs: dayStart) {
+            guard ScrollingApps.isScrolling(sess.app, d.scrollingApps) else { continue }
+            let end = sess.endedAt ?? min(now ?? dayEnd, sess.openedAt.addingTimeInterval(Double(ScrollLog.estimateCap) * 60))
+            let i = idx(sess.openedAt), j = idx(end)
+            guard j > i else { continue }
+            for m in i..<j where cat[m] == nil || cat[m] == .routine || cat[m] == .commute {
+                cat[m] = .screen; label[m] = sess.app; inferred[m] = sess.isEstimated || sess.isOpen
+            }
+        }
+
         for o in d.outcomes where o.status != .skipped && cal.isDate(o.plannedStart, inSameDayAs: dayStart) {
             let title = o.itemId.flatMap { d.itemsById[$0]?.title } ?? "Study"
             paint(o.plannedStart, o.plannedStart.addingTimeInterval(Double(o.actualMinutes) * 60), .study, title, observed: true)
         }
 
-        // Layer 4: explicit markers, the ground truth. Pair start → end per activity.
         let evs = d.events.filter { cal.isDate($0.at, inSameDayAs: dayStart) }.sorted { $0.at < $1.at }
         var open: [String: TimelineEvent] = [:]
         for e in evs {
@@ -292,7 +362,6 @@ public enum TimelineBuilder {
                 break
             }
         }
-        // Still-open activities run until the scheduled end, `now`, or 2 h max.
         for (_, s) in open {
             var end = s.at.addingTimeInterval(2 * 3600)
             if let scheduled = todays.first(where: { MarkerParser.normalise($0.title) == s.activity }) { end = at(scheduled.end) }
@@ -302,7 +371,6 @@ public enum TimelineBuilder {
             paint(s.at, end, s.category, display(s.activity), observed: true)
         }
 
-        // Future minutes on today aren't "free time" yet.
         let limit = now.map { cal.isDate($0, inSameDayAs: dayStart) ? idx($0) : total } ?? total
 
         var out: [Segment] = []
@@ -312,7 +380,8 @@ public enum TimelineBuilder {
             let l = cat[m] == nil ? "Free" : label[m]
             let inf = cat[m] == nil ? true : inferred[m]
             var n = m + 1
-            while n < limit && (cat[n] ?? .free) == c && (cat[n] == nil ? "Free" : label[n]) == l { n += 1 }
+            while n < limit && (cat[n] ?? .free) == c && (cat[n] == nil ? "Free" : label[n]) == l
+                    && (cat[n] == nil ? true : inferred[n]) == inf { n += 1 }
             out.append(Segment(start: dayStart.addingTimeInterval(Double(m) * 60),
                                end: dayStart.addingTimeInterval(Double(n) * 60), category: c, label: l, inferred: inf))
             m = n
@@ -332,25 +401,22 @@ public enum TimelineBuilder {
         }
     }
 
-    /// Minutes per category for one day. Screen time (from Screen Time thresholds)
-    /// isn't time-stamped, so it's carved out of free time.
     public static func totals(_ segments: [Segment], screen: ScreenDay?) -> [TimeCategory: Int] {
         var t: [TimeCategory: Int] = [:]
         for s in segments { t[s.category, default: 0] += s.minutes }
+        // Timed sessions are already in the strip; screenshot minutes beyond them have no timestamps,
+        // so they're carved out of free time as an estimate.
         if let scr = screen?.distractingMinutes, scr > 0 {
-            let carved = min(scr, t[.free] ?? 0)
+            let extra = max(0, scr - (t[.screen] ?? 0))
+            let carved = min(extra, t[.free] ?? 0)
             t[.free, default: 0] -= carved
-            t[.screen, default: 0] += scr
+            t[.screen, default: 0] += extra
         }
         return t
     }
 }
 
-// MARK: - What to suggest checking in next (one tap)
-
 public enum CheckInSuggester {
-    /// The one marker most likely to be useful right now, or nil. The app shows it
-    /// as a single chip, so the student taps instead of types.
     public static func suggestion(now: Date, todaysEvents: [TimelineEvent], commitments: [Commitment],
                                   routines: [Routine], calendar cal: Calendar) -> String? {
         let weekday = cal.component(.weekday, from: now)
@@ -361,7 +427,6 @@ public enum CheckInSuggester {
         let toSchool = routines.first { $0.id == "to_school" }?.minutes ?? 20
         let start = at(first.start), end = at(last.end)
         let leave = start.addingTimeInterval(-Double(toSchool + 15) * 60)
-        // Learning phase: ask until each routine has a few samples, then stop asking.
         let needsCommute = (routines.first { $0.id == "to_school" }?.samples.count ?? 0) < 5
         let needsHome = (routines.first { $0.id == "from_school" }?.samples.count ?? 0) < 5
         if needsCommute, now >= leave.addingTimeInterval(-20 * 60), now < start, !logged.contains("to_school|start") { return "Left home" }
@@ -372,5 +437,4 @@ public enum CheckInSuggester {
     }
 }
 
-// Encode `[TimeCategory: Int]` as a JSON object, not a flat array.
 extension TimeCategory: CodingKeyRepresentable {}

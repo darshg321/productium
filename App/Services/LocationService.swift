@@ -1,27 +1,67 @@
 import Foundation
 import CoreLocation
+import Observation
+import ProductiumCore
 
-/// Geofences for saved places (home, school, practice field…). Leaving home and
-/// arriving at school are logged automatically, so commute times are learned
-/// without any taps. Only enter/exit events are used. No location history is stored.
+@Observable
 final class LocationService: NSObject, CLLocationManagerDelegate {
-    static let shared = LocationService()
-    private let manager = CLLocationManager()
-    var onTransition: ((String, Bool) -> Void)?     // (placeId, entered)
-    private var pendingFix: CheckedContinuation<CLLocation?, Never>?
+    @ObservationIgnored static let shared = LocationService()
+    @ObservationIgnored private let manager = CLLocationManager()
+    @ObservationIgnored var onTransition: ((String, Bool) -> Void)?
+    @ObservationIgnored var onVisit: ((PlaceVisit) -> Void)?
+    @ObservationIgnored private var pendingFix: CheckedContinuation<CLLocation?, Never>?
+    private(set) var status: CLAuthorizationStatus = .notDetermined
+
+    private static let askedAlwaysKey = "location.askedAlways"
+    @ObservationIgnored private var wantsAlways = false
+    @ObservationIgnored var visitsWanted = false
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        status = manager.authorizationStatus
     }
 
-    var authorizedAlways: Bool { manager.authorizationStatus == .authorizedAlways }
+    var authorizedAlways: Bool { status == .authorizedAlways }
 
+    /// iOS ignores an Always request made while the When-In-Use prompt is up, so ask for When In Use first
+    /// and escalate once the answer arrives (and only once).
     func requestAlways() {
-        if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
+        wantsAlways = true
+        status = manager.authorizationStatus
+        switch status {
+        case .notDetermined: manager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse: escalateIfNeeded()
+        default: break
+        }
+    }
+
+    private func escalateIfNeeded() {
+        guard wantsAlways, manager.authorizationStatus == .authorizedWhenInUse,
+              !UserDefaults.standard.bool(forKey: Self.askedAlwaysKey) else { return }
+        UserDefaults.standard.set(true, forKey: Self.askedAlwaysKey)
         manager.requestAlwaysAuthorization()
     }
+
+    func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
+        status = m.authorizationStatus
+        escalateIfNeeded()
+        monitorVisits(visitsWanted)
+    }
+
+    var statusText: String {
+        switch status {
+        case .authorizedAlways: return "Always"
+        case .authorizedWhenInUse: return "Only While Using"
+        case .denied: return "Off"
+        case .restricted: return "Restricted"
+        default: return "Not Asked"
+        }
+    }
+
+    /// Arrive and leave events need Always; While Using only works with the app open.
+    var needsSettings: Bool { status == .authorizedWhenInUse || status == .denied }
 
     func currentLocation() async -> CLLocation? {
         await withCheckedContinuation { c in
@@ -40,6 +80,19 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
             r.notifyOnExit = true
             manager.startMonitoring(for: r)
         }
+    }
+
+    /// Visits need Always. They find the places you keep returning to without a location history.
+    func monitorVisits(_ on: Bool) {
+        if on, manager.authorizationStatus == .authorizedAlways { manager.startMonitoringVisits() } else { manager.stopMonitoringVisits() }
+    }
+
+    func locationManager(_ m: CLLocationManager, didVisit visit: CLVisit) {
+        let arrival = visit.arrivalDate == .distantPast ? nil : visit.arrivalDate
+        guard let arrival else { return }
+        let departure = visit.departureDate == .distantFuture ? nil : visit.departureDate
+        onVisit?(PlaceVisit(latitude: visit.coordinate.latitude, longitude: visit.coordinate.longitude,
+                            arrival: arrival, departure: departure))
     }
 
     func locationManager(_ m: CLLocationManager, didEnterRegion region: CLRegion) { onTransition?(region.identifier, true) }

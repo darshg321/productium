@@ -1,8 +1,6 @@
 import SwiftUI
 import ProductiumCore
 
-/// What Productium knows about one task and when it's planned. Edit opens the same form as
-/// adding a task (no tokens); the Inbox still takes plain-words changes ("move the essay to friday").
 struct TaskDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -23,7 +21,7 @@ struct TaskDetailView: View {
             List {
                 Section {
                     HStack(spacing: 14) {
-                        IconTile(symbol: item.kind.symbol, color: Theme.color(for: item.kind), size: 44)
+                        IconTile(symbol: item.kind.symbol, color: Theme.color(for: item, in: model.state), size: 44)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.title).font(.title3.weight(.bold)).fixedSize(horizontal: false, vertical: true)
                             Text([item.kind.rawValue.capitalized, item.subject].compactMap { $0 }.joined(separator: " · "))

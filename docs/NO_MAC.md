@@ -22,8 +22,9 @@ Comparison and research: [DISTRIBUTION.md](DISTRIBUTION.md).
 
 1. Push the repo to GitHub (a public repo gets unlimited macOS minutes).
 2. Set the Actions **variable** `BUNDLE_PREFIX` (e.g. `com.yourname`). No secrets needed.
-3. **Actions → ios → Run workflow** with *free_build* checked → artifact `Productium-free-ipa`.
-4. On Linux: `./scripts/install-on-iphone.sh --free`. It downloads the .ipa and walks you through signing it with
+3. Push or merge to `main`. When `core-tests` and `ios-compile` pass, CI builds the free IPA and publishes a release
+   (`v1.0.0`, then bumped from your commit messages) with `Productium-free.ipa` attached.
+4. On Linux: `./scripts/install-on-iphone.sh --free`. It downloads the latest release's .ipa and walks you through signing it with
    your Apple ID in **Impactor** (open source, Flatpak) over USB.
 5. Trust your Apple ID on the phone (Settings → General → VPN & Device Management) and turn on Developer Mode.
 6. To stop re-signing by hand every 7 days, set up **SideStore** once. It refreshes over Wi-Fi on the phone

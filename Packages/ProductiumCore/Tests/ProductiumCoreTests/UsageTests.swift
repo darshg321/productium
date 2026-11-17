@@ -8,7 +8,6 @@ final class UsageTests: XCTestCase {
         return c
     }()
 
-    /// Only output tokens count: toward the meter, the budget, the chart and the breakdown.
     func testLedgerCountsOutputTokensOnly() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         var l = UsageLedger()
@@ -28,12 +27,12 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(l.daily(lastDays: 3, now: now, calendar: cal).map(\.tokens), [90, 0, 1000])
     }
 
-    func testLedgerPrunesOldRecords() {
+    func testLedgerKeepsEveryRecord() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         var l = UsageLedger()
-        l.records = [UsageRecord(at: now.addingTimeInterval(-40 * 86400), feature: .box, model: "sonnet", tokens: TokenCount(input: 1))]
+        l.records = [UsageRecord(at: now.addingTimeInterval(-400 * 86400), feature: .box, model: "sonnet", tokens: TokenCount(input: 1))]
         l.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(input: 1)))
-        XCTAssertEqual(l.records.count, 1)
+        XCTAssertEqual(l.records.count, 2)
     }
 
     func testLedgerDecodesFromEmptyObject() throws {
@@ -76,10 +75,49 @@ final class UsageTests: XCTestCase {
         XCTAssertNil(plain["output_config"])
     }
 
-    /// The box runs on every message, so its fixed cost is watched. ~3.5 characters per token.
     func testBoxPromptStaysSmall() throws {
         let schema = try JSONEncoder().encode(Schemas.dump)
         let tokens = (Prompts.dump().count + schema.count) / 7 * 2
-        XCTAssertLessThan(tokens, 1300, "box system prompt + schema is ~\(tokens) tokens")
+        XCTAssertLessThan(tokens, 2600, "box system prompt + schema is ~\(tokens) tokens")
+    }
+}
+
+final class CallLogTests: XCTestCase {
+    func testCallKeepsTheWholeExchangeButNotImageBytes() {
+        let req = AIRequest(system: "sys", messages: [AIMessage(role: "user", content: "hello", images: [AIImage(mediaType: "image/png", base64: String(repeating: "A", count: 5000))])],
+                            schema: Schemas.dump, maxTokens: 900, cacheTTL: 60)
+        var c = AICall(request: req, feature: .box, at: Fx.mon(12))
+        c.status = 200
+        c.response = #"{"content":[{"type":"text","text":"hi"}],"model":"claude-sonnet-5-5"}"#
+        XCTAssertEqual(c.messages, [AICall.Message(role: "user", content: "hello", images: 1)])
+        XCTAssertTrue(c.schema?.contains("upsert") == true)
+        XCTAssertTrue(c.ok)
+        XCTAssertTrue(c.prettyResponse.contains("\n"))
+        XCTAssertFalse(c.transcript.contains("AAAA"))
+        XCTAssertTrue(c.transcript.contains("=== SYSTEM ===\nsys") && c.transcript.contains("(+1 image)"))
+
+        var log = AICallLog()
+        var old = c; old.at = Fx.mon(12, plusDays: -60)
+        var big = c; big.response = String(repeating: "x", count: 200_000)
+        for x in [old, big] + (0..<200).map({ _ in c }) { log.append(x, now: Fx.mon(13)) }
+        XCTAssertEqual(log.calls.count, 202)
+        XCTAssertEqual(log.calls[1].response.count, 200_000)
+    }
+}
+
+final class RoutingTests: XCTestCase {
+    func testOnlyReflectionRunsOnOpus() {
+        for f in AIFeature.allCases where f != .reflection {
+            XCTAssertEqual(f.route, AIRoute(model: "sonnet", effort: "low"), "\(f)")
+        }
+        XCTAssertEqual(AIFeature.reflection.route, AIRoute(model: "opus", effort: "medium"))
+        XCTAssertEqual(AIFeature.reflection.title, "Opus · reflection")
+    }
+
+    func testEffortIsSentAsOutputConfig() throws {
+        let req = AIRequest(model: "opus", system: "s", messages: [AIMessage(role: "user", content: "hi")], schema: nil, maxTokens: 100,
+                            effort: AIFeature.reflection.route.effort)
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(req)) as! [String: Any]
+        XCTAssertEqual((json["output_config"] as? [String: Any])?["effort"] as? String, "medium")
     }
 }

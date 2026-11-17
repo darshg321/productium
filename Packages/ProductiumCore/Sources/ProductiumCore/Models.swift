@@ -1,8 +1,30 @@
 import Foundation
 
-// MARK: - Time of day
+// Sets and UUID-keyed dictionaries encode in a stable order, so an export round-trips byte for byte.
+@propertyWrapper
+public struct SortedSet<T: Hashable & Codable & Comparable & Sendable>: Codable, Hashable, Sendable {
+    public var wrappedValue: Set<T>
+    public init(wrappedValue: Set<T>) { self.wrappedValue = wrappedValue }
+    public init(from decoder: Decoder) throws {
+        wrappedValue = Set(try decoder.singleValueContainer().decode([T].self))
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(wrappedValue.sorted())
+    }
+}
 
-/// A wall-clock time with no date attached (e.g. school starts 08:30).
+extension UUID: @retroactive CodingKeyRepresentable {
+    public var codingKey: CodingKey { UUIDKey(stringValue: uuidString) }
+    public init?<T: CodingKey>(codingKey: T) { self.init(uuidString: codingKey.stringValue) }
+    struct UUIDKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+}
+
 public struct TimeOfDay: Codable, Hashable, Comparable, Sendable {
     public var hour: Int
     public var minute: Int
@@ -24,17 +46,11 @@ public struct TimeOfDay: Codable, Hashable, Comparable, Sendable {
     public var label: String { String(format: "%d:%02d", hour, minute) }
 }
 
-// MARK: - Work items (assignments, tests, applications…)
-
 public enum TaskKind: String, Codable, CaseIterable, Sendable {
     case assignment, quiz, test, project, essay, application, reading, practice, chore, other
 
-    /// Memory-based work: learning that has to be retained for a test.
-    /// Spaced retrieval practice applies, and sleep is never traded away for it.
     public var isMemoryBased: Bool { self == .quiz || self == .test }
 
-    /// Production work: makes something by a deadline (essay, project, form).
-    /// This is the only kind that may, as a last resort, borrow a little sleep.
     public var isProduction: Bool {
         switch self {
         case .assignment, .project, .essay, .application, .chore: return true
@@ -42,7 +58,6 @@ public enum TaskKind: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// Default minutes when the student doesn't say how long something takes.
     public var defaultEstimate: Int {
         switch self {
         case .quiz: return 60
@@ -82,29 +97,38 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
     public var kind: TaskKind
     public var subject: String?
     public var due: Date
-    /// The student's (or default) estimate. The planner corrects it with the
-    /// personal planning-fallacy factor in `LearnedModel`.
     public var estimateMinutes: Int
     public var completedMinutes: Int
-    /// 1 (barely matters) … 5 (high stakes: big test, application).
     public var importance: Int
-    /// 1 easy … 3 hard. Hard work goes into the student's peak-energy hours.
     public var difficulty: Int
     public var isDone: Bool
     public var doneAt: Date?
     public var parentId: UUID?
-    /// Topics (e.g. "chapter 4: derivatives"), used for flashcards and gap reads.
     public var topics: [String]
     public var notes: String?
     public var source: ItemSource
     public var externalId: String?
     public var createdAt: Date
+    public var color: String?
+    public var atSchool: Bool?
+    public var deferralLog: [DeferralEvent]?
+
+    /// Done in school hours (ask a teacher, hand something in), so it gets a school slot, not a study block.
+    public var isAtSchoolErrand: Bool {
+        if let atSchool { return atSchool }
+        guard kind == .chore else { return false }
+        let t = title.lowercased()
+        let verbs = ["ask ", "email ", "tell ", "talk to ", "see ", "message ", "hand in ", "return "]
+        let people = ["teacher", "ms ", "mr ", "mrs ", "mx ", "miss ", "dr ", "prof", "counsel", "coach", "principal", "librarian"]
+        return verbs.contains { t.hasPrefix($0) } && people.contains { t.contains($0) }
+    }
 
     public init(id: UUID = UUID(), title: String, kind: TaskKind, subject: String? = nil, due: Date,
                 estimateMinutes: Int? = nil, completedMinutes: Int = 0, importance: Int = 3,
                 difficulty: Int = 2, isDone: Bool = false, doneAt: Date? = nil, parentId: UUID? = nil,
                 topics: [String] = [], notes: String? = nil, source: ItemSource = .manual,
-                externalId: String? = nil, createdAt: Date = Date()) {
+                externalId: String? = nil, createdAt: Date = Date(), color: String? = nil, atSchool: Bool? = nil) {
+        self.atSchool = atSchool
         self.id = id
         self.title = title
         self.kind = kind
@@ -122,32 +146,48 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
         self.source = source
         self.externalId = externalId
         self.createdAt = createdAt
+        self.color = color
     }
 }
-
-// MARK: - Fixed time (school, activities, calendar)
 
 public enum CommitmentKind: String, Codable, CaseIterable, Sendable {
     case school, extracurricular, job, family, other
 }
 
-/// Something recurring every week: classes, practice, a job shift.
+public struct ActivityPeriod: Codable, Hashable, Sendable {
+    public var title: String
+    public var start: TimeOfDay
+    public var end: TimeOfDay
+    @SortedSet public var weekdays: Set<Int>
+
+    public init(title: String, start: TimeOfDay, end: TimeOfDay, weekdays: Set<Int> = []) {
+        self.title = title
+        self.start = start
+        self.end = end
+        self.weekdays = weekdays
+    }
+
+    /// An empty weekday set means every day the activity runs.
+    public func applies(on weekday: Int) -> Bool { weekdays.isEmpty || weekdays.contains(weekday) }
+}
+
 public struct Commitment: Codable, Identifiable, Hashable, Sendable {
     public var id: UUID
     public var title: String
     public var kind: CommitmentKind
-    /// Calendar weekday numbers, 1 = Sunday … 7 = Saturday.
-    public var weekdays: Set<Int>
+    @SortedSet public var weekdays: Set<Int>
     public var start: TimeOfDay
     public var end: TimeOfDay
-    /// Travel/transition minutes added before and after (you don't teleport).
     public var bufferMinutes: Int
     public var validFrom: Date?
     public var validUntil: Date?
+    public var color: String?
+    public var periods: [ActivityPeriod]?
 
     public init(id: UUID = UUID(), title: String, kind: CommitmentKind, weekdays: Set<Int>,
                 start: TimeOfDay, end: TimeOfDay, bufferMinutes: Int = 10,
-                validFrom: Date? = nil, validUntil: Date? = nil) {
+                validFrom: Date? = nil, validUntil: Date? = nil, color: String? = nil, periods: [ActivityPeriod]? = nil) {
+        self.periods = periods
         self.id = id
         self.title = title
         self.kind = kind
@@ -157,32 +197,35 @@ public struct Commitment: Codable, Identifiable, Hashable, Sendable {
         self.bufferMinutes = bufferMinutes
         self.validFrom = validFrom
         self.validUntil = validUntil
+        self.color = color
     }
 }
 
-/// A one-off event (usually imported from the iOS calendar).
 public struct FixedEvent: Codable, Identifiable, Hashable, Sendable {
     public var id: String
     public var title: String
     public var start: Date
     public var end: Date
     public var kind: CommitmentKind
+    public var color: String?
 
-    public init(id: String, title: String, start: Date, end: Date, kind: CommitmentKind = .other) {
+    public init(id: String, title: String, start: Date, end: Date, kind: CommitmentKind = .other, color: String? = nil) {
         self.id = id
         self.title = title
         self.start = start
         self.end = max(end, start)
         self.kind = kind
+        self.color = color
     }
 }
-
-// MARK: - Preferences (what the student tells us, a handful of fields)
 
 public enum Chronotype: String, Codable, CaseIterable, Sendable {
     case early, intermediate, late
 
-    /// Peak-alertness shift in hours, relative to an intermediate chronotype.
+    public static func nearest(shiftHours h: Double) -> Chronotype {
+        allCases.min { abs($0.shiftHours - h) < abs($1.shiftHours - h) } ?? .intermediate
+    }
+
     public var shiftHours: Double {
         switch self {
         case .early: return -1.5
@@ -193,65 +236,36 @@ public enum Chronotype: String, Codable, CaseIterable, Sendable {
 }
 
 public struct Preferences: Codable, Hashable, Sendable {
-    /// Teens 13-18 need 8-10 h (AASM consensus, Paruthi et al. 2016).
     public var sleepNeedMinutes: Int
-    /// Absolute floor that sleep trade-offs can never go under.
     public var sleepFloorMinutes: Int
     public var schoolDayWake: TimeOfDay
     public var freeDayWake: TimeOfDay
     public var windDownMinutes: Int
-    public var dinner: TimeOfDay?
-    public var dinnerMinutes: Int
-    public var focusBlockMinutes: Int
-    public var breakMinutes: Int
-    public var maxStudyMinutesSchoolDay: Int
-    public var maxStudyMinutesFreeDay: Int
-    public var minFreeMinutesSchoolDay: Int
-    public var minFreeMinutesFreeDay: Int
     public var allowSleepTradeoffs: Bool
-    public var chronotype: Chronotype
-    /// Calendar weekday numbers that are school days (default Mon–Fri).
-    public var schoolDays: Set<Int>
-    /// A floor goal for distracting-app minutes per day. The taper heads toward it.
-    public var screenTimeGoalMinutes: Int
+    @SortedSet public var schoolDays: Set<Int>
     public var interests: [String]
-    /// Work wake-up time back from the first commitment and the learned commute.
     public var autoWake: Bool
-    /// How much the phone interrupts, and with what.
     public var nudges: NudgeSettings
+    public var colors: [String: String]
 
     public init(sleepNeedMinutes: Int = 540, sleepFloorMinutes: Int = 420,
                 schoolDayWake: TimeOfDay = TimeOfDay(6, 45), freeDayWake: TimeOfDay = TimeOfDay(8, 30),
-                windDownMinutes: Int = 30, dinner: TimeOfDay? = TimeOfDay(18, 30), dinnerMinutes: Int = 30,
-                focusBlockMinutes: Int = 40, breakMinutes: Int = 10,
-                maxStudyMinutesSchoolDay: Int = 180, maxStudyMinutesFreeDay: Int = 300,
-                minFreeMinutesSchoolDay: Int = 60, minFreeMinutesFreeDay: Int = 180,
-                allowSleepTradeoffs: Bool = true, chronotype: Chronotype = .late,
-                schoolDays: Set<Int> = [2, 3, 4, 5, 6], screenTimeGoalMinutes: Int = 45,
-                interests: [String] = [], autoWake: Bool = true, nudges: NudgeSettings = NudgeSettings()) {
+                windDownMinutes: Int = 30, allowSleepTradeoffs: Bool = true,
+                schoolDays: Set<Int> = [2, 3, 4, 5, 6], interests: [String] = [], autoWake: Bool = true,
+                nudges: NudgeSettings = NudgeSettings(), colors: [String: String] = [:]) {
         self.sleepNeedMinutes = sleepNeedMinutes
         self.sleepFloorMinutes = sleepFloorMinutes
         self.schoolDayWake = schoolDayWake
         self.freeDayWake = freeDayWake
         self.windDownMinutes = windDownMinutes
-        self.dinner = dinner
-        self.dinnerMinutes = dinnerMinutes
-        self.focusBlockMinutes = focusBlockMinutes
-        self.breakMinutes = breakMinutes
-        self.maxStudyMinutesSchoolDay = maxStudyMinutesSchoolDay
-        self.maxStudyMinutesFreeDay = maxStudyMinutesFreeDay
-        self.minFreeMinutesSchoolDay = minFreeMinutesSchoolDay
-        self.minFreeMinutesFreeDay = minFreeMinutesFreeDay
         self.allowSleepTradeoffs = allowSleepTradeoffs
-        self.chronotype = chronotype
         self.schoolDays = schoolDays
-        self.screenTimeGoalMinutes = screenTimeGoalMinutes
         self.interests = interests
         self.autoWake = autoWake
         self.nudges = nudges
+        self.colors = colors
     }
 
-    /// Missing keys fall back to defaults, so adding a preference in an update keeps the rest.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = Preferences()
@@ -261,37 +275,33 @@ public struct Preferences: Codable, Hashable, Sendable {
         schoolDayWake = v(.schoolDayWake, d.schoolDayWake)
         freeDayWake = v(.freeDayWake, d.freeDayWake)
         windDownMinutes = v(.windDownMinutes, d.windDownMinutes)
-        dinner = v(.dinner, d.dinner)
-        dinnerMinutes = v(.dinnerMinutes, d.dinnerMinutes)
-        focusBlockMinutes = v(.focusBlockMinutes, d.focusBlockMinutes)
-        breakMinutes = v(.breakMinutes, d.breakMinutes)
-        maxStudyMinutesSchoolDay = v(.maxStudyMinutesSchoolDay, d.maxStudyMinutesSchoolDay)
-        maxStudyMinutesFreeDay = v(.maxStudyMinutesFreeDay, d.maxStudyMinutesFreeDay)
-        minFreeMinutesSchoolDay = v(.minFreeMinutesSchoolDay, d.minFreeMinutesSchoolDay)
-        minFreeMinutesFreeDay = v(.minFreeMinutesFreeDay, d.minFreeMinutesFreeDay)
         allowSleepTradeoffs = v(.allowSleepTradeoffs, d.allowSleepTradeoffs)
-        chronotype = v(.chronotype, d.chronotype)
         schoolDays = v(.schoolDays, d.schoolDays)
-        screenTimeGoalMinutes = v(.screenTimeGoalMinutes, d.screenTimeGoalMinutes)
         interests = v(.interests, d.interests)
         autoWake = v(.autoWake, d.autoWake)
         nudges = v(.nudges, d.nudges)
+        colors = v(.colors, d.colors)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sleepNeedMinutes, sleepFloorMinutes, schoolDayWake, freeDayWake, windDownMinutes, allowSleepTradeoffs
+        case schoolDays, interests, autoWake, nudges, colors
     }
 }
 
-// MARK: - Signals from the phone
-
 public struct HealthDay: Codable, Hashable, Sendable {
-    public var day: Date            // start of day
+    public var day: Date
     public var steps: Int?
-    public var sleepMinutes: Int?   // asleep minutes for the night ending this morning
+    public var sleepMinutes: Int?
     public var bedtime: Date?
     public var wake: Date?
     public var daylightMinutes: Int?
     public var restingHeartRate: Double?
+    public var sleepSource: SleepSource?
 
     public init(day: Date, steps: Int? = nil, sleepMinutes: Int? = nil, bedtime: Date? = nil,
-                wake: Date? = nil, daylightMinutes: Int? = nil, restingHeartRate: Double? = nil) {
+                wake: Date? = nil, daylightMinutes: Int? = nil, restingHeartRate: Double? = nil, sleepSource: SleepSource? = nil) {
+        self.sleepSource = sleepSource
         self.day = day
         self.steps = steps
         self.sleepMinutes = sleepMinutes
@@ -305,9 +315,7 @@ public struct HealthDay: Codable, Hashable, Sendable {
 public struct MoodEntry: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var at: Date
-    /// 1 (awful) … 5 (great)
     public var mood: Int
-    /// 1 (drained) … 5 (energised). Optional; one tap only if the student wants.
     public var energy: Int?
     public var note: String?
 
@@ -331,18 +339,18 @@ public struct AppUsage: Codable, Hashable, Sendable {
     }
 }
 
-/// Minutes in distracting apps per day, from DeviceActivity thresholds or a
-/// Screen Time screenshot read by the AI.
 public struct ScreenDay: Codable, Hashable, Sendable {
     public var day: Date
     public var distractingMinutes: Int
     public var unlockRequests: Int
     public var totalMinutes: Int?
     public var apps: [AppUsage]?
-    public var source: String?           // "monitor" | "screenshot"
+    public var source: String?
+    public var partial: Bool?
 
     public init(day: Date, distractingMinutes: Int, unlockRequests: Int = 0, totalMinutes: Int? = nil,
-                apps: [AppUsage]? = nil, source: String? = nil) {
+                apps: [AppUsage]? = nil, source: String? = nil, partial: Bool? = nil) {
+        self.partial = partial
         self.day = day
         self.distractingMinutes = distractingMinutes
         self.unlockRequests = unlockRequests
@@ -351,8 +359,6 @@ public struct ScreenDay: Codable, Hashable, Sendable {
         self.source = source
     }
 }
-
-// MARK: - Plan
 
 public enum BlockKind: String, Codable, Sendable {
     case work, review, breakTime, free, gap, commitment, event, meal, routine, windDown, sleep
@@ -365,15 +371,15 @@ public struct PlannedBlock: Codable, Identifiable, Hashable, Sendable {
     public var end: Date
     public var title: String
     public var itemId: UUID?
-    /// One-line "how" for the block (e.g. retrieval practice instructions).
     public var hint: String?
-    /// True when this block sits in time that would normally be sleep.
     public var borrowsSleep: Bool
-    /// True when this block sits in time that would normally be free time.
     public var usesFreeTime: Bool
+    public var color: String?
+    public var sourceId: String?
 
     public init(id: UUID = UUID(), kind: BlockKind, start: Date, end: Date, title: String,
-                itemId: UUID? = nil, hint: String? = nil, borrowsSleep: Bool = false, usesFreeTime: Bool = false) {
+                itemId: UUID? = nil, hint: String? = nil, borrowsSleep: Bool = false, usesFreeTime: Bool = false,
+                color: String? = nil, sourceId: String? = nil) {
         self.id = id
         self.kind = kind
         self.start = start
@@ -383,6 +389,8 @@ public struct PlannedBlock: Codable, Identifiable, Hashable, Sendable {
         self.hint = hint
         self.borrowsSleep = borrowsSleep
         self.usesFreeTime = usesFreeTime
+        self.color = color
+        self.sourceId = sourceId
     }
 
     public var minutes: Int { Int(end.timeIntervalSince(start) / 60) }
@@ -407,11 +415,9 @@ public struct Plan: Codable, Hashable, Sendable {
     public var generatedAt: Date
     public var blocks: [PlannedBlock]
     public var warnings: [PlanWarning]
-    /// Items that can't be fully finished. The plan advises a "good enough" target.
     public var shortfalls: [UUID: Int]
     public var sleepTradeoffMinutes: Int
     public var loadFactor: Double
-    /// Planned wake-up (and leave-by) per day, used for alarms.
     public var wakePlans: [WakePlan]
 
     public init(generatedAt: Date, blocks: [PlannedBlock], warnings: [PlanWarning],
@@ -440,8 +446,6 @@ public struct Plan: Codable, Hashable, Sendable {
         blocks.first { $0.start > now && $0.kind != .sleep }
     }
 }
-
-// MARK: - Outcomes (what actually happened)
 
 public enum OutcomeStatus: String, Codable, Sendable { case done, partial, skipped }
 

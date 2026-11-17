@@ -36,8 +36,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         [.banner, .list, .sound]
     }
 
-    /// Lock-screen replies land here: Done / Partly / Skipped, Start / Snooze / Can't Today,
-    /// mood taps, typed check-ins, scrolling check-ins and deadline buttons.
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         let action = response.actionIdentifier
@@ -52,11 +50,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             } else if action == "focus.snooze", let id = blockId {
                 model.snooze(blockId: id)
             } else if action == "focus.cant", let id = blockId {
-                model.logOutcome(blockId: id, status: .skipped)
+                model.logOutcome(blockId: id, status: .skipped, reason: "Can't today")
             } else if action == "scroll.gap" {
+                Friction.answered(stillScrolling: false)
                 model.deepLink = "productium://gap"
+            } else if action == "scroll.yes" {
+                Friction.answered(stillScrolling: true)
             } else if action == "scroll.stop" {
-                NotificationService.cancelScrollCheckIns()
+                Friction.answered(stillScrolling: false)
             } else if action == "item.done", let id = itemId {
                 model.complete(id)
             } else if action == "item.focus", let id = itemId, let item = model.state.items.first(where: { $0.id == id }) {
@@ -69,7 +70,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 model.deepLink = link
             }
         }
-        if let text = (response as? UNTextInputNotificationResponse)?.userText, !text.isEmpty {
+        guard let text = (response as? UNTextInputNotificationResponse)?.userText, !text.isEmpty else { return }
+        if action == "gap.reply", let s = info["start"] as? Double, let e = info["end"] as? Double {
+            await AppModel.shared.answerGap(text, gap: MysteryGap(start: Date(timeIntervalSince1970: s),
+                                                                  end: min(Date(), Date(timeIntervalSince1970: e)), ongoing: false))
+        } else {
             await AppModel.shared.dump(text)
         }
     }

@@ -1,21 +1,5 @@
 import Foundation
 
-/// When (rarely) is it worth giving up sleep for schoolwork?
-///
-/// The evidence is lopsided. In high schoolers, extra study time bought with sleep
-/// led to *more* academic problems the next day (Gillen-O'Neel, Huynh & Fuligni 2013).
-/// Sleep consolidates newly learned material (Diekelmann & Born 2010), and
-/// chronic restriction builds cumulative deficits that people don't notice
-/// (Van Dongen et al. 2003). So the policy is:
-///
-/// * Never for memory work (tests, quizzes): you'd be trading away the very
-///   process that stores what you studied.
-/// * Only for production work (essay, application, project) that is high stakes
-///   (importance ≥ 4), due within 72 h, and that can't fit anywhere else after
-///   free time has already been squeezed.
-/// * At most 60 min per night, never under the sleep floor (default 7 h),
-///   never two nights in a row, at most two nights in any 7-day plan.
-/// * Not on a night before a test or quiz, and not after an already-short night.
 public enum SleepPolicy {
     public static let maxBorrowPerNight = 60
     public static let maxNightsPerWeek = 2
@@ -41,7 +25,6 @@ public enum SleepPolicy {
         }
     }
 
-    /// Minutes of sleep that may be borrowed on this night for this item (0 = no).
     public static func allowance(item: WorkItem, now: Date, night: NightContext, prefs: Preferences) -> Int {
         guard prefs.allowSleepTradeoffs else { return 0 }
         guard item.kind.isProduction, item.importance >= 4 else { return 0 }

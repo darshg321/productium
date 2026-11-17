@@ -2,8 +2,6 @@ import SwiftUI
 import FamilyControls
 import ProductiumCore
 
-/// Setup, once. Each page asks for one thing. Your week goes in through the same box
-/// you'll use every day, so there are no forms.
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model
     @State private var page: Page = .welcome
@@ -28,7 +26,6 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Progress: one segment per page, filled up to here.
             HStack(spacing: 4) {
                 ForEach(pages, id: \.self) { p in
                     Capsule().fill(p.rawValue <= page.rawValue ? Color.accentColor : Color(.tertiarySystemFill)).frame(height: 4)
@@ -99,8 +96,6 @@ struct OnboardingView: View {
         case .keepAlive: keepAlive
         }
     }
-
-    // MARK: Pages
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -264,8 +259,6 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: Pieces
-
     private func field(_ prompt: String, text: Binding<String>, secure: Bool) -> some View {
         Group {
             if secure { SecureField(prompt, text: text) } else { TextField(prompt, text: text).keyboardType(.URL) }
@@ -310,11 +303,18 @@ struct OnboardingView: View {
     private func askAll() async {
         workingPermissions = true
         model.state.integrations.notifications = await NotificationService.requestAuthorization()
-        try? await HealthService.shared.requestAuthorization()
-        model.state.integrations.health = HealthService.shared.available
+        var healthAnswered = false
+        do { try await HealthService.shared.requestAuthorization(); healthAnswered = true } catch {}
+        model.state.integrations.health = HealthService.shared.available && healthAnswered
+        model.state.integrations.healthNeedsRequest = await HealthService.shared.requestNeeded()
         model.state.integrations.calendarImport = await CalendarService.shared.requestAccess()
         model.state.integrations.alarms = await AlarmService.requestAuthorization()
         LocationService.shared.requestAlways()
+        var waited = 0
+        while LocationService.shared.status == .notDetermined, waited < 120 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            waited += 1
+        }
         if let loc = await LocationService.shared.currentLocation() {
             model.state.places.removeAll { $0.id == "home" }
             model.state.places.append(SavedPlace(id: "home", name: "Home", latitude: loc.coordinate.latitude, longitude: loc.coordinate.longitude))

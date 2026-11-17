@@ -2,12 +2,6 @@ import SwiftUI
 import PhotosUI
 import ProductiumCore
 
-/// Today, as a column of cards on the grouped background (the Health summary layout),
-/// in order of how often each is needed:
-///   1. Inbox: tell it anything, or fix anything
-///   2. Now: what to do this minute, and what's next
-///   3. at most one question and one heads-up
-///   4. three numbers for the rest of the day, then the schedule
 struct TodayView: View {
     @Environment(AppModel.self) private var model
     @Binding var showGap: Bool
@@ -25,6 +19,9 @@ struct TodayView: View {
                             .foregroundStyle(.secondary)
                             .textCase(.uppercase)
                         DumpBox()
+                        if let g = model.dueGap { GapQuestionCard(gap: g) }
+                        if let o = model.placeOffer { PlaceOfferCard(offer: o) }
+                        if !model.state.proposals.pending.isEmpty { ProposalsCard() }
                         NowCard(now: now, showGap: $showGap)
                         Attention(now: now)
                         SectionTitle("Rest of Today")
@@ -48,34 +45,30 @@ struct TodayView: View {
     }
 }
 
-// MARK: - Inbox
-
-/// The one box. Typed text and screenshots go to Claude (Sonnet), which returns changes;
-/// the receipt says what changed, with Undo, and what it cost.
 struct DumpBox: View {
     @Environment(AppModel.self) private var model
-    @State private var text = ""
     @State private var picks: [PhotosPickerItem] = []
-    @State private var images: [(UIImage, AIImage)] = []
     @FocusState private var focused: Bool
 
     var body: some View {
         Card {
             CardHeader(title: "Inbox", symbol: "tray.and.arrow.down.fill", color: .blue,
                        detail: model.busy.contains("dump") ? "Reading…" : nil)
-            TextField("What's due, what happened, what changed?", text: $text, axis: .vertical)
+            TextField("What's due, what happened, what changed?", text: Binding(get: { model.draftText }, set: { model.draftText = $0 }),
+                      axis: .vertical)
                 .font(.body)
                 .lineLimit(2...8)
                 .focused($focused)
+            let images = model.draftImages
             if !images.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(images.indices, id: \.self) { i in
-                            Image(uiImage: images[i].0).resizable().scaledToFill()
+                        ForEach(images) { pic in
+                            Image(uiImage: pic.image).resizable().scaledToFill()
                                 .frame(width: 54, height: 72)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 .overlay(alignment: .topTrailing) {
-                                    Button { images.remove(at: i) } label: {
+                                    Button { model.removeDraftImage(pic.file) } label: {
                                         Image(systemName: "xmark.circle.fill")
                                             .symbolRenderingMode(.palette)
                                             .foregroundStyle(.white, .black.opacity(0.6))
@@ -105,30 +98,27 @@ struct DumpBox: View {
                 }
             }
             .buttonStyle(.borderless)
-            if let r = model.receipt { ReceiptView(receipt: r) }
+            if !model.state.conversation.isEmpty { ThreadView() }
         }
-        .animation(.easeOut(duration: 0.2), value: model.receipt)
+        .animation(.easeOut(duration: 0.2), value: model.state.conversation.turns.count)
         .onChange(of: picks) { _, items in Task { await load(items) } }
     }
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty }
+    private var canSend: Bool { !model.state.draft.isEmpty }
 
     private func send() {
-        let t = text, imgs = images.map(\.1)
+        let t = model.draftText, imgs = model.draftImages.map(\.ai)
         focused = false
         Task {
             if await model.dump(t, images: imgs) {
-                text = ""
-                images = []
+                model.clearDraft()
                 picks = []
             }
         }
     }
 
-    /// Screenshots are downscaled to ≤1280 px JPEG: plenty to read text, and image tokens scale
-    /// with pixels (about w×h/750), so this keeps a screenshot near 1.5k tokens instead of 2.5k+.
     private func load(_ items: [PhotosPickerItem]) async {
-        var out: [(UIImage, AIImage)] = []
+        var out: [Data] = []
         for item in items {
             guard let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) else { continue }
             let scale = min(1, 1280 / max(img.size.width, img.size.height))
@@ -136,26 +126,93 @@ struct DumpBox: View {
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
             let small = UIGraphicsImageRenderer(size: size, format: format).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
-            if let jpg = small.jpegData(compressionQuality: 0.75) {
-                out.append((small, AIImage(mediaType: "image/jpeg", base64: jpg.base64EncodedString())))
-            }
+            if let jpg = small.jpegData(compressionQuality: 0.75) { out.append(jpg) }
         }
-        images = out
+        model.addDraftImages(out)
+        picks = []
     }
 }
 
-struct ReceiptView: View {
+struct ThreadView: View {
     @Environment(AppModel.self) private var model
-    let receipt: AppModel.Receipt
+    @State private var expanded = false
+
+    var body: some View {
+        let turns = model.state.conversation.turns
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            if turns.count > 1 {
+                Button(expanded ? "Show Only the Latest" : "Show All \(turns.count) Prompts") {
+                    withAnimation { expanded.toggle() }
+                }
+                .font(.footnote)
+                .buttonStyle(.borderless)
+            }
+            ForEach(expanded ? turns : Array(turns.suffix(1))) { t in
+                TurnView(turn: t)
+            }
+            TimelineView(.periodic(from: .now, by: 30)) { ctx in
+                let convo = model.state.conversation
+                let expired = convo.cacheExpired(now: ctx.date)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Spacer()
+                        Button(convo.clearTitle) { withAnimation { model.clearConversation() } }
+                            .font(.subheadline)
+                            .foregroundStyle(expired ? Theme.alert : .secondary)
+                            .buttonStyle(.borderless)
+                    }
+                    if let line = convo.outputLine {
+                        Text(line).font(.caption2).foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    if let note = convo.cacheNote(now: ctx.date) {
+                        Text(note).font(.caption).foregroundStyle(Theme.alert)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .transition(.opacity)
+    }
+}
+
+struct TurnView: View {
+    @Environment(AppModel.self) private var model
+    let turn: ConversationTurn
+    @State private var showCall: AICall?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Divider()
-            Text(receipt.reply)
+            VStack(alignment: .trailing, spacing: 6) {
+                if !turn.images.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(turn.images.indices, id: \.self) { i in
+                            if let data = Data(base64Encoded: turn.images[i].base64), let img = UIImage(data: data) {
+                                Image(uiImage: img).resizable().scaledToFill()
+                                    .frame(width: 40, height: 54)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                        }
+                    }
+                }
+                if !turn.text.isEmpty {
+                    Text(turn.text)
+                        .font(.subheadline)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+
+            Text(turn.reply)
                 .font(.subheadline)
-                .foregroundStyle(receipt.failed ? Theme.alert : .primary)
+                .foregroundStyle(turn.failed ? Theme.alert : .primary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let d = receipt.detail {
+            if let d = turn.detail {
                 DisclosureGroup("Details") {
                     Text(d).font(.caption.monospaced()).foregroundStyle(.secondary)
                         .textSelection(.enabled)
@@ -163,27 +220,140 @@ struct ReceiptView: View {
                 }
                 .font(.footnote)
             }
-            ForEach(receipt.changes, id: \.self) { c in
-                Label(c, systemImage: c == "Undone" ? "arrow.uturn.backward" : "checkmark")
+            ForEach(turn.applied.changes, id: \.self) { c in
+                Label(c, systemImage: c.hasPrefix("(undone)") ? "arrow.uturn.backward" : "checkmark")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            ForEach(turn.applied.problems, id: \.self) { p in
+                Label(p, systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
             HStack(spacing: 16) {
-                if receipt.canUndo { Button("Undo") { withAnimation { model.undo() } } }
-                Spacer()
-                if let t = receipt.tokens {
-                    Text("\(tokensLabel(t)) tokens out").font(.caption).foregroundStyle(.tertiary)
+                if model.undoTurnId == turn.id { Button("Undo") { withAnimation { model.undo() } } }
+                if let c = model.call(turn.callId) {
+                    Button("Prompt") { showCall = c }.foregroundStyle(.secondary)
                 }
-                Button("Clear") { withAnimation { model.receipt = nil } }.foregroundStyle(.secondary)
+                Spacer()
+                if let t = turn.tokens {
+                    Text("\(tokensLabel(t.counted)) tokens out").font(.caption).foregroundStyle(.tertiary)
+                }
             }
             .font(.subheadline)
             .buttonStyle(.borderless)
         }
-        .transition(.opacity)
+        .sheet(item: $showCall) { c in
+            NavigationStack {
+                AICallDetailView(call: c)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showCall = nil } } }
+            }
+        }
     }
 }
 
-// MARK: - Now
+struct PlaceOfferCard: View {
+    @Environment(AppModel.self) private var model
+    let offer: PlaceOffer
+    @State private var name = ""
+
+    var body: some View {
+        Card {
+            CardHeader(title: offer.needsName ? "A place you keep going to" : "Save this as \(offer.name)?",
+                       symbol: "mappin.and.ellipse", color: .blue)
+            Text(offer.reason).font(.subheadline).foregroundStyle(.secondary)
+            if offer.needsName {
+                TextField("Name (e.g. Gym)", text: $name).textFieldStyle(.roundedBorder)
+            }
+            HStack {
+                Button(offer.needsName ? "Save" : "Save \(offer.name)") {
+                    model.acceptPlaceOffer(name: offer.needsName ? name : nil)
+                }
+                .disabled(offer.needsName && name.trimmingCharacters(in: .whitespaces).isEmpty)
+                Spacer()
+                Button("Not Now", role: .cancel) { model.declinePlaceOffer() }.foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .font(.subheadline)
+        }
+    }
+}
+
+struct ProposalsCard: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let pending = model.state.proposals.pending
+        let runId = pending.first?.runId
+        let note = model.state.proposals.runs.first { $0.id == runId }?.note
+        Card {
+            CardHeader(title: "Productium suggests \(pending.count) change\(pending.count == 1 ? "" : "s")",
+                       symbol: "sparkles", color: .purple)
+            if let note { Text(note).font(.subheadline).fixedSize(horizontal: false, vertical: true) }
+            ForEach(pending) { p in ProposalRow(proposal: p) }
+            if let runId, pending.count > 1 {
+                HStack {
+                    Button("Approve All") { model.approveRun(runId) }
+                    Spacer()
+                    Button("Reject All", role: .destructive) { model.rejectRun(runId) }
+                }
+                .buttonStyle(.borderless)
+                .font(.subheadline)
+            }
+        }
+    }
+}
+
+struct ProposalRow: View {
+    @Environment(AppModel.self) private var model
+    let proposal: BehaviourProposal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+            Text(proposal.title).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+            Text(proposal.reason).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if proposal.status == .pending {
+                HStack(spacing: 16) {
+                    Button("Approve") { model.approveProposal(proposal.id) }
+                    Button("Reject") { model.rejectProposal(proposal.id) }.foregroundStyle(.secondary)
+                    Spacer()
+                    Menu { Button("Never Change This") { model.neverChange(proposal.id) } } label: { Image(systemName: "ellipsis") }
+                }
+                .buttonStyle(.borderless)
+                .font(.subheadline)
+            }
+        }
+    }
+}
+
+struct GapQuestionCard: View {
+    @Environment(AppModel.self) private var model
+    let gap: MysteryGap
+    @State private var answer = ""
+
+    var body: some View {
+        Card {
+            CardHeader(title: GapDetector.question(gap, calendar: .current), symbol: "questionmark.circle.fill", color: .purple)
+            HStack {
+                TextField("e.g. gym, homework, with friends", text: $answer)
+                    .submitLabel(.send)
+                    .onSubmit(send)
+                Button("Send", action: send).disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button { model.dismissGap(gap) } label: { Image(systemName: "xmark") }
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Not now")
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private func send() {
+        let t = answer
+        answer = ""
+        Task { await model.answerGap(t, gap: gap) }
+    }
+}
 
 struct NowCard: View {
     @Environment(AppModel.self) private var model
@@ -195,7 +365,7 @@ struct NowCard: View {
         let next = model.state.plan.next(after: now)
         Card {
             if let b = current {
-                CardHeader(title: "Now", symbol: Theme.symbol(for: b.kind), color: Theme.color(for: b.kind),
+                CardHeader(title: "Now", symbol: Theme.symbol(for: b.kind), color: Theme.color(for: b),
                            detail: "until \(b.end.hm)")
             } else {
                 CardHeader(title: "Now", symbol: "clock.fill", color: .secondary)
@@ -204,7 +374,7 @@ struct NowCard: View {
             if let n = next, n.kind != .sleep {
                 Divider()
                 HStack(spacing: 8) {
-                    Circle().fill(Theme.color(for: n.kind)).frame(width: 8, height: 8)
+                    Circle().fill(Theme.color(for: n)).frame(width: 8, height: 8)
                     Text("Next: \(blockLabel(n))").font(.subheadline).lineLimit(1)
                     Spacer()
                     Text(n.start.hm).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
@@ -218,7 +388,7 @@ struct NowCard: View {
             Text(b.title).font(.title2.weight(.bold)).fixedSize(horizontal: false, vertical: true)
             Text("\(minutesLeft(b)) min left" + (b.hint.map { " · \($0)" } ?? ""))
                 .font(.subheadline).foregroundStyle(.secondary)
-            ProgressView(value: progress(b)).tint(Theme.color(for: b.kind))
+            ProgressView(value: progress(b)).tint(Theme.color(for: b))
             Button { model.startFocus(b) } label: {
                 Text("Start Focus").font(.headline).frame(maxWidth: .infinity)
             }
@@ -237,7 +407,7 @@ struct NowCard: View {
             Text("Nothing to do until \(b.end.hm). Enjoy it.").font(.subheadline).foregroundStyle(.secondary)
         } else if let b = current {
             Text(blockLabel(b)).font(.title2.weight(.bold))
-            ProgressView(value: progress(b)).tint(Theme.color(for: b.kind))
+            ProgressView(value: progress(b)).tint(Theme.color(for: b))
         } else {
             Text("Nothing planned").font(.title2.weight(.bold))
             Text("Tell the Inbox what's coming up and it'll plan it.").font(.subheadline).foregroundStyle(.secondary)
@@ -252,7 +422,6 @@ struct NowCard: View {
     }
 }
 
-/// Short, human labels for plan blocks.
 func blockLabel(_ b: PlannedBlock) -> String {
     switch b.kind {
     case .free, .gap: return "Free time"
@@ -262,8 +431,6 @@ func blockLabel(_ b: PlannedBlock) -> String {
     default: return b.title
     }
 }
-
-// MARK: - One question, one heads-up
 
 struct Attention: View {
     @Environment(AppModel.self) private var model
@@ -309,9 +476,6 @@ struct Attention: View {
     }
 }
 
-// MARK: - The rest of the day
-
-/// Three numbers, side by side: work left, free time left, bedtime.
 struct DayNumbers: View {
     let blocks: [PlannedBlock]
     let now: Date
@@ -342,7 +506,6 @@ struct DayNumbers: View {
     }
 }
 
-/// The day from now to bed: a strip to scale, then one row per block.
 struct ScheduleCard: View {
     let blocks: [PlannedBlock]
     let from: Date
@@ -377,7 +540,7 @@ struct BlockRow: View {
     var body: some View {
         let start = max(block.start, from)
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 2).fill(Theme.color(for: block.kind)).frame(width: 4, height: 34)
+            RoundedRectangle(cornerRadius: 2).fill(Theme.color(for: block)).frame(width: 4, height: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(blockLabel(block))
                     .font(block.isStudy ? .body.weight(.semibold) : .body)

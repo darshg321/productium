@@ -6,8 +6,6 @@ public struct Nudge: Codable, Hashable, Sendable {
 }
 
 public enum Wellbeing {
-    /// Persistently low mood: gently suggest talking to someone. Nothing more.
-    /// The app is not a clinician, and it doesn't diagnose.
     public static func supportSuggested(moods: [MoodEntry], now: Date) -> Bool {
         let recent = moods.filter { now.timeIntervalSince($0.at) < 14 * 86400 }
         guard recent.count >= 4 else { return false }
@@ -16,20 +14,17 @@ public enum Wellbeing {
         return mean <= 2.0 || lows >= 4
     }
 
-    /// At most one or two small, specific, evidence-based nudges, so they don't nag.
     public static func nudges(now: Date, todayMood: MoodEntry?, health: HealthDay?, screen: ScreenDay?,
                               screenLimit: Int?, calendar cal: Calendar) -> [Nudge] {
         var out: [Nudge] = []
         let hour = cal.component(.hour, from: now)
         if let steps = health?.steps, hour >= 15, steps < 4000 {
-            // Even a single bout of moderate exercise improves mood and attention (Hillman et al. 2008).
             out.append(Nudge(symbol: "figure.walk", text: "\(steps) steps so far. A 10-min walk before your next block helps focus."))
         }
         if let d = health?.daylightMinutes, hour >= 14, hour < 18, d < 20 {
             out.append(Nudge(symbol: "sun.max", text: "Little daylight today. 10 minutes outside helps you sleep on time tonight."))
         }
         if let m = todayMood, m.mood <= 2 {
-            // Behavioural activation: small doable actions before waiting for motivation (Ekers et al. 2014).
             out.append(Nudge(symbol: "leaf", text: "Pick the smallest next step and do just 5 minutes of it."))
         }
         if let s = screen?.distractingMinutes, let l = screenLimit, s > l {
@@ -38,8 +33,6 @@ public enum Wellbeing {
         return Array(out.prefix(2))
     }
 
-    /// Pearson correlation between mood and a same-day quantity (e.g. study, sleep).
-    /// Shown as a gentle pattern ("you feel better on days you…"), never as a verdict.
     public static func correlation(_ pairs: [(Double, Double)]) -> Double? {
         guard pairs.count >= 7 else { return nil }
         let n = Double(pairs.count)

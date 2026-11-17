@@ -1,14 +1,10 @@
 import Foundation
 
-/// Values shared between the app and its extensions through the App Group.
 enum SharedConfig {
-    /// From Info.plist key `AppGroup`, set by the APP_GROUP build setting in project.yml.
     static let appGroup: String = Bundle.main.object(forInfoDictionaryKey: "AppGroup") as? String ?? "group.productium"
 
     static var defaults: UserDefaults { UserDefaults(suiteName: appGroup) ?? .standard }
 
-    /// App Group container, or (free-account builds without an App Group) Application Support,
-    /// which iOS doesn't create by default, so make sure it exists.
     static var containerURL: URL {
         if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) { return url }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -17,22 +13,23 @@ enum SharedConfig {
     }
 
     enum Key {
-        static let selection = "screen.selection"          // FamilyActivitySelection (JSON)
-        static let dailyLimit = "screen.dailyLimit"        // Int minutes, 0 = monitor only
+        static let selection = "screen.selection"
+        static let dailyLimit = "screen.dailyLimit"
         static let unlocksPerDay = "screen.unlocksPerDay"
-        static let unlocksUsedPrefix = "screen.unlocks."   // + yyyy-MM-dd
-        static let usagePrefix = "screen.usage."           // + yyyy-MM-dd → Int minutes
-        static let shieldReason = "screen.shieldReason"    // "focus" | "limit" | "winddown"
+        static let unlocksUsedPrefix = "screen.unlocks."
+        static let usagePrefix = "screen.usage."
+        static let shieldReason = "screen.shieldReason"
         static let focusTitle = "screen.focusTitle"
-        static let focusEnds = "screen.focusEnds"          // Double timeIntervalSince1970
-        static let widgetSnapshot = "widget.snapshot"      // WidgetSnapshot JSON
+        static let focusEnds = "screen.focusEnds"
+        static let widgetSnapshot = "widget.snapshot"
         static let pendingDeepLink = "app.pendingDeepLink"
         static let nudgeOnShield = "screen.nudgeOnShield"
-        static let frictionGraceUntil = "friction.graceUntil"   // Double timeIntervalSince1970
-        static let frictionPrefix = "friction.pauses."          // + yyyy-MM-dd → Int
-        static let scrollLog = "friction.scrollLog"             // ScrollLog JSON (opens, closes, minutes)
-        static let scrollCheckIns = "friction.checkIns"         // [Int] minutes after "go back anyway", [] = off
-        static let alarmIds = "alarm.nudgeIds"                  // [key: AlarmKit UUID] for nudge alarms
+        static let frictionGraceUntil = "friction.graceUntil"
+        static let frictionPrefix = "friction.pauses."
+        static let scrollLog = "friction.scrollLog"
+        static let scrollCheckIns = "friction.checkIns"
+        static let scrollCheckInIndex = "friction.checkInIndex"
+        static let alarmIds = "alarm.nudgeIds"
     }
 
     static func dayKey(_ date: Date = Date()) -> String {
@@ -43,7 +40,6 @@ enum SharedConfig {
     }
 }
 
-/// What the widget / Live Activity shows. Written by the app after each replan.
 struct WidgetSnapshot: Codable {
     struct Item: Codable, Hashable {
         var title: String

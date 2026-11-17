@@ -1,8 +1,6 @@
 import SwiftUI
 import ProductiumCore
 
-/// A few spare minutes: options that beat scrolling. Retrieval practice, a short
-/// read, prep for the next block, or a reset. Usually two or three choices, never a feed.
 struct GapView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -223,7 +221,7 @@ struct BreatheView: View {
     var body: some View {
         TimelineView(.animation) { ctx in
             let t = ctx.date.timeIntervalSince(started)
-            let cycle = t.truncatingRemainder(dividingBy: 10)   // 2s inhale, 1s top-up, 7s exhale
+            let cycle = t.truncatingRemainder(dividingBy: 10)
             let scale = cycle < 2 ? 0.6 + 0.3 * cycle / 2 : cycle < 3 ? 0.9 + 0.1 * (cycle - 2) : 1.0 - 0.4 * (cycle - 3) / 7
             let step = cycle < 2 ? 0 : cycle < 3 ? 1 : 2
             VStack(spacing: 30) {

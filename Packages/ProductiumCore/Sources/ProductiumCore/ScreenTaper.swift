@@ -1,22 +1,10 @@
 import Foundation
 
-/// Gradual, adaptive reduction of distracting-app time.
-///
-/// * Baseline = median of the first week of real usage, measured, not guessed.
-/// * Each week (Monday: "fresh start", Dai, Milkman & Riis 2014) the daily limit steps
-///   down ~10%, faster if the student is comfortably under, held if they're mostly
-///   over. An unreachable limit gets ignored and breeds "what-the-hell" relapse
-///   (Polivy & Herman 1985; Cochran & Tesser 1996). Shaping works through
-///   attainable steps (Bandura 1977, self-efficacy).
-/// * Limits and friction do reduce use, and the reduction persists (Allcott, Gentzkow & Song 2022;
-///   Grüning et al. 2023).
-/// * It stops at the student's floor goal, not at zero.
 public struct ScreenTaper: Codable, Hashable, Sendable {
     public var baselineMinutes: Int?
     public var targetMinutes: Int?
     public var lastStepWeekStart: Date?
     public var history: [Step]
-    /// "Just 15 more minutes" unlocks allowed per day. Tapers too.
     public var unlocksPerDay: Int
 
     public struct Step: Codable, Hashable, Sendable {
@@ -33,21 +21,20 @@ public struct ScreenTaper: Codable, Hashable, Sendable {
         unlocksPerDay = 4
     }
 
-    public static func median(_ xs: [Int]) -> Int? {
-        guard !xs.isEmpty else { return nil }
-        let s = xs.sorted()
-        return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
+    public var goalMinutes: Int {
+        guard let b = baselineMinutes else { return 45 }
+        return max(30, Int((Double(b) / 2 / 5).rounded()) * 5)
     }
 
-    /// Call daily. Returns a note when the target changed.
     @discardableResult
-    public mutating func update(days: [ScreenDay], now: Date, goalMinutes: Int, calendar cal: Calendar) -> String? {
+    public mutating func update(days: [ScreenDay], now: Date, calendar cal: Calendar) -> String? {
+        let goalMinutes = self.goalMinutes
         let today = cal.startOfDay(for: now)
         let past = days.filter { $0.day < today }.sorted { $0.day < $1.day }
         guard let weekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start else { return nil }
 
         if baselineMinutes == nil {
-            guard past.count >= 5, let med = Self.median(past.suffix(7).map(\.distractingMinutes)) else { return nil }
+            guard past.count >= 5, let med = past.suffix(7).map(\.distractingMinutes).median else { return nil }
             baselineMinutes = med
             targetMinutes = max(goalMinutes, med)
             lastStepWeekStart = weekStart
@@ -84,6 +71,5 @@ public struct ScreenTaper: Codable, Hashable, Sendable {
         return note
     }
 
-    /// Before a baseline exists, monitor only: limits feel arbitrary without one.
     public var dailyLimit: Int? { targetMinutes }
 }

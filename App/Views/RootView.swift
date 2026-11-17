@@ -41,7 +41,6 @@ struct RootView: View {
         .sheet(isPresented: $showGap) { GapView() }
         .fullScreenCover(isPresented: Binding(get: { model.state.focus != nil }, set: { _ in })) { FocusView() }
         .onChange(of: model.deepLink) { _, link in open(link) }
-        // A link set before the first frame (an intent that launched the app) doesn't count as a change.
         .onAppear { open(model.deepLink) }
     }
 

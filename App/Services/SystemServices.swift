@@ -9,11 +9,6 @@ import ProductiumCore
 import AlarmKit
 #endif
 
-// MARK: - Wake-up alarms (AlarmKit, iOS 26+)
-
-/// Sets real alarms (iOS 26.1+) for the planned wake time, worked back from the first class,
-/// the learned commute and getting-ready time. On older iOS, a time-sensitive
-/// notification is used instead.
 enum AlarmService {
     static func requestAuthorization() async -> Bool {
         #if canImport(AlarmKit) && ENABLE_ALARMKIT
@@ -69,12 +64,6 @@ enum AlarmService {
     }
     #endif
 
-    // MARK: Nudge alarms (opt-in): bedtime, time to leave, a block that hasn't started
-
-    /// AlarmKit alarms ring through silent mode and Focus, so they're only used when the student
-    /// turns them on (Settings → Notifications). Kept in step with the plan: alarms whose key and
-    /// time haven't changed are left alone, the rest are cancelled or added.
-    /// Without AlarmKit (iOS before 26.1) this does nothing: the notifications already cover it.
     static func scheduleNudges(_ alarms: [PlannedAlarm]) async {
         #if canImport(AlarmKit) && ENABLE_ALARMKIT
         if #available(iOS 26.1, *) {
@@ -94,7 +83,6 @@ enum AlarmService {
         #endif
     }
 
-    /// Focus started early: the "hasn't started" alarm for that block goes.
     static func cancelNudge(blockId: UUID) {
         #if canImport(AlarmKit) && ENABLE_ALARMKIT
         if #available(iOS 26.1, *) {
@@ -143,8 +131,6 @@ enum AlarmService {
     #endif
 }
 
-// MARK: - Live Activity for the current block
-
 enum LiveActivityService {
     static func update(current: PlannedBlock?, next: PlannedBlock?) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
@@ -164,8 +150,6 @@ enum LiveActivityService {
     }
 }
 
-// MARK: - Widgets
-
 enum WidgetService {
     static func publish(plan: Plan, outcomes: [BlockOutcome]) {
         let cal = Calendar.current
@@ -179,8 +163,6 @@ enum WidgetService {
         WidgetCenter.shared.reloadAllTimelines()
     }
 }
-
-// MARK: - Background refresh
 
 enum BackgroundRefresh {
     static let id = "app.productium.refresh"

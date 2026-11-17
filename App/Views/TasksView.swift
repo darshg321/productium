@@ -1,10 +1,6 @@
 import SwiftUI
 import ProductiumCore
 
-/// Every task in one list, the way Reminders shows a smart list: a summary on top, sections by
-/// when it's due (or by subject or type), search, and swipes for the common things. Adding and
-/// editing happen on the phone in a form, so they cost no tokens. The Inbox still works for
-/// anything typed in plain words.
 struct TasksView: View {
     @Environment(AppModel.self) private var model
     @AppStorage("tasks.grouping") private var grouping: TaskGrouping = .due
@@ -90,7 +86,6 @@ struct TasksView: View {
     }
 }
 
-/// Open tasks, what's left and how much of it already has a slot, in the Health card style.
 struct TaskSummaryCard: View {
     @Environment(AppModel.self) private var model
     let now: Date
@@ -153,7 +148,7 @@ struct TaskRow: View {
                 } label: {
                     Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
                         .font(.title2)
-                        .foregroundStyle(item.isDone ? Color.green : Theme.color(for: item.kind))
+                        .foregroundStyle(item.isDone ? Color.green : Theme.color(for: item, in: model.state))
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(item.isDone ? "Mark \(item.title) not done" : "Mark \(item.title) done")
@@ -165,7 +160,7 @@ struct TaskRow: View {
                         .lineLimit(2)
                     HStack(spacing: 6) {
                         Label(item.kind.title, systemImage: item.kind.symbol).labelStyle(.iconOnly)
-                            .foregroundStyle(Theme.color(for: item.kind))
+                            .foregroundStyle(Theme.color(for: item, in: model.state))
                         Text(subtitle(steps: steps))
                             .foregroundStyle(!item.isDone && item.due < now ? Theme.alert : .secondary)
                     }
@@ -228,11 +223,11 @@ struct TaskRow: View {
         else { parts.append("Due \(item.due.relativeDay) \(item.due.hm)") }
         if let s = item.subject, !s.isEmpty { parts.append(s.capitalized) }
         if !steps.isEmpty { parts.append("\(steps.filter(\.isDone).count)/\(steps.count) steps") }
+        if !item.isDone, let p = item.putOffLabel { parts.append(p) }
         return parts.joined(separator: " · ")
     }
 }
 
-/// Add or change a task on the phone. No tokens: the planner just makes room for it.
 struct TaskEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -304,6 +299,10 @@ struct TaskEditor: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section {
+                    ColorChoice(color: $item.color, automatic: Theme.color(for: item.kind))
                 }
 
                 Section {
