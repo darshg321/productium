@@ -368,9 +368,10 @@ public enum Prompts {
         """
     }
 
-    public static func decompositionRequest(item: WorkItem, now: Date, timeZone: TimeZone) -> String {
+    public static func decompositionRequest(item: WorkItem, now: Date, timeZone: TimeZone, aboutMe: AboutMe = .empty) -> String {
         "Now \(iso(now, timeZone)). Task: \(item.title) (\(item.kind.rawValue)), due \(iso(item.due, timeZone)), " +
             "about \(item.estimateMinutes) min total." + (item.notes.map { " Notes: \($0.prefix(300))" } ?? "")
+            + (aboutMe.isEmpty ? "" : "\n" + aboutMe.promptText)
     }
 
     public static func weeklyReview() -> String {
@@ -410,9 +411,11 @@ public enum Prompts {
 
     /// Compact context, so prompts stay cheap and on-topic.
     public static func context(now: Date, items: [WorkItem], plan: Plan, summary: PeriodSummary?, moods: [MoodEntry],
-                               taper: ScreenTaper, learned: LearnedModel, calendar cal: Calendar) -> String {
+                               taper: ScreenTaper, learned: LearnedModel, calendar cal: Calendar,
+                               aboutMe: AboutMe = .empty) -> String {
         let df = DateFormatter(); df.calendar = cal; df.timeZone = cal.timeZone; df.dateFormat = "EEE MMM d HH:mm"
         var lines = ["Now: \(df.string(from: now))"]
+        if !aboutMe.isEmpty { lines.append(aboutMe.promptText) }
         // The weekly note is about how the week went, so only the next few deadlines matter.
         let open = items.filter { !$0.isDone && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(8)
         if !open.isEmpty {

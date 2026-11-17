@@ -23,6 +23,10 @@ final class AppModel {
     var subscription: SubscriptionStatus?
     /// Every AI request and reply in full, newest last (its own file, not part of `state`).
     var callLog: AICallLog
+    /// about-me.md (its own file, so the student can read and edit it as text).
+    var aboutMe: AboutMe {
+        didSet { AboutMeStore.save(aboutMe) }
+    }
     @ObservationIgnored private var callLogSave: Task<Void, Never>?
     var deepLink: String?
     let cal = Calendar.current
@@ -32,6 +36,7 @@ final class AppModel {
     init() {
         state = Persistence.load()
         callLog = CallLogStore.load()
+        aboutMe = AboutMeStore.load()
     }
 
     // MARK: - Persistence
@@ -505,7 +510,7 @@ final class AppModel {
         defer { busy.remove("decompose") }
         guard let d = try? await ClaudeClient.shared.structured(
             feature: .breakdown, system: Prompts.decomposition(),
-            user: Prompts.decompositionRequest(item: item, now: Date(), timeZone: cal.timeZone),
+            user: Prompts.decompositionRequest(item: item, now: Date(), timeZone: cal.timeZone, aboutMe: aboutMe),
             schema: Schemas.decomposition, as: Decomposition.self, maxTokens: 700,
             accept: { !$0.steps.isEmpty }) else { return }
         var added = 0
@@ -560,7 +565,7 @@ final class AppModel {
         defer { busy.remove("review") }
         let summary = Insights.summarize(dayTotals(last: 7), learned: state.learned)
         let ctx = Prompts.context(now: Date(), items: state.items, plan: state.plan, summary: summary, moods: state.moods,
-                                  taper: state.taper, learned: state.learned, calendar: cal)
+                                  taper: state.taper, learned: state.learned, calendar: cal, aboutMe: aboutMe)
         guard let r = try? await ClaudeClient.shared.structured(feature: .review, system: Prompts.weeklyReview(), user: ctx,
                                                                schema: Schemas.weeklyReview, as: WeeklyReview.self,
                                                                maxTokens: 500, accept: { !$0.headline.isEmpty }) else { return }
@@ -598,7 +603,7 @@ final class AppModel {
         let today = cal.startOfDay(for: now)
         let context = Prompts.dumpContext(DumpContextInput(now: now, calendar: cal, state: state.dumpState,
                                                            calendarEvents: state.events, todaySegments: segments(on: today),
-                                                           plan: state.plan, warnings: activeWarnings))
+                                                           plan: state.plan, warnings: activeWarnings, aboutMe: aboutMe))
         let convo = state.conversation
         let content = ConversationPolicy.userContent(for: convo, text: text, images: images, fullContext: context)
         let req = convo.request(system: Prompts.dump(), tool: ConversationPolicy.tool(schema: Schemas.dump),
@@ -689,6 +694,11 @@ final class AppModel {
         if item.kind.isMemoryBased, !item.topics.isEmpty { Task { await makeCards(for: item) } }
     }
 
+    /// The student saved Settings → About You: lines they added or changed become theirs.
+    func saveAboutMe(editedText: String) {
+        aboutMe = AboutMe.studentEdited(old: aboutMe.markdown, new: editedText)
+    }
+
     // MARK: - Gap mode
 
     func reviewCard(_ id: UUID, correct: Bool) {
@@ -735,7 +745,8 @@ final class AppModel {
         Persistence.save(state)
         let b = FullBackup(exportedAt: Date(), appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
                            serverURL: ClaudeClient.shared.baseURL?.absoluteString,
-                           nudgeOnShield: SharedConfig.defaults.bool(forKey: SharedConfig.Key.nudgeOnShield), state: state)
+                           nudgeOnShield: SharedConfig.defaults.bool(forKey: SharedConfig.Key.nudgeOnShield), state: state,
+                           aboutMe: aboutMe.markdown)
         return try FullBackup.encoder().encode(b)
     }
 
@@ -772,6 +783,7 @@ final class AppModel {
             state.restore(full: full.state)
             if let u = full.serverURL.flatMap(URL.init(string:)) { ClaudeClient.shared.baseURL = u }
             if let n = full.nudgeOnShield { SharedConfig.defaults.set(n, forKey: SharedConfig.Key.nudgeOnShield) }
+            aboutMe = AboutMe.parse(full.aboutMe ?? "")
         } else if let legacy = p.legacy {
             state.restore(legacy)
         }
@@ -787,6 +799,7 @@ final class AppModel {
         ScreenTimeService.shared.disable()
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         clearCallLog()
+        aboutMe = .empty
         state = AppState()
         Persistence.save(state)
     }

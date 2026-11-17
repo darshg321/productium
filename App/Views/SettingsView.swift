@@ -46,6 +46,7 @@ struct SettingsView: View {
                 row("Connections", "link", .green, nil) { ConnectionSettings() }
                 row("Places", "location.fill", .blue, model.state.integrations.location ? "On" : "Off") { PlacesSettings() }
                 row("Routines", "figure.walk", .orange, nil) { RoutineSettings() }
+                row("About You", "person.text.rectangle.fill", .teal, nil) { AboutYouView() }
             }
 
             Section {
@@ -814,6 +815,39 @@ struct BackupSettings: View {
             Button("Delete All Data", role: .destructive) { model.deleteEverything() }
         } message: {
             Text("Back up first if you might want it again.")
+        }
+    }
+}
+
+/// about-me.md in a plain text editor. Whatever the student writes or changes is marked "(you)"
+/// and the AI never overwrites it.
+struct AboutYouView: View {
+    @Environment(AppModel.self) private var model
+    @State private var text = ""
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            TextEditor(text: $text)
+                .font(.callout.monospaced())
+                .padding(.horizontal, 12)
+            Text("What Productium knows about you. Lines you write or change end in (you), and the AI never overwrites them. Stated lines come from what you tell the Inbox; Inferred and Patterns lines come from the weekly reflection.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(16)
+        }
+        .navigationTitle("About You")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") { model.saveAboutMe(editedText: text); text = model.aboutMe.markdown }
+                    .disabled(text == model.aboutMe.markdown)
+            }
+        }
+        .onAppear {
+            guard !loaded else { return }
+            text = model.aboutMe.markdown
+            loaded = true
         }
     }
 }

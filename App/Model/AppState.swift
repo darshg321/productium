@@ -177,6 +177,8 @@ struct FullBackup: Codable {
     var serverURL: String?
     var nudgeOnShield: Bool?
     var state: AppState
+    /// about-me.md, as written.
+    var aboutMe: String?
 
     static func encoder() -> JSONEncoder {
         let e = JSONEncoder()
@@ -216,6 +218,23 @@ enum Persistence {
         enc.dateEncodingStrategy = .iso8601
         guard let data = try? enc.encode(s) else { return }
         try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+}
+
+/// about-me.md: what the app knows about the student, as a markdown file they can edit.
+enum AboutMeStore {
+    static var url: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return docs.appendingPathComponent("about-me.md")
+    }
+
+    static func load() -> AboutMe {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return .empty }
+        return AboutMe.parse(text)
+    }
+
+    static func save(_ me: AboutMe) {
+        try? Data(me.markdown.utf8).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 }
 

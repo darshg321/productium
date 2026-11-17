@@ -35,9 +35,12 @@ public struct DumpContextInput: Sendable {
     public var todaySegments: [Segment]
     public var plan: Plan
     public var warnings: [PlanWarning]
+    /// about-me.md.
+    public var aboutMe: AboutMe
 
     public init(now: Date, calendar: Calendar, state: DumpState, calendarEvents: [FixedEvent] = [],
-                todaySegments: [Segment] = [], plan: Plan = .empty, warnings: [PlanWarning] = []) {
+                todaySegments: [Segment] = [], plan: Plan = .empty, warnings: [PlanWarning] = [], aboutMe: AboutMe = .empty) {
+        self.aboutMe = aboutMe
         self.now = now
         self.calendar = calendar
         self.state = state
@@ -74,6 +77,8 @@ extension Prompts {
         - Splitting an activity (school into periods): split_activity with id and parts; never add periods \
         next to the original. Parts keep the original's days unless given weekdays; days no part covers keep the \
         original. To change a period later, update_activity its id. If the periods already exist, update them.
+        - "About the student" is what they've told the app before. When you need to know something about \
+        them, look there first; ask only if it isn't there.
         - Several things at once: one action each, in order. Fix rather than duplicate. If unsure, do the likely \
         thing and say so.
 
@@ -123,6 +128,7 @@ extension Prompts {
         func col(_ v: String?) -> String { v.map { " color \($0)" } ?? "" }
         let today = cal.startOfDay(for: now)
         var l = ["Now: \(df.string(from: now)) \(cal.timeZone.identifier)"]
+        l += c.aboutMe.promptText.split(separator: "\n").map(String.init)
 
         let p = s.prefs
         l.append("Settings: sleepNeedMinutes \(p.sleepNeedMinutes), schoolDayWake \(p.schoolDayWake.label), freeDayWake "
