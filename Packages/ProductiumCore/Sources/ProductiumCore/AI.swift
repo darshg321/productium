@@ -43,6 +43,12 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, Ex
     public init(arrayLiteral v: JSONValue...) { self = .array(v) }
     public init(dictionaryLiteral v: (String, JSONValue)...) { self = .object(Dictionary(v, uniquingKeysWith: { _, b in b })) }
 
+    /// Any encodable value as JSON.
+    public static func encoding<T: Encodable>(_ v: T) -> JSONValue? {
+        let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
+        return (try? e.encode(v)).flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) }
+    }
+
     /// The string inside, if it is one.
     public var stringValue: String? { if case .string(let s) = self { return s }; return nil }
     public var numberValue: Double? { if case .number(let n) = self { return n }; return nil }

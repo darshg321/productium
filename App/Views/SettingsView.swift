@@ -738,11 +738,13 @@ struct BackupSettings: View {
         List {
             Section {
                 Button {
-                    do {
-                        document = BackupDocument(data: try model.backupData())
-                        exporting = true
-                    } catch {
-                        errorText = error.localizedDescription
+                    Task {
+                        do {
+                            document = BackupDocument(data: try await model.backupData())
+                            exporting = true
+                        } catch {
+                            errorText = error.localizedDescription
+                        }
                     }
                 } label: {
                     SettingsLabel(title: "Back Up All Data", symbol: "square.and.arrow.down.fill", color: .blue)
@@ -751,7 +753,7 @@ struct BackupSettings: View {
                     LabeledContent("Last Backup", value: Date(timeIntervalSince1970: lastBackup).formatted(date: .abbreviated, time: .shortened))
                 }
             } footer: {
-                Text("Saves everything in Productium to one file you choose where to keep: tasks, schedule, check-ins, sleep and screen-time history, flashcards, what it has learned about you, AI usage and all settings. Your API key isn't included.")
+                Text("Saves every byte Productium keeps to one file you choose where to keep: tasks, schedule, check-ins, sleep and screen-time history, flashcards, what it has learned about you, About You, every prompt you've sent (with its screenshots) and every AI reply, AI usage, all settings, and a snapshot of notifications and permissions for debugging. Your API key isn't included: it stays in the Keychain.")
             }
 
             Section {
@@ -794,7 +796,7 @@ struct BackupSettings: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { r in
             switch r {
             case .success(let url):
-                do { pending = try model.readBackup(from: url) } catch { errorText = "That file isn't a Productium backup." }
+                do { pending = try model.readBackup(from: url) } catch { errorText = (error as? ExportBundle.ReadError)?.description ?? "That file isn't a Productium export." }
             case .failure(let e):
                 errorText = e.localizedDescription
             }

@@ -725,7 +725,6 @@ final class AppModel {
             return segments(on: d)
         }.sorted { $0.start < $1.start }
         let files: [(String, Data)] = [
-            ("productium-backup.json", try backupData()),
             ("daily-summary.csv", Data(Exporter.dailyCSV(days).utf8)),
             ("timeline.csv", Data(Exporter.segmentsCSV(segs).utf8)),
             ("tasks.csv", Data(Exporter.itemsCSV(state.items).utf8)),
@@ -741,59 +740,33 @@ final class AppModel {
         }
     }
 
-    /// Everything, in one JSON file the student keeps (Files, iCloud Drive, AirDrop…).
-    func backupData() throws -> Data {
-        Persistence.save(state)
-        let b = FullBackup(exportedAt: Date(), appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
-                           serverURL: ClaudeClient.shared.baseURL?.absoluteString,
-                           nudgeOnShield: SharedConfig.defaults.bool(forKey: SharedConfig.Key.nudgeOnShield), state: state,
-                           aboutMe: aboutMe.markdown)
-        return try FullBackup.encoder().encode(b)
+    /// Everything, in one JSON file the student keeps (Files, iCloud Drive, AirDrop…): every byte
+    /// the app keeps, except the API key.
+    func backupData() async throws -> Data {
+        try ExportBundle.encoder().encode(await ExportService.make(self))
     }
 
     var backupFilename: String {
-        "Productium Backup \(Date().formatted(.iso8601.year().month().day()))"
+        "Productium Export \(Date().formatted(.iso8601.year().month().day()))"
     }
 
-    /// Reads a backup without applying it, so Settings can say what's in it first.
-    /// Takes this version's full backups and the older partial ones.
+    /// Reads an export without applying it, so Settings can say what's in it first.
     func readBackup(from url: URL) throws -> RestorePreview {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
-        let data = try Data(contentsOf: url)
-        if let full = try? FullBackup.decoder().decode(FullBackup.self, from: data), full.format == FullBackup.formatID {
-            let s = full.state
-            let summary = "\(s.items.count) tasks, \(s.commitments.count) activities, \(s.outcomes.count) study sessions, "
-                + "\(s.moods.count) mood entries, \(s.flashcards.count) flashcards and all settings."
-            return RestorePreview(exportedAt: full.exportedAt, summary: summary, full: full)
-        }
-        let legacy = try Exporter.decodeBackup(data)
-        return RestorePreview(exportedAt: legacy.exportedAt,
-                              summary: "An older backup: \(legacy.items.count) tasks, \(legacy.commitments.count) activities and settings.",
-                              legacy: legacy)
+        let b = try ExportBundle.read(try Data(contentsOf: url))
+        return RestorePreview(exportedAt: b.exportedAt, summary: b.summary, bundle: b)
     }
 
-    /// Replaces everything with the backup. The current data is kept on the side first
+    /// Replaces everything with the export. The current data is kept on the side first
     /// (state-before-restore.json), so a wrong file is never a disaster.
     func applyRestore(_ p: RestorePreview) {
-        let enc = FullBackup.encoder()
-        if let data = try? enc.encode(state) {
-            try? data.write(to: Persistence.url.deletingLastPathComponent().appendingPathComponent("state-before-restore.json"), options: .atomic)
-        }
-        if let full = p.full {
-            state.restore(full: full.state)
-            if let u = full.serverURL.flatMap(URL.init(string:)) { ClaudeClient.shared.baseURL = u }
-            if let n = full.nudgeOnShield { SharedConfig.defaults.set(n, forKey: SharedConfig.Key.nudgeOnShield) }
-            aboutMe = AboutMe.parse(full.aboutMe ?? "")
-        } else if let legacy = p.legacy {
-            state.restore(legacy)
-        }
+        ExportService.restore(p.bundle, into: self)
         undoSnapshot = nil
         undoTurnId = nil
-        Persistence.save(state)
         if state.integrations.location { LocationService.shared.monitor(state.places) }
         replan()
-        toast = "Restored from backup."
+        toast = "Restored from the export."
     }
 
     func deleteEverything() {

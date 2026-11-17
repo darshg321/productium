@@ -127,7 +127,7 @@ struct AICallListView: View {
                     NavigationLink { AICallDetailView(call: c) } label: { AICallRow(call: c) }
                 }
             } footer: {
-                Text("The last \(AICallLog.maxCalls) requests from the past two weeks, kept only on this phone.")
+                Text("Every request and reply, kept only on this phone and included in the export.")
             }
         }
         .listStyle(.insetGrouped)

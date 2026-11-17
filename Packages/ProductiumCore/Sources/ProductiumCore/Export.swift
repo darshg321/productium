@@ -1,39 +1,142 @@
 import Foundation
 
-/// Full local backup. The student owns their data: export, restore, delete.
-public struct Backup: Codable, Sendable {
+// MARK: - The export: every byte the app keeps, in one file
+//
+// One JSON file holds everything: the whole state, about-me.md, the active conversation and the
+// archive (every prompt verbatim, with its images), the whole AI call log, usage, the App Group and
+// app defaults, the other files the app writes, and, for debugging, the notifications, permissions
+// and device at export time. Space doesn't matter: it doubles as the debugging dump. The only thing
+// left out is the API key, which stays in the Keychain.
+//
+// Format 3. Earlier formats aren't read (the one-off repair script converts an old backup).
+
+public struct ExportBundle: Codable, Sendable {
+    public static let formatID = "productium-export"
+    public static let currentVersion = 3
+
+    public struct Device: Codable, Hashable, Sendable {
+        public var appVersion: String?
+        public var appBuild: String?
+        public var systemVersion: String?
+        public var model: String?
+        public var timeZone: String
+        public init(appVersion: String? = nil, appBuild: String? = nil, systemVersion: String? = nil, model: String? = nil,
+                    timeZone: String = TimeZone.current.identifier) {
+            self.appVersion = appVersion
+            self.appBuild = appBuild
+            self.systemVersion = systemVersion
+            self.model = model
+            self.timeZone = timeZone
+        }
+    }
+
+    /// A notification as iOS had it at export time.
+    public struct Notification: Codable, Hashable, Sendable {
+        public var id: String
+        public var title: String
+        public var body: String
+        public var at: Date?
+        public var category: String?
+        public var userInfo: JSONValue?
+        public init(id: String, title: String, body: String, at: Date? = nil, category: String? = nil, userInfo: JSONValue? = nil) {
+            self.id = id
+            self.title = title
+            self.body = body
+            self.at = at
+            self.category = category
+            self.userInfo = userInfo
+        }
+    }
+
+    public var format: String
     public var version: Int
     public var exportedAt: Date
-    public var preferences: Preferences
-    public var items: [WorkItem]
-    public var commitments: [Commitment]
-    public var routines: [Routine]
-    public var markers: [TimelineEvent]
-    public var outcomes: [BlockOutcome]
-    public var moods: [MoodEntry]
-    public var health: [HealthDay]
-    public var screen: [ScreenDay]
-    public var learned: LearnedModel
-    public var taper: ScreenTaper
-    public var flashcards: [Flashcard]
+    public var device: Device
 
-    public init(version: Int = 1, exportedAt: Date, preferences: Preferences, items: [WorkItem], commitments: [Commitment],
-                routines: [Routine], markers: [TimelineEvent], outcomes: [BlockOutcome], moods: [MoodEntry],
-                health: [HealthDay], screen: [ScreenDay], learned: LearnedModel, taper: ScreenTaper, flashcards: [Flashcard]) {
-        self.version = version
+    /// state.json.
+    public var state: AppState
+    /// about-me.md, as written.
+    public var aboutMe: String
+    /// ai-calls.json: every request and reply.
+    public var callLog: AICallLog
+    /// UserDefaults the app keeps outside the state: the App Group (scroll log, friction, check-ins,
+    /// alarm ids, widget snapshot…) and the app's own (server address…). Plist values as JSON
+    /// (`{"$data": base64}`, `{"$date": iso}` for the types JSON doesn't have).
+    public var sharedDefaults: [String: JSONValue]
+    public var appDefaults: [String: JSONValue]
+    /// Every other file the app wrote (last-ai-error.txt, state-before-restore.json, drafts…), base64.
+    public var files: [String: String]
+
+    // Read-only snapshots for debugging; import doesn't restore these.
+    public var pendingNotifications: [Notification]
+    public var deliveredNotifications: [Notification]
+    /// "health.sleep" → "notDetermined", "location" → "authorizedWhenInUse"…
+    public var permissions: [String: String]
+    /// The server's usage and subscription answers at export time (raw JSON).
+    public var serverSnapshots: [String: JSONValue]
+
+    public init(exportedAt: Date, device: Device, state: AppState, aboutMe: String = "", callLog: AICallLog = AICallLog(),
+                sharedDefaults: [String: JSONValue] = [:], appDefaults: [String: JSONValue] = [:], files: [String: String] = [:],
+                pendingNotifications: [Notification] = [], deliveredNotifications: [Notification] = [],
+                permissions: [String: String] = [:], serverSnapshots: [String: JSONValue] = [:]) {
+        self.format = ExportBundle.formatID
+        self.version = ExportBundle.currentVersion
         self.exportedAt = exportedAt
-        self.preferences = preferences
-        self.items = items
-        self.commitments = commitments
-        self.routines = routines
-        self.markers = markers
-        self.outcomes = outcomes
-        self.moods = moods
-        self.health = health
-        self.screen = screen
-        self.learned = learned
-        self.taper = taper
-        self.flashcards = flashcards
+        self.device = device
+        self.state = state
+        self.aboutMe = aboutMe
+        self.callLog = callLog
+        self.sharedDefaults = sharedDefaults
+        self.appDefaults = appDefaults
+        self.files = files
+        self.pendingNotifications = pendingNotifications
+        self.deliveredNotifications = deliveredNotifications
+        self.permissions = permissions
+        self.serverSnapshots = serverSnapshots
+    }
+
+    /// The stores outside state.json that an export must hold (checked by a test, so a new store
+    /// can't be forgotten).
+    public static let nonStateStores = ["aboutMe", "callLog", "sharedDefaults", "appDefaults", "files"]
+
+    public static func encoder() -> JSONEncoder {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return e
+    }
+
+    public static func decoder() -> JSONDecoder {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }
+
+    public enum ReadError: Error, CustomStringConvertible {
+        case notAnExport, oldFormat(Int)
+        public var description: String {
+            switch self {
+            case .notAnExport: return "That file isn't a Productium export."
+            case .oldFormat(let v): return "That export is format \(v), from an older Productium. Only format 3 and later can be imported."
+            }
+        }
+    }
+
+    /// Reads an export. Only this format: older backups are refused, not half-read.
+    public static func read(_ data: Data) throws -> ExportBundle {
+        struct Head: Decodable { var format: String?; var version: Int? }
+        let head = try? decoder().decode(Head.self, from: data)
+        guard let head, head.format == formatID || head.format == "productium-backup" else { throw ReadError.notAnExport }
+        guard (head.version ?? 0) >= currentVersion, head.format == formatID else { throw ReadError.oldFormat(head.version ?? 0) }
+        return try decoder().decode(ExportBundle.self, from: data)
+    }
+
+    /// One line for the import preview.
+    public var summary: String {
+        let s = state
+        let prompts = s.conversation.turns.count + s.archive.conversations.reduce(0) { $0 + $1.turns.count }
+        return "\(s.items.count) tasks, \(s.commitments.count) activities, \(s.markers.count) check-ins, "
+            + "\(s.outcomes.count) study sessions, \(prompts) prompts, \(callLog.calls.count) AI calls and all settings."
     }
 }
 
@@ -128,11 +231,5 @@ public enum Exporter {
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         enc.dateEncodingStrategy = .iso8601
         return try enc.encode(value)
-    }
-
-    public static func decodeBackup(_ data: Data) throws -> Backup {
-        let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
-        return try dec.decode(Backup.self, from: data)
     }
 }

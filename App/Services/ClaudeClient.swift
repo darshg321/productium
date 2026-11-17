@@ -55,8 +55,8 @@ enum AIError: LocalizedError {
 }
 
 /// What the server says this key used (GET /v1/usage). Its "today" is the server's UTC day.
-struct ServerUsage: Decodable, Equatable {
-    struct Row: Decodable, Equatable {
+struct ServerUsage: Codable, Equatable {
+    struct Row: Codable, Equatable {
         var model: String
         var requests: Int
         var input_tokens: Int
@@ -66,7 +66,7 @@ struct ServerUsage: Decodable, Equatable {
         var cache_write_tokens: Int?
         var tokens: Int { output_tokens }
     }
-    struct Key: Decodable, Equatable { var name: String?; var rpm: Int?; var daily: Int? }
+    struct Key: Codable, Equatable { var name: String?; var rpm: Int?; var daily: Int? }
     var key: Key?
     var today: [Row]
     var last_7_days: [Row]
@@ -79,8 +79,8 @@ struct ServerUsage: Decodable, Equatable {
 /// How much of the Claude subscription behind the server is used (GET /v1/subscription, which
 /// asks Anthropic and caches for a minute). Older servers don't have it; then /health's last
 /// rate-limit event is used, which only knows the status and the reset time.
-struct SubscriptionStatus: Decodable, Equatable {
-    struct Limit: Decodable, Equatable, Identifiable {
+struct SubscriptionStatus: Codable, Equatable {
+    struct Limit: Codable, Equatable, Identifiable {
         var kind: String?
         var label: String
         var percent: Double
@@ -97,7 +97,7 @@ struct SubscriptionStatus: Decodable, Equatable {
             return f.date(from: r)
         }
     }
-    struct Event: Decodable, Equatable {
+    struct Event: Codable, Equatable {
         var status: String?
         var type: String?
         var resets_at: Double?

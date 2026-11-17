@@ -95,15 +95,9 @@ public struct UsageLedger: Codable, Hashable, Sendable {
         pauseBackgroundOverBudget = (try? c.decodeIfPresent(Bool.self, forKey: .pauseBackgroundOverBudget)) ?? true
     }
 
+    /// Every record is kept (the export holds all of them).
     public mutating func record(_ r: UsageRecord) {
         records.append(r)
-        prune(now: r.at)
-    }
-
-    /// Keep 31 days: enough for "last 30 days", small enough not to matter.
-    public mutating func prune(now: Date) {
-        let cutoff = now.addingTimeInterval(-31 * 86400)
-        records.removeAll { $0.at < cutoff }
     }
 
     public func records(on day: Date, calendar: Calendar) -> [UsageRecord] {
@@ -184,6 +178,8 @@ public struct AICall: Codable, Hashable, Identifiable, Sendable {
     public var schema: String?
     public var maxTokens: Int
     public var cacheTTL: Int?
+    /// `output_config.effort`, when the request set one.
+    public var effort: String?
     public var status: Int?
     public var durationMs: Int
     /// The response body exactly as received (trimmed only if enormous).
@@ -221,6 +217,7 @@ public struct AICall: Codable, Hashable, Identifiable, Sendable {
         self.init(at: at, feature: feature, requestedModel: r.model, system: r.system,
                   messages: r.messages.map { Message(role: $0.role, content: $0.content, images: $0.images.count) },
                   schema: schema, maxTokens: r.max_tokens, cacheTTL: r.cacheTTL, attempt: attempt)
+        self.effort = r.output_config?.effort
     }
 
     public var ok: Bool { error == nil && status == 200 }
@@ -249,20 +246,14 @@ public struct AICall: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-/// The last calls, newest last. Kept in its own file so the main state stays small.
+/// Every call, newest last. Kept in its own file so the main state stays small, and nothing is
+/// dropped: the export is also the debugging dump.
 public struct AICallLog: Codable, Hashable, Sendable {
-    public static let maxCalls = 150
-    public static let maxResponseChars = 60_000
     public var calls: [AICall] = []
 
     public init(calls: [AICall] = []) { self.calls = calls }
 
     public mutating func append(_ c: AICall, now: Date = Date()) {
-        var c = c
-        if c.response.count > Self.maxResponseChars { c.response = String(c.response.prefix(Self.maxResponseChars)) + "\n…(cut)" }
         calls.append(c)
-        let cutoff = now.addingTimeInterval(-14 * 86400)
-        calls.removeAll { $0.at < cutoff }
-        if calls.count > Self.maxCalls { calls.removeFirst(calls.count - Self.maxCalls) }
     }
 }

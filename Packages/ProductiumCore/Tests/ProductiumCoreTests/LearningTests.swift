@@ -108,11 +108,6 @@ final class LearningTests: XCTestCase {
         let plan = Planner.plan(Fx.input(now: Fx.mon(7), items: [WorkItem(title: "HW, part 1", kind: .assignment, due: Fx.mon(23, plusDays: 2))]))
         let ics = Exporter.ics(plan)
         XCTAssertTrue(ics.contains("BEGIN:VEVENT") && ics.contains("HW\\, part 1"))
-        let b = Backup(exportedAt: Fx.mon(7), preferences: Preferences(), items: [], commitments: [Fx.school], routines: Routine.defaults,
-                       markers: [], outcomes: [], moods: [MoodEntry(at: Fx.mon(7), mood: 4)], health: [], screen: [],
-                       learned: LearnedModel(), taper: ScreenTaper(), flashcards: [])
-        let back = try Exporter.decodeBackup(try Exporter.json(b))
-        XCTAssertEqual(back.commitments, [Fx.school])
         let totals = DayTotals(day: Fx.mon(0), minutes: [.study: 30], plannedStudy: 40, doneStudy: 30, mood: 4, sleep: 500, screen: 60, screenTarget: 90, steps: 8000)
         let json = String(data: try Exporter.json(totals), encoding: .utf8)!
         XCTAssertTrue(json.contains("\"study\" : 30"), json)

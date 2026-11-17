@@ -28,12 +28,12 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(l.daily(lastDays: 3, now: now, calendar: cal).map(\.tokens), [90, 0, 1000])
     }
 
-    func testLedgerPrunesOldRecords() {
+    func testLedgerKeepsEveryRecord() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         var l = UsageLedger()
-        l.records = [UsageRecord(at: now.addingTimeInterval(-40 * 86400), feature: .box, model: "sonnet", tokens: TokenCount(input: 1))]
+        l.records = [UsageRecord(at: now.addingTimeInterval(-400 * 86400), feature: .box, model: "sonnet", tokens: TokenCount(input: 1))]
         l.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(input: 1)))
-        XCTAssertEqual(l.records.count, 1)
+        XCTAssertEqual(l.records.count, 2)
     }
 
     func testLedgerDecodesFromEmptyObject() throws {
@@ -100,14 +100,12 @@ final class CallLogTests: XCTestCase {
         XCTAssertFalse(c.transcript.contains("AAAA"))
         XCTAssertTrue(c.transcript.contains("=== SYSTEM ===\nsys") && c.transcript.contains("(+1 image)"))
 
+        // Nothing is dropped or cut: the export is the debugging dump.
         var log = AICallLog()
-        for i in 0..<(AICallLog.maxCalls + 5) { var x = c; x.id = UUID(); x.at = Fx.mon(12).addingTimeInterval(Double(i)); log.append(x, now: Fx.mon(13)) }
-        XCTAssertEqual(log.calls.count, AICallLog.maxCalls)
-        var old = c; old.at = Fx.mon(12, plusDays: -20)
-        log.append(old, now: Fx.mon(13))
-        XCTAssertFalse(log.calls.contains { $0.at == old.at }, "two weeks at most")
-        var big = c; big.response = String(repeating: "x", count: AICallLog.maxResponseChars + 10)
-        log.append(big, now: Fx.mon(13))
-        XCTAssertTrue(log.calls.last!.response.hasSuffix("(cut)"))
+        var old = c; old.at = Fx.mon(12, plusDays: -60)
+        var big = c; big.response = String(repeating: "x", count: 200_000)
+        for x in [old, big] + (0..<200).map({ _ in c }) { log.append(x, now: Fx.mon(13)) }
+        XCTAssertEqual(log.calls.count, 202)
+        XCTAssertEqual(log.calls[1].response.count, 200_000)
     }
 }

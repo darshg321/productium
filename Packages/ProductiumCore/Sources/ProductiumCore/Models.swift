@@ -1,5 +1,35 @@
 import Foundation
 
+// MARK: - Stable encoding
+//
+// An export, imported and exported again, gives the same file byte for byte. A `Set` encodes in
+// whatever order its hash table happens to have, so persisted sets are written sorted, and
+// UUID-keyed dictionaries are written as JSON objects (which `.sortedKeys` orders).
+
+@propertyWrapper
+public struct SortedSet<T: Hashable & Codable & Comparable & Sendable>: Codable, Hashable, Sendable {
+    public var wrappedValue: Set<T>
+    public init(wrappedValue: Set<T>) { self.wrappedValue = wrappedValue }
+    public init(from decoder: Decoder) throws {
+        wrappedValue = Set(try decoder.singleValueContainer().decode([T].self))
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(wrappedValue.sorted())
+    }
+}
+
+extension UUID: @retroactive CodingKeyRepresentable {
+    public var codingKey: CodingKey { UUIDKey(stringValue: uuidString) }
+    public init?<T: CodingKey>(codingKey: T) { self.init(uuidString: codingKey.stringValue) }
+    struct UUIDKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+}
+
 // MARK: - Time of day
 
 /// A wall-clock time with no date attached (e.g. school starts 08:30).
@@ -140,7 +170,7 @@ public struct Commitment: Codable, Identifiable, Hashable, Sendable {
     public var title: String
     public var kind: CommitmentKind
     /// Calendar weekday numbers, 1 = Sunday … 7 = Saturday.
-    public var weekdays: Set<Int>
+    @SortedSet public var weekdays: Set<Int>
     public var start: TimeOfDay
     public var end: TimeOfDay
     /// Travel/transition minutes added before and after (you don't teleport).
@@ -218,7 +248,7 @@ public struct Preferences: Codable, Hashable, Sendable {
     public var allowSleepTradeoffs: Bool
     public var chronotype: Chronotype
     /// Calendar weekday numbers that are school days (default Mon–Fri).
-    public var schoolDays: Set<Int>
+    @SortedSet public var schoolDays: Set<Int>
     /// A floor goal for distracting-app minutes per day. The taper heads toward it.
     public var screenTimeGoalMinutes: Int
     public var interests: [String]
