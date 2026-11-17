@@ -163,6 +163,13 @@ extension Prompts {
                 .joined(separator: "; "))
         }
 
+        let recentScreen = s.screen.filter { $0.day >= today.addingTimeInterval(-4 * 86400) }.suffix(3)
+        if !recentScreen.isEmpty {
+            l.append("Screen Time: " + recentScreen.map { d in
+                "\(short.string(from: d.day)) scrolling \(ScreenReceipt.hm(d.distractingMinutes))"
+                    + (d.totalMinutes.map { " of \(ScreenReceipt.hm($0))" } ?? "") + (d.addsUp ? "" : " (doesn't add up)")
+            }.joined(separator: "; "))
+        }
         l.append("Routines: " + s.routines.map { "\($0.id) \($0.minutes)m\($0.enabled ? "" : " (off)")" }.joined(separator: ", "))
 
         let open = s.items.filter { !$0.isDone }.sorted { $0.due < $1.due }
