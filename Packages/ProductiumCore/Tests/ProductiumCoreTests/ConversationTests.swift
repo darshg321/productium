@@ -109,6 +109,21 @@ final class ConversationTests: XCTestCase {
         XCTAssertTrue(a.conversations.isEmpty)
     }
 
+    func testClearButtonShowsTheSizeAndExplainsExpiry() throws {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        var c = Conversation(startedAt: t0)
+        XCTAssertEqual(c.clearTitle, "Clear")
+        let content = ConversationPolicy.userContent(for: c, text: "hi", images: [], fullContext: "ctx")
+        c.add(ConversationTurn(at: t0, text: "hi", userContent: content, assistantContent: try reply(1).rawContent, reply: "ok",
+                               tokens: TokenCount(input: 200, output: 300, cacheRead: 12_000, cacheWrite: 2_000)))
+        XCTAssertEqual(c.clearTitle, "Clear · 14k tokens")
+        XCTAssertEqual(c.tokenStats.size, 14_200)
+        XCTAssertEqual(c.outputLine, "300 tokens out so far")
+        XCTAssertNil(c.cacheNote(now: t0.addingTimeInterval(60)))
+        let note = c.cacheNote(now: t0.addingTimeInterval(ConversationPolicy.cacheTTL + 1))
+        XCTAssertEqual(note, "Cache expired. Your next message re-reads all 14k tokens. Clear to start fresh, or keep going to keep the context.")
+    }
+
     func testRawMessagesRoundTrip() throws {
         let raw: JSONValue = .array([.object(["type": .string("text"), "text": .string("hello")])])
         let m = AIMessage(role: "user", raw: raw)

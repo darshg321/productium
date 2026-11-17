@@ -152,17 +152,26 @@ struct ThreadView: View {
             ForEach(expanded ? turns : Array(turns.suffix(1))) { t in
                 TurnView(turn: t)
             }
-            HStack {
-                let stats = model.state.conversation.tokenStats
-                if stats.size > 0 {
-                    Text("\(tokensLabel(stats.size)) tokens in this conversation")
-                        .font(.caption).foregroundStyle(.tertiary)
+            TimelineView(.periodic(from: .now, by: 30)) { ctx in
+                let convo = model.state.conversation
+                let expired = convo.cacheExpired(now: ctx.date)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Spacer()
+                        Button(convo.clearTitle) { withAnimation { model.clearConversation() } }
+                            .font(.subheadline)
+                            .foregroundStyle(expired ? Theme.alert : .secondary)
+                            .buttonStyle(.borderless)
+                    }
+                    if let line = convo.outputLine {
+                        Text(line).font(.caption2).foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    if let note = convo.cacheNote(now: ctx.date) {
+                        Text(note).font(.caption).foregroundStyle(Theme.alert)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                Spacer()
-                Button("Clear") { withAnimation { model.clearConversation() } }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .buttonStyle(.borderless)
             }
         }
         .transition(.opacity)

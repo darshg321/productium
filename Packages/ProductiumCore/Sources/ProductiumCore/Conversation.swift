@@ -128,6 +128,22 @@ public struct Conversation: Codable, Hashable, Identifiable, Sendable {
         return now.timeIntervalSince(last) >= ConversationPolicy.cacheTTL
     }
 
+    /// "Clear · 14.2k tokens": what the next prompt will carry.
+    public var clearTitle: String {
+        tokenStats.size > 0 ? "Clear · \(tokensLabel(tokenStats.size)) tokens" : "Clear"
+    }
+
+    public var outputLine: String? {
+        tokenStats.outputTotal > 0 ? "\(tokensLabel(tokenStats.outputTotal)) tokens out so far" : nil
+    }
+
+    /// Shown when the Clear button turns red. Nothing clears by itself.
+    public func cacheNote(now: Date) -> String? {
+        guard cacheExpired(now: now) else { return nil }
+        let size = tokenStats.size > 0 ? "all \(tokensLabel(tokenStats.size)) tokens" : "the whole conversation"
+        return "Cache expired. Your next message re-reads \(size). Clear to start fresh, or keep going to keep the context."
+    }
+
     public var suggestedTitle: String {
         let first = turns.first { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?.text
             ?? (turns.first.map { _ in "Screenshots" } ?? "Empty")

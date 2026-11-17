@@ -21,6 +21,11 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 4)
                 }
+                NavigationLink { PastPromptsView() } label: {
+                    LabeledContent { Text("\(model.state.archive.conversations.count)") } label: {
+                        SettingsLabel(title: "Past Prompts", symbol: "tray.full.fill", color: .blue)
+                    }
+                }
                 NavigationLink { UsageView(inSheet: false) } label: {
                     LabeledContent { Text("\(tokensLabel(model.tokensToday)) today") } label: {
                         SettingsLabel(title: "AI Usage", symbol: "gauge.with.dots.needle.33percent", color: Theme.meter(model.usageFraction))
