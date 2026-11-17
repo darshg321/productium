@@ -11,15 +11,12 @@ public struct Deferral: Hashable, Sendable {
 public enum ReflectionTrigger: String, Codable, Sendable { case deferrals, lowFollowThrough, weekly, asked }
 
 public enum Reflection {
-    public static func deferrals(items: [WorkItem], outcomes: [BlockOutcome], missedBlocks: [PlannedBlock] = [],
-                                 extra: [UUID: Int] = [:], since: Date) -> [Deferral] {
+    public static func deferrals(items: [WorkItem], since: Date) -> [Deferral] {
         items.filter { !$0.isDone }.compactMap { item in
-            let skipped = outcomes.filter { $0.itemId == item.id && $0.plannedStart >= since && ($0.status == .skipped || $0.actualMinutes == 0) }
-            let missed = missedBlocks.filter { $0.itemId == item.id && $0.start >= since }
-            let n = skipped.count + missed.count + (extra[item.id] ?? 0)
-            guard n > 0 else { return nil }
-            let last = (skipped.map(\.plannedStart) + missed.map(\.start)).max()
-            return Deferral(itemId: item.id, title: item.title, count: n, lastAt: last, reasons: [])
+            let log = item.deferrals.filter { $0.at >= since }
+            guard !log.isEmpty else { return nil }
+            return Deferral(itemId: item.id, title: item.title, count: log.count, lastAt: log.map(\.at).max(),
+                            reasons: Array(log.compactMap(\.reason).suffix(3)))
         }.sorted { $0.count > $1.count }
     }
 

@@ -81,6 +81,7 @@ final class AppModel {
             toast = note
         }
         state.prune(now: Date())
+        recordMissedBlocks()
         replan()
         if full {
             serverOnline = await ClaudeClient.shared.ping()
@@ -164,7 +165,7 @@ final class AppModel {
         state.plan.warnings.filter { !state.dismissed.contains($0.message) }
     }
 
-    func logOutcome(blockId: UUID, status: OutcomeStatus, actualMinutes: Int? = nil) {
+    func logOutcome(blockId: UUID, status: OutcomeStatus, actualMinutes: Int? = nil, reason: String? = nil) {
         guard !state.outcomes.contains(where: { $0.blockId == blockId }),
               let b = state.plan.blocks.first(where: { $0.id == blockId }) else { return }
         let actual = actualMinutes ?? (status == .done ? b.minutes : status == .partial ? b.minutes / 2 : 0)
@@ -177,6 +178,7 @@ final class AppModel {
         state.learned.record(outcome: o, calendar: cal)
         if let i = idx { state.items[i].completedMinutes += actual }
         if status == .skipped {
+            Avoidance.record(reason == nil ? .skipped : .cantToday, itemId: b.itemId, in: &state.items, at: Date(), reason: reason, blockId: blockId)
             toast = "No problem. It's been moved to a better slot."
         }
         replan()
@@ -209,9 +211,14 @@ final class AppModel {
         else { startNowOrNext() }
     }
 
+    func recordMissedBlocks() {
+        Avoidance.recordMissed(pendingOutcomes.filter { !state.snoozed.keys.contains($0.id) }, in: &state.items, at: Date())
+    }
+
     func snooze(blockId: UUID, minutes: Int = 10) {
         guard let b = state.plan.blocks.first(where: { $0.id == blockId }) else { return }
         state.snoozed[blockId] = Date().addingTimeInterval(Double(minutes) * 60)
+        Avoidance.record(.snoozed, itemId: b.itemId, in: &state.items, at: Date(), blockId: blockId)
         NotificationService.snooze(blockId: blockId, title: b.title, minutes: minutes)
         AlarmService.cancelNudge(blockId: blockId)
         save()
@@ -481,7 +488,7 @@ final class AppModel {
         let now = Date()
         state.proposals.expire(now: now)
         let since = now.addingTimeInterval(-14 * 86400)
-        let deferrals = Reflection.deferrals(items: state.items, outcomes: state.outcomes, missedBlocks: pendingOutcomes, since: since)
+        let deferrals = Reflection.deferrals(items: state.items, since: since)
         let days = dayRecords(back: 14)
         let weeklyDue = state.reflectionAt.map { now.timeIntervalSince($0) > 6.5 * 86400 } ?? (state.outcomes.count >= 5)
         guard let trigger = Reflection.trigger(now: now, lastRun: state.reflectionAt, deferrals: deferrals, days: days,
@@ -740,8 +747,10 @@ final class AppModel {
             undoSnapshot = state
             undoAboutMe = aboutMe
             let before = Set(state.items.map(\.id))
+            let itemsBefore = state.items
             let turnId = UUID()
             let report = editDumpState { DumpApplier.apply(result, to: &$0, now: now, calendar: cal, writer: .box, turnId: turnId) }
+            Avoidance.recordDueMoves(before: itemsBefore, after: &state.items, at: now, reason: text)
             estimateSleep()
             var reply = result.reply
             if reply.isEmpty { reply = report.changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }

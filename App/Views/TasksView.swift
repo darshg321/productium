@@ -223,6 +223,7 @@ struct TaskRow: View {
         else { parts.append("Due \(item.due.relativeDay) \(item.due.hm)") }
         if let s = item.subject, !s.isEmpty { parts.append(s.capitalized) }
         if !steps.isEmpty { parts.append("\(steps.filter(\.isDone).count)/\(steps.count) steps") }
+        if !item.isDone, let p = item.putOffLabel { parts.append(p) }
         return parts.joined(separator: " · ")
     }
 }

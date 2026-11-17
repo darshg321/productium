@@ -185,6 +185,7 @@ extension Prompts {
                 if !t.topics.isEmpty { line += " topics: \(t.topics.prefix(5).joined(separator: ", "))" }
                 if let n = t.notes, !n.isEmpty { line += " notes: \(n.prefix(80))" }
                 if let sh = c.plan.shortfalls[t.id], sh > 0 { line += " NOT ENOUGH TIME (\(sh)m short)" }
+                if let p = t.putOffLabel { line += " \(p.lowercased())" + (t.deferralReasons.last.map { " (last: \($0))" } ?? "") }
                 l.append(line + col(t.color))
                 for st in open.filter({ $0.parentId == t.id }) {
                     l.append("  - step id \(Ref.task(st.id)) \"\(st.title)\" due \(short.string(from: st.due)) \(st.completedMinutes)/\(st.estimateMinutes)m\(col(st.color))")

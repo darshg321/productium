@@ -111,6 +111,7 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
     public var createdAt: Date
     public var color: String?
     public var atSchool: Bool?
+    public var deferralLog: [DeferralEvent]?
 
     /// Done in school hours (ask a teacher, hand something in), so it gets a school slot, not a study block.
     public var isAtSchoolErrand: Bool {

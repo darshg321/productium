@@ -21,9 +21,10 @@ final class ReflectionTests: XCTestCase {
         let low = (1...3).map { DayRecord(day: Fx.mon(0, plusDays: -$0), isSchoolDay: true, planned: 120, done: 30) }
         XCTAssertEqual(t(days: low), .lowFollowThrough)
         XCTAssertEqual(t(weekly: true), .weekly)
-        let outs = (0..<3).map { i in BlockOutcome(blockId: UUID(), itemId: essay.id, kind: .application, plannedStart: Fx.mon(19, plusDays: -i),
-                                                   plannedMinutes: 40, actualMinutes: 0, status: .skipped) }
-        XCTAssertEqual(Reflection.deferrals(items: [essay], outcomes: outs, since: Fx.mon(0, plusDays: -14)).first?.count, 3)
+        var items = [essay]
+        for i in 0..<3 { Avoidance.record(.skipped, itemId: essay.id, in: &items, at: Fx.mon(19, plusDays: -i), reason: "tired", blockId: UUID()) }
+        XCTAssertEqual(Reflection.deferrals(items: items, since: Fx.mon(0, plusDays: -14)).first?.count, 3)
+        XCTAssertEqual(Reflection.deferrals(items: items, since: Fx.mon(0, plusDays: -14)).first?.reasons, ["tired", "tired", "tired"])
     }
 
     func testRecordedReplyBecomesProposals() throws {
@@ -71,5 +72,45 @@ final class ReflectionTests: XCTestCase {
         XCTAssertEqual(body["model"] as? String, "opus")
         XCTAssertEqual(AIFeature.reflection.title, "Opus · reflection")
         XCTAssertTrue(AIFeature.reflection.isBackground, "stands down over budget")
+    }
+}
+
+final class AvoidanceTests: XCTestCase {
+    func item() -> WorkItem { WorkItem(title: "Waterloo revision", kind: .practice, due: Fx.mon(18, plusDays: 3)) }
+
+    func testEveryWayOfPuttingOffCountsOnceAndShows() {
+        var items = [item()]
+        let id = items[0].id
+        let b1 = UUID(), b2 = UUID()
+        Avoidance.record(.snoozed, itemId: id, in: &items, at: Fx.mon(16), blockId: b1)
+        Avoidance.record(.snoozed, itemId: id, in: &items, at: Fx.mon(16, 10), blockId: b1)
+        Avoidance.record(.skipped, itemId: id, in: &items, at: Fx.mon(17), reason: "  too tired ", blockId: b1)
+        Avoidance.record(.skipped, itemId: id, in: &items, at: Fx.mon(17, 1), blockId: b1)
+        Avoidance.recordMissed([PlannedBlock(id: b2, kind: .work, start: Fx.mon(19), end: Fx.mon(20), title: "x", itemId: id)], in: &items, at: Fx.mon(21))
+        Avoidance.recordMissed([PlannedBlock(id: b2, kind: .work, start: Fx.mon(19), end: Fx.mon(20), title: "x", itemId: id)], in: &items, at: Fx.mon(22))
+        XCTAssertEqual(items[0].deferralCount, 4, "two snoozes, one skip, one missed; repeats of the same block don't recount")
+        XCTAssertEqual(items[0].putOffLabel, "Put off 4×")
+        XCTAssertEqual(items[0].deferralReasons, ["too tired"])
+        XCTAssertEqual(items[0].lastDeferredAt, Fx.mon(21))
+    }
+
+    func testMovingTheDueDateLaterIsPuttingItOffWithYourWords() {
+        var items = [item()]
+        let before = items
+        items[0].due = items[0].due.addingTimeInterval(2 * 86400)
+        Avoidance.recordDueMoves(before: before, after: &items, at: Fx.mon(12), reason: "push it to the weekend, I'm swamped")
+        XCTAssertEqual(items[0].deferrals.map(\.kind), [.dueMoved])
+        XCTAssertEqual(items[0].deferralReasons, ["push it to the weekend, I'm swamped"])
+        var earlier = items
+        earlier[0].due = earlier[0].due.addingTimeInterval(-86400)
+        Avoidance.recordDueMoves(before: items, after: &earlier, at: Fx.mon(13), reason: nil)
+        XCTAssertEqual(earlier[0].deferralCount, 1, "an earlier date isn't a put-off")
+    }
+
+    func testBoxContextShowsPutOff() {
+        var items = [item()]
+        for i in 0..<3 { Avoidance.record(.skipped, itemId: items[0].id, in: &items, at: Fx.mon(8 + i), blockId: UUID()) }
+        let s = DumpState(items: items, commitments: [], exceptions: [], oneOffs: [], markers: [], routines: [], moods: [], screen: [], prefs: Preferences())
+        XCTAssertTrue(Prompts.dumpContext(DumpContextInput(now: Fx.mon(12), calendar: Fx.cal, state: s)).contains("put off 3×"))
     }
 }

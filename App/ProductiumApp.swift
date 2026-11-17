@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             } else if action == "focus.snooze", let id = blockId {
                 model.snooze(blockId: id)
             } else if action == "focus.cant", let id = blockId {
-                model.logOutcome(blockId: id, status: .skipped)
+                model.logOutcome(blockId: id, status: .skipped, reason: "Can't today")
             } else if action == "scroll.gap" {
                 Friction.answered(stillScrolling: false)
                 model.deepLink = "productium://gap"
