@@ -133,20 +133,21 @@ public enum RoutineLearner {
     public static func learn(day events: [TimelineEvent], healthWake: Date?, routines: [Routine]) -> [Routine] {
         var out = routines
         let sorted = events.sorted { $0.at < $1.at }
-        func observe(_ id: String, from a: Date?, to b: Date?) {
-            guard let a, let b, b > a, let idx = out.firstIndex(where: { $0.id == id }) else { return }
-            out[idx].observe(Int((b.timeIntervalSince(a) / 60).rounded()))
+        func observe(_ id: String, from a: Date?, to b: TimelineEvent?) {
+            guard let a, let b, b.at > a, let idx = out.firstIndex(where: { $0.id == id }),
+                  !out[idx].learnedFrom.contains(b.id) else { return }
+            if out[idx].observe(Int((b.at.timeIntervalSince(a) / 60).rounded())) { out[idx].learnedFrom.insert(b.id) }
         }
-        func first(_ activity: String, _ phase: MarkerPhase, after: Date? = nil) -> Date? {
-            sorted.first { $0.activity == activity && $0.phase == phase && (after == nil || $0.at > after!) }?.at
+        func first(_ activity: String, _ phase: MarkerPhase, after: Date? = nil) -> TimelineEvent? {
+            sorted.first { $0.activity == activity && $0.phase == phase && (after == nil || $0.at > after!) }
         }
+        // The earliest start, whatever its source, pairs with the first end after it.
         let leftHome = first("to_school", .start)
-        let atSchool = first("to_school", .end, after: leftHome)
-        observe("to_school", from: leftHome, to: atSchool)
+        observe("to_school", from: leftHome?.at, to: first("to_school", .end, after: leftHome?.at))
         let leftSchool = first("from_school", .start)
-        observe("from_school", from: leftSchool, to: first("from_school", .end, after: leftSchool))
-        let wake = first("wake", .end) ?? first("sleep", .end) ?? healthWake
-        if let wake, let leftHome, leftHome.timeIntervalSince(wake) < 3 * 3600 {
+        observe("from_school", from: leftSchool?.at, to: first("from_school", .end, after: leftSchool?.at))
+        let wake = first("wake", .end)?.at ?? first("sleep", .end)?.at ?? healthWake
+        if let wake, let leftHome, leftHome.at.timeIntervalSince(wake) < 3 * 3600 {
             observe("get_ready", from: wake, to: leftHome)
         }
         return out
@@ -231,7 +232,9 @@ public enum TimelineBuilder {
         for e in d.fixedEvents where cal.isDate(e.start, inSameDayAs: dayStart) {
             paint(e.start, e.end, TimeCategory.from(e.kind), e.title, observed: false)
         }
-        for r in d.routines where r.enabled {
+        // A routine that was checked in today is painted from the check-ins, not assumed as well.
+        let checkedIn = Set(d.events.filter { cal.isDate($0.at, inSameDayAs: dayStart) }.map(\.activity))
+        for r in d.routines where r.enabled && !checkedIn.contains(r.id) {
             let anchored = occ.filter { r.anchorKind == nil || $0.commitment.kind == r.anchorKind }
             switch r.anchor {
             case .beforeFirstCommitment:
@@ -312,7 +315,8 @@ public enum TimelineBuilder {
             let l = cat[m] == nil ? "Free" : label[m]
             let inf = cat[m] == nil ? true : inferred[m]
             var n = m + 1
-            while n < limit && (cat[n] ?? .free) == c && (cat[n] == nil ? "Free" : label[n]) == l { n += 1 }
+            while n < limit && (cat[n] ?? .free) == c && (cat[n] == nil ? "Free" : label[n]) == l
+                    && (cat[n] == nil ? true : inferred[n]) == inf { n += 1 }
             out.append(Segment(start: dayStart.addingTimeInterval(Double(m) * 60),
                                end: dayStart.addingTimeInterval(Double(n) * 60), category: c, label: l, inferred: inf))
             m = n

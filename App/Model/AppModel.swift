@@ -587,6 +587,7 @@ final class AppModel {
 
     /// The turn that Undo would take back (only the latest one, while nothing else has changed).
     var undoTurnId: UUID?
+    @ObservationIgnored private var undoAboutMe: AboutMe?
 
     /// Anything at all: deadlines, corrections, what happened, how they feel, a question,
     /// screenshots (Screen Time, assignment sheets, timetables). Claude reads it in context
@@ -612,15 +613,19 @@ final class AppModel {
         do {
             let (result, res, tokens) = try await ClaudeClient.shared.send(req, feature: .box) { DumpResult.read($0) }
             undoSnapshot = state
+            undoAboutMe = aboutMe
             let before = Set(state.items.map(\.id))
+            let turnId = UUID()
             var ds = state.dumpState
-            let report = DumpApplier.apply(result, to: &ds, now: now, calendar: cal)
+            ds.aboutMe = aboutMe
+            let report = DumpApplier.apply(result, to: &ds, now: now, calendar: cal, writer: .box, turnId: turnId)
             state.dumpState = ds
+            if ds.aboutMe != aboutMe { aboutMe = ds.aboutMe }
             // The thread always says something, even if the model sent actions with no reply.
             var reply = result.reply
             if reply.isEmpty { reply = report.changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }
             if res.isTruncated { reply += " That was a lot at once, so I may have missed the end. Check the list and send the rest again." }
-            let turn = ConversationTurn(at: now, text: text, images: images, userContent: content,
+            let turn = ConversationTurn(id: turnId, at: now, text: text, images: images, userContent: content,
                                         assistantContent: res.rawContent ?? .array([]), reply: reply,
                                         applied: AppliedReport(changes: report.changes, problems: report.problems),
                                         callId: callLog.calls.last { $0.feature == .box && $0.ok }?.id, tokens: tokens,
@@ -651,6 +656,7 @@ final class AppModel {
         guard let snap = undoSnapshot, let id = undoTurnId else { return }
         let convo = state.conversation, archive = state.archive
         state = snap
+        if let me = undoAboutMe { aboutMe = me }
         state.conversation = convo
         state.archive = archive
         if let i = state.conversation.turns.firstIndex(where: { $0.id == id }) {

@@ -5,7 +5,7 @@ import Foundation
 // Kept in ProductiumCore (pure Foundation) so it can be tested on Linux: the export test checks
 // that every stored property is in the export and survives a round trip.
 
-public struct SavedPlace: Codable, Hashable, Identifiable {
+public struct SavedPlace: Codable, Hashable, Identifiable, Sendable {
     public var id: String          // "home", "school", or a custom id
     public var name: String
     public var latitude: Double
@@ -21,7 +21,7 @@ public struct SavedPlace: Codable, Hashable, Identifiable {
     }
 }
 
-public struct Integrations: Codable, Hashable {
+public struct Integrations: Codable, Hashable, Sendable {
     public var health = false
     public var calendarImport = false
     public var calendarExport = false
@@ -34,7 +34,7 @@ public struct Integrations: Codable, Hashable {
     public init() {}
 }
 
-public struct FocusSession: Codable, Hashable {
+public struct FocusSession: Codable, Hashable, Sendable {
     public var blockId: UUID
     public var itemId: UUID?
     public var title: String
@@ -52,7 +52,7 @@ public struct FocusSession: Codable, Hashable {
 
 /// Everything the app persists in state.json. Every field decodes with a default, so a build
 /// that adds a field never wipes the student's data (the export test checks every field round-trips).
-public struct AppState: Codable {
+public struct AppState: Codable, Sendable {
     public var onboarded = false
     public var prefs = Preferences()
     public var items: [WorkItem] = []
@@ -60,6 +60,8 @@ public struct AppState: Codable {
     public var routines: [Routine] = Routine.defaults
     public var markers: [TimelineEvent] = []
     public var outcomes: [BlockOutcome] = []
+    /// Work logged outside study blocks (box progress, evidence).
+    public var progress: [ProgressEntry] = []
     public var moods: [MoodEntry] = []
     public var health: [HealthDay] = []
     public var screen: [ScreenDay] = []
@@ -90,7 +92,8 @@ public struct AppState: Codable {
     public var dumpState: DumpState {
         get {
             DumpState(items: items, commitments: commitments, exceptions: exceptions, oneOffs: oneOffs, markers: markers,
-                      routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy)
+                      routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy,
+                      progress: progress)
         }
         set {
             items = newValue.items
@@ -103,6 +106,7 @@ public struct AppState: Codable {
             screen = newValue.screen
             prefs = newValue.prefs
             policy = newValue.policy
+            progress = newValue.progress
         }
     }
 
@@ -119,6 +123,7 @@ public struct AppState: Codable {
         routines = v(.routines, d.routines)
         markers = v(.markers, d.markers)
         outcomes = v(.outcomes, d.outcomes)
+        progress = v(.progress, d.progress)
         moods = v(.moods, d.moods)
         health = v(.health, d.health)
         screen = v(.screen, d.screen)

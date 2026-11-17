@@ -60,9 +60,20 @@ public enum DumpApplier {
     /// first can be changed next). `writer` decides which tiers are allowed (see Capabilities).
     @discardableResult
     public static func apply(_ r: DumpResult, to s: inout DumpState, now: Date, calendar cal: Calendar,
-                             writer: Writer = .box) -> DumpReport {
+                             writer: Writer = .box, turnId: UUID? = nil) -> DumpReport {
         var rep = DumpReport()
+        let before = Dictionary(s.items.map { ($0.id, $0.completedMinutes) }, uniquingKeysWith: { a, _ in a })
         for op in r.ops { apply(op, to: &s, now: now, calendar: cal, writer: writer, report: &rep) }
+        // Every change to a task's minutes done is work logged now (or a correction of it).
+        var touched: Set<UUID> = []
+        for item in s.items {
+            let was = before[item.id] ?? 0
+            guard item.completedMinutes != was else { continue }
+            touched.insert(item.id)
+            s.progress.append(ProgressEntry(at: now, itemId: item.id, minutes: item.completedMinutes - was, from: was,
+                                            to: item.completedMinutes, source: .task, turnId: turnId))
+        }
+        EvidenceRouter.route(r, to: &s, now: now, calendar: cal, writer: writer, touchedItems: touched, turnId: turnId, report: &rep)
         return rep
     }
 

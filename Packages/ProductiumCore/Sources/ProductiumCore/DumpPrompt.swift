@@ -13,7 +13,15 @@ extension Schemas {
         "value": str,
     ], required: ["op"])
 
-    public static let dump: JSONValue = obj(["ops": arr(dumpOp), "reply": str], required: ["ops", "reply"])
+    public static let dumpFact: JSONValue = obj(["section": str, "text": str, "replaces": str], required: ["text"])
+
+    public static let dumpEvidence: JSONValue = obj([
+        "what": str, "start": str, "end": str, "minutes": int, "task": str,
+        "kind": strEnum(["travel", "study", "activity", "sleep", "other"]), "estimated": .object(["type": .string("boolean")]),
+    ], required: ["what"])
+
+    public static let dump: JSONValue = obj(["ops": arr(dumpOp), "reply": str, "facts": arr(dumpFact), "evidence": arr(dumpEvidence)],
+                                            required: ["ops", "reply"])
 }
 
 /// Everything the Inbox can see. The app fills it from its state; the context is rebuilt for
@@ -79,6 +87,16 @@ extension Prompts {
         Operations (ops), applied in order: upsert (entity, id?, fields), delete (entity, id), set (knob, value), \
         split (entity activity, id, fields.parts).
         \(Registry.promptText())
+
+        facts (optional): lines for "About the student", only what they literally said about themselves, their \
+        plans or their situation ("Applying to Waterloo, McMaster, UofT and Queen's", "CS club is Thursdays at \
+        lunch"). section Stated. replaces: the old line's text when a fact changed. Not for one-off events.
+        evidence (optional): what they did, with times, so the app learns from it: what, start/end (local \
+        date-times), or minutes; kind travel|study|activity|sleep|other; task (id) for work on a task. "Left at \
+        8:02, got to school 8:16" is one travel item 08:02-08:16. "Worked about 200 min on the drafts" is study, \
+        minutes 200, task id. Work with no time ("wrote two drafts"): minutes your best estimate, estimated true. \
+        If you set a task's doneMinutes for the same work, don't add study evidence for it too. Evidence replaces \
+        markers for things they report afterwards; use a marker for "leaving now".
 
         reply: 1-3 short plain sentences: what changed, or the answer to their question. Don't claim a change \
         you didn't make an operation for. Each later message starts with what the app applied for your last \

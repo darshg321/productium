@@ -23,6 +23,9 @@ public struct Routine: Codable, Identifiable, Hashable, Sendable {
     /// The most recent observed durations (newest last), capped at `maxSamples`.
     public var samples: [Int]
     public var enabled: Bool
+    /// The check-ins already learned from (the marker that ended each pair), so replaying the
+    /// same day, or learning it again tomorrow, never counts it twice.
+    @SortedSet public var learnedFrom: Set<UUID>
 
     public static let maxSamples = 15
 
@@ -36,6 +39,7 @@ public struct Routine: Codable, Identifiable, Hashable, Sendable {
         self.defaultMinutes = defaultMinutes
         self.samples = samples
         self.enabled = enabled
+        self.learnedFrom = []
     }
 
     /// Median: robust to the one day you stopped for coffee.

@@ -83,8 +83,12 @@ public struct DumpEvidence: Codable, Hashable, Sendable {
     public var task: String?
     /// "travel" | "study" | "activity" | "sleep" | "other": what kind of time it was.
     public var kind: String?
+    /// True when `minutes` is the model's estimate ("two drafts"), not something they said.
+    public var estimated: Bool?
 
-    public init(what: String, start: String? = nil, end: String? = nil, minutes: Int? = nil, task: String? = nil, kind: String? = nil) {
+    public init(what: String, start: String? = nil, end: String? = nil, minutes: Int? = nil, task: String? = nil, kind: String? = nil,
+                estimated: Bool? = nil) {
+        self.estimated = estimated
         self.what = what
         self.start = start
         self.end = end
@@ -230,10 +234,16 @@ public struct DumpState: Sendable {
     public var prefs: Preferences
     /// Tier 2: how the app behaves. Only the reflection may propose changes (see Capabilities).
     public var policy: BehaviourPolicy
+    /// Work logged outside study blocks.
+    public var progress: [ProgressEntry]
+    /// about-me.md.
+    public var aboutMe: AboutMe
 
     public init(items: [WorkItem], commitments: [Commitment], exceptions: [DayException], oneOffs: [FixedEvent],
                 markers: [TimelineEvent], routines: [Routine], moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences,
-                policy: BehaviourPolicy = BehaviourPolicy()) {
+                policy: BehaviourPolicy = BehaviourPolicy(), progress: [ProgressEntry] = [], aboutMe: AboutMe = .empty) {
+        self.progress = progress
+        self.aboutMe = aboutMe
         self.items = items
         self.commitments = commitments
         self.exceptions = exceptions
