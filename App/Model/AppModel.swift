@@ -381,27 +381,47 @@ final class AppModel {
         }
     }
 
-    private func learnCapacities() {
+    func isSchoolDay(_ d: Date) -> Bool {
+        SchoolDay.isSchoolDay(d, prefs: state.prefs, commitments: state.commitments, exceptions: state.exceptions, calendar: cal)
+    }
+
+    /// The last `n` finished days: planned and done study, and the free time kept after school.
+    func dayRecords(back n: Int) -> [DayRecord] {
         let today = cal.startOfDay(for: Date())
-        let days = (1...CapacityLearner.window).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
-        let records = CapacityLearner.records(
-            days: days, outcomes: state.outcomes, progress: state.progress,
-            isSchoolDay: { SchoolDay.isSchoolDay($0, prefs: self.state.prefs, commitments: self.state.commitments,
-                                                exceptions: self.state.exceptions, calendar: self.cal) },
-            eveningFree: { d in
-                let segs = self.segments(on: d)
-                guard let lastFixed = segs.filter({ [.school, .activities].contains($0.category) }).map(\.end).max() else { return nil }
-                return segs.filter { $0.category == .free && $0.start >= lastFixed }.reduce(0) { $0 + $1.minutes }
-            }, calendar: cal)
-        state.beliefs = CapacityLearner.learn(state.beliefs, days: records, outcomes: state.outcomes, markers: state.markers,
-                                              now: Date(), calendar: cal)
+        let days = (1...n).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
+        return CapacityLearner.records(days: days, outcomes: state.outcomes, progress: state.progress, isSchoolDay: isSchoolDay,
+                                       eveningFree: { d in
+                                           let segs = self.segments(on: d)
+                                           guard let end = segs.filter({ [.school, .activities].contains($0.category) }).map(\.end).max() else { return nil }
+                                           return segs.filter { $0.category == .free && $0.start >= end }.reduce(0) { $0 + $1.minutes }
+                                       }, calendar: cal)
+    }
+
+    /// Moments the phone was in use: app opens, scrolling, and check-ins typed or tapped.
+    var phoneUse: [Date] {
+        state.appOpens + Friction.log.sessions.flatMap { [$0.openedAt] + ($0.endedAt.map { [$0] } ?? []) }
+            + state.markers.filter { $0.source != .geofence && $0.source != .inferred }.map(\.at)
+    }
+
+    /// Changes the state the box and proposals work on, about-me included.
+    @discardableResult
+    func editDumpState<T>(_ change: (inout DumpState) -> T) -> T {
+        var ds = state.dumpState
+        ds.aboutMe = aboutMe
+        let result = change(&ds)
+        state.dumpState = ds
+        if ds.aboutMe != aboutMe { aboutMe = ds.aboutMe }
+        return result
+    }
+
+    private func learnCapacities() {
+        state.beliefs = CapacityLearner.learn(state.beliefs, days: dayRecords(back: CapacityLearner.window), outcomes: state.outcomes,
+                                              markers: state.markers, now: Date(), calendar: cal)
     }
 
     func estimateSleep() {
         let today = cal.startOfDay(for: Date())
         let days = (0..<14).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
-        let log = Friction.log
-        let phoneUse = log.sessions.flatMap { [$0.openedAt] + ($0.endedAt.map { [$0] } ?? []) }
         state.health = SleepEstimator.fill(state.health, days: days, markers: state.markers, motion: state.motion,
                                            phoneUse: phoneUse, sleepNeedMinutes: state.prefs.sleepNeedMinutes, calendar: cal)
     }
@@ -419,11 +439,12 @@ final class AppModel {
     }
 
     private func syncScreen() {
-        var log = Friction.log
-        log.resolve(now: Date())
-        log.calibrate(with: state.screen, calendar: cal)
-        Friction.log = log
-        let measured = log.screenDays(before: Date(), calendar: cal)
+        let screen = state.screen, now = Date(), cal = self.cal
+        let measured = Friction.update { log in
+            log.resolve(now: now)
+            log.calibrate(with: screen, calendar: cal)
+            return log.screenDays(before: now, calendar: cal)
+        }
         if !measured.isEmpty { state.screen = state.screen.merging(measured: measured, calendar: cal) }
         guard state.integrations.screenTime else { return }
         var byDay = Dictionary(state.screen.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
@@ -454,11 +475,7 @@ final class AppModel {
         state.proposals.expire(now: now)
         let since = now.addingTimeInterval(-14 * 86400)
         let deferrals = Reflection.deferrals(items: state.items, outcomes: state.outcomes, missedBlocks: pendingOutcomes, since: since)
-        let today = cal.startOfDay(for: now)
-        let days = CapacityLearner.records(
-            days: (1...14).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }, outcomes: state.outcomes, progress: state.progress,
-            isSchoolDay: { SchoolDay.isSchoolDay($0, prefs: self.state.prefs, commitments: self.state.commitments,
-                                                exceptions: self.state.exceptions, calendar: self.cal) }, calendar: cal)
+        let days = dayRecords(back: 14)
         let weeklyDue = state.reflectionAt.map { now.timeIntervalSince($0) > 6.5 * 86400 } ?? (state.outcomes.count >= 5)
         guard let trigger = Reflection.trigger(now: now, lastRun: state.reflectionAt, deferrals: deferrals, days: days,
                                                weeklyDue: weeklyDue, asked: question != nil,
@@ -484,11 +501,8 @@ final class AppModel {
     }
 
     func approveProposal(_ id: UUID) {
-        var ds = state.dumpState
-        ds.aboutMe = aboutMe
-        guard state.proposals.approve(id, in: &ds, now: Date(), calendar: cal) else { return }
-        state.dumpState = ds
-        if ds.aboutMe != aboutMe { aboutMe = ds.aboutMe }
+        let now = Date()
+        guard editDumpState({ state.proposals.approve(id, in: &$0, now: now, calendar: cal) }) else { return }
         replan()
     }
 
@@ -506,21 +520,15 @@ final class AppModel {
     func neverChange(_ id: UUID) { state.proposals.neverChange(id, now: Date()); save() }
 
     func revertProposal(_ id: UUID) {
-        var ds = state.dumpState
-        ds.aboutMe = aboutMe
-        guard state.proposals.revert(id, in: &ds, now: Date()) else { return }
-        state.dumpState = ds
-        if ds.aboutMe != aboutMe { aboutMe = ds.aboutMe }
+        let now = Date()
+        guard editDumpState({ state.proposals.revert(id, in: &$0, now: now) }) else { return }
         replan()
     }
 
     var dueGap: MysteryGap?
 
     func gapInput(now: Date = Date()) -> GapInput {
-        let log = Friction.log
-        let phone = state.appOpens + log.sessions.flatMap { [$0.openedAt] + ($0.endedAt.map { [$0] } ?? []) }
-            + state.markers.filter { $0.source != .geofence && $0.source != .inferred }.map(\.at)
-        return GapInput(now: now, day: dayInputs(cal.startOfDay(for: now)), scrolling: log.sessions, phoneUse: phone,
+        GapInput(now: now, day: dayInputs(cal.startOfDay(for: now)), scrolling: Friction.log.sessions, phoneUse: phoneUse,
                         plan: state.plan, focusing: state.focus != nil, log: state.gaps)
     }
 
@@ -718,11 +726,7 @@ final class AppModel {
             undoAboutMe = aboutMe
             let before = Set(state.items.map(\.id))
             let turnId = UUID()
-            var ds = state.dumpState
-            ds.aboutMe = aboutMe
-            let report = DumpApplier.apply(result, to: &ds, now: now, calendar: cal, writer: .box, turnId: turnId)
-            state.dumpState = ds
-            if ds.aboutMe != aboutMe { aboutMe = ds.aboutMe }
+            let report = editDumpState { DumpApplier.apply(result, to: &$0, now: now, calendar: cal, writer: .box, turnId: turnId) }
             estimateSleep()
             var reply = result.reply
             if reply.isEmpty { reply = report.changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }

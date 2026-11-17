@@ -165,14 +165,12 @@ enum Friction {
 
     static func opened(_ app: String) -> Bool {
         let pause = !inGrace
-        var log = self.log
         let wasOpen = log.open != nil
-        log.opened(app, at: Date(), paused: pause, calendar: .current)
-        self.log = log
+        let measures = update { $0.opened(app, at: Date(), paused: pause, calendar: .current); return $0.measuresClosing }
         if pause {
             let key = SharedConfig.Key.frictionPrefix + SharedConfig.dayKey()
             SharedConfig.defaults.set(SharedConfig.defaults.integer(forKey: key) + 1, forKey: key)
-        } else if log.measuresClosing && !wasOpen {
+        } else if measures && !wasOpen {
             scheduleNextCheckIn()
         }
         return pause
@@ -187,18 +185,13 @@ enum Friction {
 
     @discardableResult
     static func closed(_ app: String? = nil) -> Int {
-        var log = self.log
-        let mins = log.closed(app, at: Date())
-        self.log = log
+        let mins = update { $0.closed(app, at: Date()) }
         NotificationService.cancelScrollCheckIns()
         return mins
     }
 
     static func ended(by source: ScrollSession.EndSource) {
-        var log = self.log
-        guard log.open != nil else { return }
-        log.ended(by: source, at: Date())
-        self.log = log
+        guard update({ $0.ended(by: source, at: Date()) }) != nil else { return }
         NotificationService.cancelScrollCheckIns()
     }
 
@@ -208,17 +201,21 @@ enum Friction {
         guard i < steps.count else { return }
         let wait = i == 0 ? steps[0] : steps[i] - steps[i - 1]
         NotificationService.scheduleScrollCheckIn(after: wait, total: steps[i], last: i == steps.count - 1)
-        var log = self.log
-        log.checkInSent(at: Date().addingTimeInterval(Double(wait) * 60))
-        self.log = log
+        update { $0.checkInSent(at: Date().addingTimeInterval(Double(wait) * 60)) }
         SharedConfig.defaults.set(i + 1, forKey: SharedConfig.Key.scrollCheckInIndex)
     }
 
     static func answered(stillScrolling: Bool) {
-        var log = self.log
-        let open = log.checkInAnswered(stillScrolling: stillScrolling, at: Date())
-        self.log = log
+        let open = update { $0.checkInAnswered(stillScrolling: stillScrolling, at: Date()) }
         if open && stillScrolling { scheduleNextCheckIn() } else { NotificationService.cancelScrollCheckIns() }
+    }
+
+    @discardableResult
+    static func update<T>(_ change: (inout ScrollLog) -> T) -> T {
+        var l = log
+        let result = change(&l)
+        log = l
+        return result
     }
 
     static func pausesToday() -> Int {
