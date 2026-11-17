@@ -89,10 +89,8 @@ public enum EvidenceRouter {
         let (activity, category, label) = markerKey(kind, words, start ?? end ?? now, s.commitments, cal)
         var made: [TimelineEvent] = []
         func add(_ at: Date, _ phase: MarkerPhase) {
-            if s.markers.contains(where: { $0.activity == activity && $0.phase == phase && abs($0.at.timeIntervalSince(at)) <= 180 }) { return }
             let m = TimelineEvent(at: at, phrase: e.what, activity: activity, category: category, phase: phase, source: .voice)
-            s.markers.append(m)
-            made.append(m)
+            made += MarkerLog.add([m], to: &s.markers)
         }
         if let st = start { add(st, .start) }
         if let en = end { add(en, .end) }

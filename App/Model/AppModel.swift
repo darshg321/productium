@@ -75,7 +75,7 @@ final class AppModel {
         estimateSleep()
         syncCalendar()
         syncScreen()
-        learnFromPastDays()
+        learnRoutines()
         learnCapacities()
         if let note = state.taper.update(days: state.screen, now: Date(), calendar: cal) {
             toast = note
@@ -285,7 +285,8 @@ final class AppModel {
     func logMarker(_ phrase: String, source: MarkerSource = .manual, at: Date = Date()) {
         let evs = MarkerParser.parse(phrase, at: at, commitments: state.commitments, calendar: cal, source: source)
         guard !evs.isEmpty else { return }
-        state.markers += evs
+        MarkerLog.add(evs, to: &state.markers)
+        learnRoutines(days: 1)
         if evs.contains(where: { $0.category == .sleep }) { estimateSleep(); replan() } else { save() }
     }
 
@@ -454,19 +455,15 @@ final class AppModel {
         state.screen = byDay.values.sorted { $0.day < $1.day }
     }
 
-    private func learnFromPastDays() {
+    /// Pairs complete a routine sample as soon as the end marker exists; learned marker ids stop a pair counting twice.
+    private func learnRoutines(days: Int = 7) {
         let today = cal.startOfDay(for: Date())
-        for i in 1...7 {
+        for i in 0..<days {
             guard let day = cal.date(byAdding: .day, value: -i, to: today) else { continue }
-            let key = SharedConfig.dayKey(day)
-            guard !state.learnedDays.contains(key) else { continue }
             let evs = state.markers.filter { cal.isDate($0.at, inSameDayAs: day) }
+            guard !evs.isEmpty else { continue }
             let wake = state.health.first { cal.isDate($0.day, inSameDayAs: day) }?.wake
             state.routines = RoutineLearner.learn(day: evs, healthWake: wake, routines: state.routines)
-            state.learnedDays.insert(key)
-        }
-        if state.learnedDays.count > 60 {
-            state.learnedDays = Set(state.learnedDays.sorted().suffix(30))
         }
     }
 
@@ -557,7 +554,7 @@ final class AppModel {
         asked.end = gap.end
         asked.answer = text
         if let markers = GapAnswer.markers(for: text, gap: gap, commitments: state.commitments, known: known, calendar: cal) {
-            state.markers += markers
+            MarkerLog.add(markers, to: &state.markers)
             asked.activity = markers.first?.activity
             state.gaps.asked.append(asked)
             dueGap = nil

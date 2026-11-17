@@ -473,8 +473,8 @@ public enum DumpApplier {
             if let (k, p) = SleepEstimator.normalised(activity: act, phase: phase) { act = k; phase = p }
             let category = MarkerCategory.infer(activity: act, commitments: s.commitments,
                                                 model: TimeCategory(rawValue: a.category ?? ""))
-            s.markers.append(TimelineEvent(at: when(a.at), phrase: a.note ?? act, activity: act,
-                                           category: category, phase: phase, source: .voice))
+            MarkerLog.add([TimelineEvent(at: when(a.at), phrase: a.note ?? act, activity: act,
+                                         category: category, phase: phase, source: .voice)], to: &s.markers)
             rep.changes.append("Logged \(act.replacingOccurrences(of: "_", with: " "))")
         }
 

@@ -41,7 +41,6 @@ final class ExportTests: XCTestCase {
         s.conversation = c
         s.archive.archive(c, now: now)
         s.focus = FocusSession(blockId: UUID(), itemId: nil, title: "Essay", startedAt: now, plannedEnd: now.addingTimeInterval(2400))
-        s.learnedDays = ["2026-11-16"]
         s.gaps = GapLog(asked: [AskedGap(start: now, end: now.addingTimeInterval(3000), askedAt: now, answer: "gym", activity: "exercise")])
         s.appOpens = [now]
         s.reflectionAt = now

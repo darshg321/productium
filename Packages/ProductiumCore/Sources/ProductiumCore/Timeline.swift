@@ -116,6 +116,50 @@ public enum MarkerParser {
     }
 }
 
+public enum MarkerLog {
+    public static let mergeWindow: TimeInterval = 3 * 60
+
+    static func rank(_ s: MarkerSource) -> Int {
+        switch s {
+        case .manual: return 5
+        case .voice: return 4
+        case .notification: return 3
+        case .geofence: return 2
+        case .health: return 1
+        case .inferred: return 0
+        }
+    }
+
+    /// Adds markers, folding a repeat of the same transition within 3 minutes into the existing one:
+    /// earliest time, best source. Returns what ended up new.
+    @discardableResult
+    public static func add(_ new: [TimelineEvent], to markers: inout [TimelineEvent]) -> [TimelineEvent] {
+        var added: [TimelineEvent] = []
+        for m in new {
+            if let i = markers.firstIndex(where: {
+                $0.activity == m.activity && $0.phase == m.phase && $0.phase != .point
+                    && abs($0.at.timeIntervalSince(m.at)) <= mergeWindow }) {
+                if m.at < markers[i].at { markers[i].at = m.at }
+                if rank(m.source) > rank(markers[i].source) {
+                    markers[i].source = m.source
+                    markers[i].phrase = m.phrase
+                }
+            } else {
+                markers.append(m)
+                added.append(m)
+            }
+        }
+        return added
+    }
+
+    /// Merges duplicates already stored (a voice and two geofence "left home"s become one).
+    public static func merged(_ markers: [TimelineEvent]) -> [TimelineEvent] {
+        var out: [TimelineEvent] = []
+        add(markers.sorted { $0.at < $1.at }, to: &out)
+        return out
+    }
+}
+
 public enum MarkerCategory {
     static let studyWords = ["study", "homework", "revis", "essay", "assignment", "application", "draft", "reading"]
 

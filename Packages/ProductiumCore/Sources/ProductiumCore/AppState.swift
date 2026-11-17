@@ -84,7 +84,6 @@ public struct AppState: Codable, Sendable {
     public var conversation = Conversation(startedAt: Date())
     public var archive = ConversationArchive()
     public var focus: FocusSession?
-    @SortedSet public var learnedDays: Set<String> = []
     @SortedSet public var dismissed: Set<String> = []
     public var proposals = ProposalBook()
     public var reflectionAt: Date?
@@ -151,7 +150,6 @@ public struct AppState: Codable, Sendable {
         conversation = v(.conversation, d.conversation)
         archive = v(.archive, d.archive)
         focus = v(.focus, d.focus)
-        learnedDays = v(.learnedDays, d.learnedDays)
         dismissed = v(.dismissed, d.dismissed)
         proposals = v(.proposals, d.proposals)
         reflectionAt = v(.reflectionAt, d.reflectionAt)
