@@ -7,6 +7,9 @@ public enum ProposalChange: Codable, Hashable, Sendable {
     case beliefGroup(BeliefGroup, evidence: [String])
     case aboutMe(section: AboutMeSection, text: String)
 
+    var isAboutMe: Bool { if case .aboutMe = self { return true }; return false }
+    var isBeliefGroup: Bool { if case .beliefGroup = self { return true }; return false }
+
     public var target: String {
         switch self {
         case .knob(let k, _): return k
@@ -117,16 +120,16 @@ public struct ProposalBook: Codable, Hashable, Sendable {
         for var p in drafts {
             if case .aboutMe(let section, let text) = p.change {
                 guard section == .inferred || section == .patterns, !text.isEmpty,
-                      accepted.filter({ if case .aboutMe = $0.change { return true }; return false }).count < 3 else {
+                      accepted.filter(\.change.isAboutMe).count < 3 else {
                     problems.append("About-me line refused: \(text.prefix(40))"); continue
                 }
-                guard !s.aboutMe[section].contains(where: { AboutMe.norm($0.text) == AboutMe.norm(text) }) else { continue }
+                guard !s.aboutMe[section].contains(where: { $0.text.plainKey == text.plainKey }) else { continue }
                 p.runId = run.id
                 p.status = .pending
                 accepted.append(p)
                 continue
             }
-            guard accepted.filter({ if case .aboutMe = $0.change { return false }; return true }).count < Self.maxPerRun else { problems.append("More than \(Self.maxPerRun) in one run: \(p.title)"); continue }
+            guard accepted.filter({ !$0.change.isAboutMe }).count < Self.maxPerRun else { problems.append("More than \(Self.maxPerRun) in one run: \(p.title)"); continue }
             let t = p.change.target
             if pinned.contains(t) { problems.append("\(t) is pinned"); continue }
             if proposals.contains(where: { $0.change.target == t && $0.status == .approved
@@ -164,8 +167,8 @@ public struct ProposalBook: Codable, Hashable, Sendable {
             case .aboutMe: break
             case .beliefGroup(let g, let ev):
                 guard ev.count >= 3 else { problems.append("A new group needs 3 pieces of evidence"); continue }
-                if proposals.contains(where: { if case .beliefGroup = $0.change { return $0.status != .rejected && $0.status != .expired
-                    && now.timeIntervalSince($0.at) < 7 * 86400 }; return false }) || accepted.contains(where: { if case .beliefGroup = $0.change { return true }; return false }) {
+                if accepted.contains(where: \.change.isBeliefGroup) || proposals.contains(where: {
+                    $0.change.isBeliefGroup && $0.status != .rejected && $0.status != .expired && now.timeIntervalSince($0.at) < 7 * 86400 }) {
                     problems.append("One new group a week"); continue
                 }
                 guard !s.beliefs.groups.contains(where: { $0.id == g.id }) else { problems.append("\(g.title) already exists"); continue }
@@ -237,7 +240,7 @@ public struct ProposalBook: Codable, Hashable, Sendable {
             s.beliefs.groups.removeAll { $0.id == g.id }
             s.beliefs.items.removeAll { $0.group == g.id }
         case .aboutMe(let section, let text):
-            s.aboutMe[section].removeAll { AboutMe.norm($0.text) == AboutMe.norm(text) && !$0.byStudent }
+            s.aboutMe[section].removeAll { $0.text.plainKey == text.plainKey && !$0.byStudent }
         }
         proposals[i].status = .reverted
         proposals[i].decidedAt = now

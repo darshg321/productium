@@ -97,10 +97,6 @@ public struct AboutMe: Hashable, Sendable {
         return body.isEmpty ? "About the student: nothing yet" : "About the student (about-me.md):\n" + body.joined(separator: "\n")
     }
 
-    static func norm(_ s: String) -> String {
-        s.lowercased().filter { $0.isLetter || $0.isNumber }
-    }
-
     @discardableResult
     public mutating func apply(_ f: AboutMeFact, by writer: AboutMeWriter, now: Date? = nil) -> Result<String, AboutMeRefusal> {
         let text = f.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -112,12 +108,12 @@ public struct AboutMe: Hashable, Sendable {
         if line.hasSuffix(AboutMe.studentMark) && writer != .student {
             line = String(line.dropLast(AboutMe.studentMark.count)).trimmingCharacters(in: .whitespaces)
         }
-        if AboutMeSection.allCases.contains(where: { self[$0].contains { AboutMe.norm($0.text) == AboutMe.norm(line) } }) {
+        if AboutMeSection.allCases.contains(where: { self[$0].contains { $0.text.plainKey == line.plainKey } }) {
             return .success("Already known: \(line)")
         }
-        if let old = f.replaces.map(AboutMe.norm), !old.isEmpty {
+        if let old = f.replaces?.plainKey, !old.isEmpty {
             for s in AboutMeSection.allCases {
-                guard let i = self[s].firstIndex(where: { AboutMe.norm($0.text) == old }) else { continue }
+                guard let i = self[s].firstIndex(where: { $0.text.plainKey == old }) else { continue }
                 if self[s][i].byStudent && writer != .student { return .failure(.studentLine) }
                 guard writer.mayWrite(s) else { return .failure(.notAllowed(s)) }
                 self[s].remove(at: i)
@@ -132,11 +128,11 @@ public struct AboutMe: Hashable, Sendable {
         let before = AboutMe.parse(old)
         var after = AboutMe.parse(new)
         var known: [String: Bool] = [:]
-        for s in AboutMeSection.allCases { for l in before[s] { known[norm(l.text)] = l.byStudent } }
+        for s in AboutMeSection.allCases { for l in before[s] { known[l.text.plainKey] = l.byStudent } }
         for s in AboutMeSection.allCases {
             after[s] = after[s].map { l in
                 var l = l
-                if let was = known[norm(l.text)] { l.byStudent = l.byStudent || was } else { l.byStudent = true }
+                if let was = known[l.text.plainKey] { l.byStudent = l.byStudent || was } else { l.byStudent = true }
                 return l
             }
         }

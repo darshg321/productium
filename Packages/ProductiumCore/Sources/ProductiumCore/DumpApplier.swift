@@ -150,7 +150,6 @@ public enum DumpApplier {
             return nil
         }
         func name(_ a: DumpFields) -> String? { a.target ?? a.title }
-        func norm(_ t: String) -> String { t.lowercased().filter { $0.isLetter || $0.isNumber } }
         func missing(_ what: String, _ a: DumpFields, _ rep: inout DumpReport) {
             rep.problems.append("Couldn't find \(what) “\(ref(a) ?? name(a) ?? "?")”")
         }
@@ -198,7 +197,7 @@ public enum DumpApplier {
             if let m = a.doneMinutes { item.completedMinutes = max(0, m) }
             if case .some(let c)? = colour(a.color) { item.color = c }
             if let parent { item.due = min(item.due, parent.due); item.subject = item.subject ?? parent.subject }
-            if let i = s.items.firstIndex(where: { !$0.isDone && norm($0.title) == norm(item.title) && $0.parentId == item.parentId }) {
+            if let i = s.items.firstIndex(where: { !$0.isDone && $0.title.plainKey == item.title.plainKey && $0.parentId == item.parentId }) {
                 s.items[i].due = item.due
                 if a.estimateMinutes != nil { s.items[i].estimateMinutes = item.estimateMinutes }
                 if a.color != nil { s.items[i].color = item.color }
@@ -275,7 +274,7 @@ public enum DumpApplier {
             if case .some(let col)? = colour(a.color) { c.color = col }
             c.validFrom = a.validFrom.flatMap { AIMapper.parseDate($0, timeZone: tz) }.map { cal.startOfDay(for: $0) }
             c.validUntil = a.validUntil.flatMap { AIMapper.parseDate($0, timeZone: tz) }
-            if let i = s.commitments.firstIndex(where: { norm($0.title) == norm(c.title) && !$0.weekdays.isDisjoint(with: c.weekdays) }) {
+            if let i = s.commitments.firstIndex(where: { $0.title.plainKey == c.title.plainKey && !$0.weekdays.isDisjoint(with: c.weekdays) }) {
                 let id = s.commitments[i].id
                 c.id = id
                 if a.color == nil { c.color = s.commitments[i].color }
@@ -336,7 +335,7 @@ public enum DumpApplier {
                 s.commitments[i].weekdays = left
             }
             for c in made {
-                if let j = s.commitments.firstIndex(where: { $0.id != original.id && norm($0.title) == norm(c.title)
+                if let j = s.commitments.firstIndex(where: { $0.id != original.id && $0.title.plainKey == c.title.plainKey
                     && !$0.weekdays.isDisjoint(with: c.weekdays) }) {
                     var updated = c
                     updated.id = s.commitments[j].id
@@ -345,7 +344,7 @@ public enum DumpApplier {
                     s.commitments.append(c)
                 }
             }
-            let partIds = s.commitments.filter { c in made.contains { norm($0.title) == norm(c.title) } }.map(\.id)
+            let partIds = s.commitments.filter { c in made.contains { $0.title.plainKey == c.title.plainKey } }.map(\.id)
             let old = s.exceptions.filter { $0.commitmentId == original.id }
             if left.isEmpty { s.exceptions.removeAll { $0.commitmentId == original.id } }
             for e in old where e.cancelled {
@@ -379,7 +378,7 @@ public enum DumpApplier {
             }
             let ed = ed0 > sd ? ed0 : ed0.addingTimeInterval(86400)
             let title = a.title ?? "Busy"
-            if let i = s.oneOffs.firstIndex(where: { norm($0.title) == norm(title) && cal.isDate($0.start, inSameDayAs: sd) }) {
+            if let i = s.oneOffs.firstIndex(where: { $0.title.plainKey == title.plainKey && cal.isDate($0.start, inSameDayAs: sd) }) {
                 s.oneOffs[i].start = sd
                 s.oneOffs[i].end = ed
                 if case .some(let c)? = colour(a.color) { s.oneOffs[i].color = c }
@@ -513,14 +512,14 @@ public enum DumpApplier {
 
     static func match(_ target: String?, _ candidates: [(Int, String)]) -> Int? {
         guard let target, !target.isEmpty else { return nil }
-        func norm(_ s: String) -> String {
+        func words(_ s: String) -> String {
             s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: " ")
         }
-        let t = norm(target)
+        let t = words(target)
         let tw = Set(t.split(separator: " "))
         var best: (Int, Double)?
         for (i, name) in candidates {
-            let n = norm(name)
+            let n = words(name)
             var score = 0.0
             if n == t { score = 3 }
             else if n.contains(t) || t.contains(n) { score = 2 }

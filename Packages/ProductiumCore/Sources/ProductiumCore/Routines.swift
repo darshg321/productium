@@ -32,11 +32,7 @@ public struct Routine: Codable, Identifiable, Hashable, Sendable {
         self.learnedFrom = []
     }
 
-    public var minutes: Int {
-        guard !samples.isEmpty else { return defaultMinutes }
-        let s = samples.sorted()
-        return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
-    }
+    public var minutes: Int { samples.median ?? defaultMinutes }
 
     public var safeMinutes: Int {
         guard samples.count >= 3 else { return Int(Double(minutes) * 1.15) + 2 }

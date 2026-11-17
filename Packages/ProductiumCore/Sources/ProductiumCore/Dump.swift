@@ -121,21 +121,21 @@ extension DumpResult {
 
     static let opKeys: Set<String> = ["op", "entity", "id", "fields", "knob", "value"]
 
+    /// Fields written beside the operation instead of under `fields` are moved under it.
     static func normaliseOp(_ v: JSONValue) -> JSONValue {
-        guard case .object(var o) = v else { return v }
-        let plainKeys = Dictionary(o.keys.map { (StructuredRepair.plain($0), $0) }, uniquingKeysWith: { a, _ in a })
-        if plainKeys["op"] == nil, let k = plainKeys["operation"] ?? plainKeys["type"] ?? plainKeys["action"] {
-            o["op"] = o.removeValue(forKey: k)
+        guard case .object(let raw) = v else { return v }
+        let hasOp = raw.keys.contains { $0.plainKey == "op" }
+        var op: [String: JSONValue] = [:], fields: [String: JSONValue] = [:]
+        for (k, val) in raw {
+            switch k.plainKey {
+            case "fields": if case .object(let f) = val { fields.merge(f) { _, explicit in explicit } }
+            case "operation", "type", "action" where !hasOp: op["op"] = val
+            case let p where opKeys.contains(p): op[p] = val
+            default: fields[k] = fields[k] ?? val
+            }
         }
-        var fields: [String: JSONValue] = [:]
-        if let k = plainKeys["fields"], case .object(let f)? = o[k] { fields = f }
-        for (k, val) in o where !opKeys.contains(StructuredRepair.plain(k)) && plainKeys["fields"] != k
-            && !(k == "operation" || k == "type" || k == "action") {
-            fields[k] = val
-            o[k] = nil
-        }
-        if !fields.isEmpty { o[plainKeys["fields"] ?? "fields"] = .object(fields) }
-        return .object(o)
+        if !fields.isEmpty { op["fields"] = .object(fields) }
+        return .object(op)
     }
 
     static func normalise(_ v: JSONValue) -> JSONValue {
@@ -143,7 +143,7 @@ extension DumpResult {
             return .object(["ops": .array(a.map(normaliseOp)), "reply": .string("")])
         }
         guard case .object(var o) = v else { return v }
-        let plain = Dictionary(o.keys.map { (StructuredRepair.plain($0), $0) }, uniquingKeysWith: { a, _ in a })
+        let plain = Dictionary(o.keys.map { ($0.plainKey, $0) }, uniquingKeysWith: { a, _ in a })
         func value(_ names: [String]) -> JSONValue? { names.lazy.compactMap { plain[$0].flatMap { o[$0] } }.first }
         if plain["reply"] == nil,
            let r = value(["message", "response", "answer", "text", "summary", "content", "output"]), case .string = r {

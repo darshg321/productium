@@ -99,11 +99,7 @@ extension Prompts {
 
     public static func dumpContext(_ c: DumpContextInput) -> String {
         let cal = c.calendar, now = c.now, s = c.state
-        func fmt(_ f: String) -> DateFormatter {
-            let d = DateFormatter(); d.calendar = cal; d.timeZone = cal.timeZone; d.locale = Locale(identifier: "en_US_POSIX")
-            d.dateFormat = f
-            return d
-        }
+        func fmt(_ f: String) -> DateFormatter { DateFormatter.local(f, cal) }
         let df = fmt("EEE yyyy-MM-dd HH:mm"), hm = fmt("HH:mm"), day = fmt("EEE yyyy-MM-dd"), short = fmt("EEE MM-dd")
         let wd = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
         func days(_ set: Set<Int>) -> String { set.sorted().map { wd[$0] }.joined(separator: "/") }

@@ -94,7 +94,7 @@ public enum MotionTimeline {
     }
 
     public static func summary(_ spans: [MotionSpan], on day: Date, calendar cal: Calendar) -> String? {
-        let f = DateFormatter(); f.calendar = cal; f.timeZone = cal.timeZone; f.dateFormat = "HH:mm"
+        let f = DateFormatter.local("HH:mm", cal)
         let parts = spans.filter { cal.isDate($0.start, inSameDayAs: day) }.compactMap { s -> String? in
             guard let (_, label) = segment(s) else { return nil }
             return "\(label.lowercased()) \(s.minutes) min \(f.string(from: s.start))"

@@ -216,23 +216,22 @@ public enum ConversationPolicy {
     }
 
     public static func delta(from old: String, to new: String) -> String {
-        let a = old.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let b = new.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        var remaining = Dictionary(a.map { ($0, 1) }, uniquingKeysWith: +)
-        var added: [String] = []
-        for line in b {
-            if let n = remaining[line], n > 0 { remaining[line] = n - 1 } else { added.append(line) }
+        func lines(_ s: String) -> [String] { s.split(separator: "\n").map(String.init) }
+        /// Lines of `xs` not in `ys`, counting repeats.
+        func missing(_ xs: [String], from ys: [String]) -> [String] {
+            var left = Dictionary(ys.map { ($0, 1) }, uniquingKeysWith: +)
+            return xs.filter { x in
+                guard let n = left[x], n > 0 else { return true }
+                left[x] = n - 1
+                return false
+            }
         }
-        var stillThere = Dictionary(b.map { ($0, 1) }, uniquingKeysWith: +)
-        var removed: [String] = []
-        for line in a {
-            if let n = stillThere[line], n > 0 { stillThere[line] = n - 1 } else { removed.append(line) }
-        }
+        let a = lines(old), b = lines(new)
+        let added = missing(b, from: a), removed = missing(a, from: b)
         let full = "Context (the app right now, replaces the earlier context):\n\(new)"
         if added.isEmpty && removed.isEmpty { return "Context: unchanged since your last message." }
         let body = (["Since your last message, the context changed:"]
-            + removed.filter { !$0.isEmpty }.map { "- " + $0 }
-            + added.filter { !$0.isEmpty }.map { "+ " + $0 }).joined(separator: "\n")
+            + removed.map { "- " + $0 } + added.map { "+ " + $0 }).joined(separator: "\n")
         return body.count >= full.count ? full : body
     }
 }

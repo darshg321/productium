@@ -21,12 +21,6 @@ public struct ScreenTaper: Codable, Hashable, Sendable {
         unlocksPerDay = 4
     }
 
-    public static func median(_ xs: [Int]) -> Int? {
-        guard !xs.isEmpty else { return nil }
-        let s = xs.sorted()
-        return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
-    }
-
     public var goalMinutes: Int {
         guard let b = baselineMinutes else { return 45 }
         return max(30, Int((Double(b) / 2 / 5).rounded()) * 5)
@@ -40,7 +34,7 @@ public struct ScreenTaper: Codable, Hashable, Sendable {
         guard let weekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start else { return nil }
 
         if baselineMinutes == nil {
-            guard past.count >= 5, let med = Self.median(past.suffix(7).map(\.distractingMinutes)) else { return nil }
+            guard past.count >= 5, let med = past.suffix(7).map(\.distractingMinutes).median else { return nil }
             baselineMinutes = med
             targetMinutes = max(goalMinutes, med)
             lastStepWeekStart = weekStart

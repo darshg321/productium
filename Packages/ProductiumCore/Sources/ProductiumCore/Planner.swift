@@ -623,7 +623,7 @@ public enum Planner {
                 warnings.append(PlanWarning(level: .caution, message: "This plan borrows \(borrowed) min of sleep. It's limited to deadline-critical writing, never study for a test."))
             }
             for day in days where day.studyUsed > Int(Double(capacity(day.isSchoolDay)) * 1.1) {
-                let f = DateFormatter(); f.calendar = cal; f.timeZone = cal.timeZone; f.dateFormat = "EEEE"
+                let f = DateFormatter.local("EEEE", cal)
                 warnings.append(PlanWarning(level: .caution, message: "\(f.string(from: day.start)) is heavy (\(minutesLabel(day.studyUsed)) of work). Starting earlier this week makes it lighter."))
             }
             return Plan(generatedAt: input.now, blocks: all, warnings: warnings, shortfalls: shortfalls,

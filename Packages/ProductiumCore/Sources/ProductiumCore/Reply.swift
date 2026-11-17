@@ -336,7 +336,6 @@ public enum StructuredRepair {
         return r.compactMap { if case .string(let k) = $0 { return k }; return nil }
     }
 
-    static func plain(_ s: String) -> String { String(s.lowercased().filter { $0.isLetter || $0.isNumber }) }
 
     static func fit(_ v: JSONValue, _ schema: JSONValue, depth: Int) -> JSONValue? {
         guard let (type, sc) = type(of: schema) else { return v }
@@ -383,7 +382,7 @@ public enum StructuredRepair {
             switch v {
             case .string(let s):
                 guard case .array(let options)? = sc["enum"], !options.contains(v) else { return v }
-                let match = options.first { if case .string(let o) = $0 { return plain(o) == plain(s) }; return false }
+                let match = options.first { if case .string(let o) = $0 { return o.plainKey == s.plainKey }; return false }
                 return match ?? v
             case .number(let n): return .string(n == n.rounded() && abs(n) < 1e15 ? String(Int(n)) : String(n))
             case .bool(let b): return .string(b ? "true" : "false")
@@ -404,12 +403,12 @@ public enum StructuredRepair {
             if case .object = v { return v }
             return nil
         }
-        let byPlain = Dictionary(props.keys.map { (plain($0), $0) }, uniquingKeysWith: { a, _ in a })
+        let byPlain = Dictionary(props.keys.map { ($0.plainKey, $0) }, uniquingKeysWith: { a, _ in a })
         switch v {
         case .object(let raw):
             var o: [String: JSONValue] = [:]
             for (k, val) in raw {
-                guard let name = props[k] != nil ? k : byPlain[plain(k)] else { continue }
+                guard let name = props[k] != nil ? k : byPlain[k.plainKey] else { continue }
                 if props[k] != nil || o[name] == nil { o[name] = val }
             }
             if o.isEmpty {
@@ -446,7 +445,7 @@ public enum StructuredRepair {
 
     static func holds(_ v: JSONValue, _ byPlain: [String: String]) -> Bool {
         switch v {
-        case .object(let o): return o.keys.contains { byPlain[plain($0)] != nil }
+        case .object(let o): return o.keys.contains { byPlain[$0.plainKey] != nil }
         case .array(let a): return a.count == 1 && holds(a[0], byPlain)
         default: return false
         }

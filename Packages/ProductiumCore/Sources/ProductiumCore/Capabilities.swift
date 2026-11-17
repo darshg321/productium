@@ -319,10 +319,8 @@ public enum Knobs {
 }
 
 enum PreferenceKnobs {
-    static func plain(_ s: String) -> String { s.lowercased().filter { $0.isLetter } }
-
     static func apply(key raw: String, value v: String, to p: inout Preferences) -> String? {
-        let key = plain(raw)
+        let key = raw.plainKey
         let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = t.lowercased()
         func int(_ lo: Int, _ hi: Int) -> Int? {

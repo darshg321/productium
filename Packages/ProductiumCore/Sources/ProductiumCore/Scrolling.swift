@@ -64,14 +64,9 @@ public struct ScrollLog: Codable, Hashable, Sendable {
 
     public var open: ScrollSession? { sessions.last.flatMap { $0.isOpen ? $0 : nil } }
 
-    static func norm(_ app: String) -> String { app.trimmingCharacters(in: .whitespaces).lowercased() }
-
     public func typicalMinutes(_ app: String) -> Int {
-        let a = Self.norm(app)
-        let seen = sessions.filter { Self.norm($0.app) == a && ($0.endSource?.observed ?? false) }.compactMap(\.minutes).sorted()
-        guard seen.count >= 3 else { return Self.priorMinutes }
-        let mid = seen.count / 2
-        let m = seen.count % 2 == 1 ? seen[mid] : (seen[mid - 1] + seen[mid]) / 2
+        let seen = sessions.filter { $0.app.plainKey == app.plainKey && ($0.endSource?.observed ?? false) }.compactMap(\.minutes)
+        guard seen.count >= 3, let m = seen.median else { return Self.priorMinutes }
         return max(1, min(Self.estimateCap, m))
     }
 
@@ -104,7 +99,7 @@ public struct ScrollLog: Codable, Hashable, Sendable {
     public mutating func opened(_ app: String, at now: Date, paused: Bool, calendar cal: Calendar) {
         resolve(now: now)
         if let i = sessions.indices.last, sessions[i].isOpen {
-            if Self.norm(sessions[i].app) == Self.norm(app) {
+            if sessions[i].app.plainKey == app.plainKey {
                 bump(cal.startOfDay(for: now)) { $0.opens += 1; if paused { $0.pauses += 1 } }
                 return
             }
@@ -119,7 +114,7 @@ public struct ScrollLog: Codable, Hashable, Sendable {
         resolve(now: now)
         measuresClosing = true
         guard let i = sessions.indices.last, sessions[i].isOpen,
-              app.map({ Self.norm($0) == Self.norm(sessions[i].app) }) ?? true else { return 0 }
+              app.map({ $0.plainKey == sessions[i].app.plainKey }) ?? true else { return 0 }
         end(i, at: now, .closed)
         return sessions[i].minutes ?? 0
     }
@@ -160,7 +155,7 @@ public struct ScrollLog: Codable, Hashable, Sendable {
 
     public func minutes(on day: Date, calendar cal: Calendar) -> [String: Int] {
         rawMinutes(on: day, calendar: cal).reduce(into: [:]) { out, kv in
-            let f = overCount.first { Self.norm($0.key) == Self.norm(kv.key) }?.value ?? 1
+            let f = overCount.first { $0.key.plainKey == kv.key.plainKey }?.value ?? 1
             out[kv.key] = Int((Double(kv.value) / f).rounded())
         }
     }
@@ -187,14 +182,12 @@ public struct ScrollLog: Codable, Hashable, Sendable {
         for shot in screenshots where shot.source == "screenshot" {
             let counted = rawMinutes(on: shot.day, calendar: cal)
             for app in shot.apps ?? [] where app.minutes >= 5 {
-                guard let (name, c) = counted.first(where: { Self.norm($0.key) == Self.norm(app.name) }), c >= 5 else { continue }
+                guard let (name, c) = counted.first(where: { $0.key.plainKey == app.name.plainKey }), c >= 5 else { continue }
                 ratios[name, default: []].append(Double(c) / Double(app.minutes))
             }
         }
         for (app, rs) in ratios {
-            let sorted = rs.sorted()
-            let med = sorted.count % 2 == 1 ? sorted[sorted.count / 2] : (sorted[sorted.count / 2 - 1] + sorted[sorted.count / 2]) / 2
-            overCount[app] = (max(0.3, min(3, med)) * 100).rounded() / 100
+            overCount[app] = (max(0.3, min(3, percentile(rs, 0.5))) * 100).rounded() / 100
         }
     }
 

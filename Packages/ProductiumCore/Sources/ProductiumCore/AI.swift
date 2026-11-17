@@ -383,7 +383,7 @@ public enum Prompts {
     public static func context(now: Date, items: [WorkItem], plan: Plan, summary: PeriodSummary?, moods: [MoodEntry],
                                taper: ScreenTaper, learned: LearnedModel, calendar cal: Calendar,
                                aboutMe: AboutMe = .empty) -> String {
-        let df = DateFormatter(); df.calendar = cal; df.timeZone = cal.timeZone; df.dateFormat = "EEE MMM d HH:mm"
+        let df = DateFormatter.local("EEE MMM d HH:mm", cal)
         var lines = ["Now: \(df.string(from: now))"]
         if !aboutMe.isEmpty { lines.append(aboutMe.promptText) }
         let open = items.filter { !$0.isDone && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(8)

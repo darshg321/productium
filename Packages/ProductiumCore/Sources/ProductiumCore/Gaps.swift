@@ -123,7 +123,7 @@ public enum GapDetector {
     }
 
     public static func question(_ g: MysteryGap, calendar cal: Calendar) -> String {
-        let f = DateFormatter(); f.calendar = cal; f.timeZone = cal.timeZone; f.dateFormat = "h:mm"
+        let f = DateFormatter.local("h:mm", cal)
         return g.ongoing ? "What have you been doing since \(f.string(from: g.start))?"
             : "What were you doing \(f.string(from: g.start))–\(f.string(from: g.end))?"
     }
@@ -163,8 +163,7 @@ public enum GapAnswer {
     }
 
     public static func boxText(_ text: String, gap: MysteryGap, calendar cal: Calendar) -> String {
-        let f = DateFormatter(); f.calendar = cal; f.timeZone = cal.timeZone; f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        let f = DateFormatter.local("yyyy-MM-dd'T'HH:mm", cal)
         return "From \(f.string(from: gap.start)) to \(f.string(from: gap.end)) I was: \(text)"
     }
 

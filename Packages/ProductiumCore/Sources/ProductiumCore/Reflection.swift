@@ -102,10 +102,7 @@ public enum Reflection {
     public static func request(now: Date, aboutMe: AboutMe, beliefs: Beliefs, routines: [Routine], deferrals: [Deferral],
                                days: [DayRecord], policy: BehaviourPolicy, feedback: [String], conversations: [String],
                                items: [WorkItem], trigger: ReflectionTrigger, question: String?, calendar cal: Calendar) -> String {
-        let df = DateFormatter(); df.calendar = cal; df.timeZone = cal.timeZone; df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "EEE yyyy-MM-dd HH:mm"
-        let short = DateFormatter(); short.calendar = cal; short.timeZone = cal.timeZone; short.locale = df.locale
-        short.dateFormat = "EEE MM-dd"
+        let df = DateFormatter.local("EEE yyyy-MM-dd HH:mm", cal), short = DateFormatter.local("EEE MM-dd", cal)
         var l = ["Now: \(df.string(from: now)). Why now: \(trigger.rawValue)" + (question.map { ". They asked: \($0)" } ?? "")]
         l.append(aboutMe.promptText)
         l.append(beliefs.summary(routines: routines))

@@ -22,14 +22,6 @@ public enum CapacityLearner {
     public static let window = 21
     public static let priorWeight = 5.0
 
-    static func percentile(_ xs: [Double], _ p: Double) -> Double {
-        let s = xs.sorted()
-        guard !s.isEmpty else { return 0 }
-        let r = p * Double(s.count - 1)
-        let lo = Int(r.rounded(.down)), hi = Int(r.rounded(.up))
-        return s[lo] + (s[hi] - s[lo]) * (r - Double(lo))
-    }
-
     static func shrink(prior: Double, observed: Double, n: Int, bounds: ClosedRange<Double>) -> Double {
         let v = (prior * priorWeight + observed * Double(n)) / (priorWeight + Double(n))
         return max(bounds.lowerBound, min(bounds.upperBound, (v * 10).rounded() / 10))
