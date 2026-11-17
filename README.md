@@ -18,12 +18,25 @@ blocking): see **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
   writing (see SOURCES §5).
 - **Adapts to you**: learns how long your tasks really take, which hours you actually get work done in, your
   focus length, and your commute. If you complete less than planned, it plans less.
-- **One box for everything**: type, or drop screenshots of, anything: deadlines, what you did, how you feel,
+- **One box, one conversation**: type, or drop screenshots of, anything: deadlines, what you did, how you feel,
   questions, and corrections ("didn't go to school today", "chem test moved to tues", "walk to school is 25 min").
-  Claude (Sonnet) turns it into changes, applies them on the phone, and shows what changed, with Undo.
-  It sees the whole app (every task, activity, event and day change by id, all settings, colours, and the plan
-  for the week), so it can split school into periods and then adjust one, recolour things, or change any
-  setting without making duplicates. Health, Calendar, location and Screen Time fill in the rest.
+  The Inbox is a single ongoing Claude (Sonnet) session until you press **Clear**, which shows how many tokens
+  the next prompt will carry and turns red when the prompt cache has expired. Your prompts are kept verbatim,
+  your draft survives leaving the app, and cleared conversations are under Settings → Past Prompts. Claude turns
+  what you say into changes (three operations over a typed registry: upsert, delete, set), applies them on the
+  phone, and shows what changed, with Undo. It sees the whole app by id, so it updates instead of duplicating.
+- **It learns about you, and shows it**: Settings → What Productium Thinks lists every assumption (routines,
+  sleep, study capacity, focus and break length, scrolling) with how sure it is (Assumed, You said, Learning,
+  Learned, Confirmed) and the evidence. Settings → About You is a plain-text file of what you've told it, which
+  your edits always win. The old guessed steppers (max study minutes, minimum free time, block length, dinner,
+  chronotype, screen-time goal) are gone: they're learned from what you actually do.
+- **Behaviour changes need your OK**: rarely, a reflection on **Claude Opus** (medium effort, the one expensive
+  call) looks at what you keep putting off and *proposes* small changes (a 15-minute first step, shorter blocks, an
+  if-then reminder). Nothing changes until you tap Approve; every change is bounded, logged and revertible.
+- **Sleep, scrolling and places without extra hardware**: sleep is estimated from your check-ins, motion and phone
+  use when nothing records it; walks and rides come from Motion; scrolling is its own category, counted per app from
+  Shortcuts sessions and Screen Time screenshots against your own list of scrolling apps; places offer to save
+  themselves.
 - **Colours**: every task, activity and event can have its own colour, and categories (study, free time,
   school, a subject…) have defaults in Settings → Schedule → Colours, or by asking the Inbox.
 - **Screen time**: a week of measuring, then a limit that tapers about 10% a week. Calm shields with a deliberate
@@ -41,7 +54,7 @@ blocking): see **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
   step", a breathing minute, or a walk instead of a feed.
 - **Review**: a weekly note from Claude, the last seven days drawn as they actually went, and three
   sentences (sleep, work done, scrolling). Design notes: [docs/DESIGN.md](docs/DESIGN.md).
-- **Your data**: on-device JSON. Settings → Backup & Restore saves *everything* to one file you keep, and restores
+- **Your data**: on-device JSON. Settings → Backup & Restore saves *every byte the app keeps* (state, About You, every prompt and reply, the AI call log, settings, notifications and permissions snapshot) to one file you keep, and restores
   it on this or another phone. There's also CSV and .ics export, and delete-everything.
 - **Token meter**: top right on every tab, today's AI output tokens against a daily budget, with a breakdown by
   feature. Over budget, background AI waits until tomorrow; the box always works. AI Usage also shows how much of
@@ -61,22 +74,34 @@ productium/
 │   ├── ScreenTaper.swift        adaptive weekly screen-time limit
 │   ├── Nudges.swift             which notifications and alarms to send, and when; scroll-session log
 │   ├── TaskBoard.swift          task list grouping, search, work left; timeline lanes
-│   ├── Wellbeing.swift, MicroLearning.swift, Insights.swift, Export.swift
-│   └── AI.swift                 server wire format, JSON schemas, prompts, guard rails
+│   ├── Conversation.swift       the Inbox as one continuous session, Clear size and cache expiry
+│   ├── Capabilities.swift       upsert/delete/set over a tiered registry; Proposals.swift, Reflection.swift
+│   ├── Beliefs.swift            every assumption with confidence and evidence; CapacityLearner.swift
+│   ├── AboutMe.swift, Avoidance.swift, WorkDone.swift, ScreenTime.swift, Places.swift, Sleep.swift, Motion.swift
+│   ├── Wellbeing.swift, MicroLearning.swift, Insights.swift, Export.swift (format 3: everything)
+│   └── AI.swift                 server wire format, JSON schemas, prompts, model routing, guard rails
 ├── App/                         SwiftUI app (Today · Schedule · Tasks · Review · Settings), services, intents
 ├── Extensions/                  DeviceActivity monitor, report, shield UI, shield action, widgets/Live Activity
 ├── Shared/                      App Group config + shield logic shared with extensions
 ├── project.yml                  XcodeGen spec (project generated on CI)
-├── .github/workflows/ios.yml    Linux tests + macOS compile + signed .ipa
+├── .github/workflows/ios.yml    Linux tests + macOS compile on every push; IPA + release only on push to main
 ├── scripts/                     asc.py (Apple setup from Linux), install-on-iphone.sh, make-free-spec.py
 └── docs/                        NO_MAC.md, DISTRIBUTION.md
 ```
 
 Productium is an AI app and needs **[../claude-server](../claude-server)**, a small API on a Raspberry Pi 5 that
 wraps the Claude Code CLI on your subscription and accepts images (default address: `https://raspberrypi.tail29964a.ts.net`).
-The app uses its Anthropic-compatible `/v1/messages` API with one model, Sonnet, for everything: the box and
-screenshots, project breakdowns, flashcards, short reads and the weekly note. The scheduler itself is deterministic code
-on the phone (see SOURCES §1).
+The app uses its Anthropic-compatible `/v1/messages` API. Sonnet at low effort does everything user-facing (the box
+and screenshots, project breakdowns, flashcards, short reads, the weekly note); Opus at medium effort does only the
+rare, approval-gated reflection. The scheduler itself is deterministic code on the phone (see SOURCES §1).
+
+## Releases
+
+Pushing or merging to `main` builds the free-account IPA and publishes a GitHub release (`v1.0.0` first, then
+bumped from Conventional Commits) with `Productium-free.ipa` attached, so
+`…/releases/latest/download/Productium-free.ipa` is always the newest build for SideStore. Other branches and
+pull requests only run the tests and the compile check. Settings → Keeping It Installed shows the version and
+says when a newer release exists.
 
 ## Develop on Linux
 
@@ -90,5 +115,5 @@ UI and extension code compiles on the `ios-compile` CI job (macOS runner) on eve
 ## Permissions used
 
 FamilyControls (individual), DeviceActivity, ManagedSettings · HealthKit (read sleep, steps, daylight,
-resting HR; write mindful minutes) · EventKit full access · Location (always, region monitoring only) ·
+resting HR; write mindful minutes) · EventKit full access · Location (always: region monitoring and visits, no history kept) · Motion & Fitness (walk/ride durations only) ·
 Notifications (time-sensitive) · AlarmKit · Live Activities · Background refresh.

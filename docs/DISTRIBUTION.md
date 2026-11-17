@@ -43,10 +43,13 @@ Limits of free signing: apps **expire after 7 days**; at most **3 sideloaded app
 
 ## What's built in this repo
 
-**Free variant (default)**: `Actions → ios → Run workflow` with *free_build* checked. CI runs
+**Free variant (default)**: every push to `main` (a merge or a direct push) that passes `core-tests` and
+`ios-compile` builds it and publishes a release (`v1.0.0` first, then bumped from Conventional Commits). No other
+branch, pull request or manual run builds an IPA, and there are no prereleases. CI runs
 `scripts/make-free-spec.py`, which drops the 4 Screen Time extensions, the widget extension and the App Group,
 removes the paid-only entitlements, and sets `FREE_TIER`. It builds for device and ad-hoc signs with the HealthKit
-entitlement, so a re-signer keeps it. Output: `Productium-free-ipa`.
+entitlement, so a re-signer keeps it. Output: the release asset `Productium-free.ipa`, at a stable URL
+(`https://github.com/<you>/productium/releases/latest/download/Productium-free.ipa`).
 
 Why no widget: Impactor 2.7 failed with *"An Application Group with Identifier 'group.….<TEAMID>' is not
 available"* when registering the App Group on a free account (tested 2026-11-16). Only the widget and Live
@@ -61,7 +64,7 @@ You sign it on Linux with your Apple ID:
   1. Install SideStore with **iloader** (github.com/nab138/iloader, Linux AppImage or .deb). It also installs the
      pairing file SideStore needs. iloader asks for your Apple ID.
   2. Install **LocalDevVPN** from the App Store (SideStore talks to the phone through it).
-  3. On the phone, open the repo's **free-latest** release page (CI publishes it), download `Productium-free.ipa`,
+  3. On the phone, open the repo's latest release page (CI publishes one for every merge to `main`), download `Productium-free.ipa`,
      then SideStore → **+** → pick the file. Apps SideStore installs are the ones it can refresh, so install
      Productium this way rather than with Impactor.
   4. Shortcuts → Automation → Time of Day (daily, e.g. 3 am) → Run Immediately → SideStore **Refresh All Apps**.
@@ -80,12 +83,15 @@ when a pause is due, so it stays in the background during the grace window. On i
 flashcards, a read or a breathing minute. "I'll go back anyway" gives a 10-minute grace window so it doesn't loop,
 plus "still scrolling?" check-ins (10/20/30 min depending on Settings → Notifications). This is how the one sec app
 worked before Screen Time APIs, and it's the friction mechanism behind its 57% drop in openings (Grüning et al.,
-2023). Several apps can go in one automation (Productium's action doesn't need to know which app). A second
-automation, *those apps → Is Closed → "Closed a Distracting App"*, ends the session: it cancels the check-ins and
-counts the minutes per day, which go into the same weekly taper as screenshots (a screenshot for a day wins over
-the count). Settings → Shortcuts & Automations walks through every recipe tap by tap.
+2023). Make one automation per app and type its name in the action's **App** field, so Productium can tell
+Instagram from Discord. A second automation, *that app → Is Closed → "Closed a Distracting App"*, ends the
+session. iOS's "Is Closed" can miss going Home or locking the phone, so the guide adds automations that end a
+session reliably: opening any other app, charger connected, an alarm stopped, or a Sleep/Work/Driving Focus turning
+on. A session with no clear end is credited your usual length for that app (marked estimated), never the whole
+evening. The minutes go into the same weekly taper as screenshots (a screenshot for a day wins over the count,
+and calibrates the count). Settings → Shortcuts & Automations walks through every recipe tap by tap.
 
-**Paid variant**: unchanged (`device_build`, see `NO_MAC.md` part B).
+**Paid variant**: unchanged (manual `device_build` run, see `NO_MAC.md` part B).
 
 ## Recommendation
 
@@ -106,8 +112,8 @@ Not confirmed in testing yet (I haven't signed a build myself):
 - that `continueInForeground(alwaysConfirm: false)` brings the app forward from an "App is opened" automation
   without a confirmation prompt. Apple's docs say the system may still ask; if it does every time, use the
   iOS 17–18 recipe (If + Open URLs), which is known to work.
-- that the Shortcuts App trigger takes several apps in one automation (the Shortcuts UI shows a multi-select list;
-  one sec's guide says one per app, but only because its action needs to know which app).
+- that the Shortcuts App trigger's multi-select works; Productium's guide says one automation per app because its
+  action needs to know which app a session belongs to.
 
 ## Sources
 

@@ -122,45 +122,109 @@ counts the minutes), **What's the Plan Now?** (Focus, Break, Busy, Free, Wind-do
 Screens-Off Time?** (a yes/no for If), plus Check in, Start focus, Tell Productium and Log mood. Settings →
 Shortcuts & Automations has each recipe as numbered taps with the exact Shortcuts wording in bold.
 
-## AI cost (v3)
+## AI cost
 
 - Only output tokens are counted (meter, budget, chart, receipts).
-- Everything runs on Sonnet at the server's default low effort, through claude-server's Anthropic-compatible
-  `/v1/messages`, with structured output as one forced tool call. Measured on the app's own prompts
-  (16 Inbox messages, a breakdown, flashcards, reads, the weekly note), Sonnet 5.5 wrote 8.1k output tokens
-  and Haiku 5.5 wrote 14.4k, with every case right on both. Haiku 5.5's thinking can't be turned off and it
-  thinks more than Sonnet does, so a second model would only add cost. Haiku 4.5 isn't used.
-- The Inbox trades input tokens (not counted, and its fixed part is the same every time) for being
-  right: see "The Inbox as an agent".
+- One table decides model and effort per feature (`AIFeature.route`): the Inbox, screenshots, flashcards, short
+  reads, project steps and the weekly note run on **Sonnet at low effort**; the **reflection** (and the belief
+  groups it may propose) runs on **Opus at medium effort**. Effort is sent as `output_config.effort`. Opus calls
+  have their own line in AI Usage ("Opus · reflection") and the meter.
+- Reflection is the one expensive call, so it's gated: at most once a day, normally one or two a week, only on
+  a trigger (a task put off three times, under 50% of planned work done three days running, the weekly review, or
+  you asking "why do I keep putting things off?"), skipped over budget, and paused for a week after you reject two
+  runs. Everything it produces is a proposal that waits for your approval.
+- Measured on the app's own prompts, Sonnet 5.5 wrote 8.1k output tokens against Haiku 5.5's 14.4k, because
+  Haiku's thinking can't be turned off. Haiku 4.5 isn't used.
+- The Inbox is one conversation (below), so the prompt cache carries most of its input.
 - System prompts are constants; variable data goes in the user turn.
 - Flashcards and short reads are generated when gap mode opens, not on every launch, in small batches.
 - Screenshots are sent at ≤1280 px (image tokens scale with pixels).
 - Every request has a `max_tokens` close to what it needs.
 
-## The Inbox as an agent
+## The Inbox is one conversation
 
-Asked to split school into periods and then adjust them, the old Inbox made duplicates: it saw
-activities by name only, matched by fuzzy title ("Period 1" vs "Period 10"), couldn't see one-off events,
-day changes, settings or the plan, and remembered only its last reply, not what was applied. Now:
+The Inbox is a single ongoing AI session until you press Clear (`Conversation.swift`). Every prompt continues
+it, so the AI still has every earlier prompt and reply.
 
-- **Everything has an id.** The context lists every activity, task (with its steps), one-off event and day
-  change with a short reference (`a1b2c3`, `t…`, `e…`, `d…`), plus every setting, the colours, routines,
-  read-only calendar events, recently finished tasks, warnings and the plan for the week (today and
-  tomorrow in full, then study blocks). Actions name what they change by id; titles are only a fallback.
-- **The prompt explains the app**: what each kind of thing is, that school is just activities of kind
-  school, that the planner places study blocks itself (so "do maths at 7" means changing the task or a
-  setting, said in the reply), and the rule: read the context, update rather than add.
-- **More actions**: `split_activity` (one activity into parts; days no part covers keep the original;
-  cancelled days follow to every part), `reopen_task`, `update_event`/`delete_event`,
-  `delete_day_change`, `set_color`, steps under a parent task, every setting by `key`/`value`, routines
-  on/off, activity buffers, term dates, notes.
-- **Duplicates are refused in code too**: adding an activity whose name is already on one of those days
-  updates it; the same for tasks (by title) and events (title + date); re-splitting replaces the parts.
-- **Honest receipts**: the applier reports what it couldn't do ("Couldn't find activity …") under the
-  reply, and the history the model sees on the next message carries `[Applied: …]` and `[Not applied: …]`,
-  for the last three exchanges within two hours.
-- `scripts/inbox-eval` runs a multi-turn conversation against a real claude-server with the same prompt,
-  context, history and applier, and prints the activities after each turn.
+- Each turn keeps what you typed and attached **verbatim** (shown as your bubble), the assistant's reply exactly
+  as returned, and what was applied (changes, problems, Undo). History is resent byte for byte, and the last
+  answer is a forced tool call, so claude-server continues the live session and reads the prompt cache.
+- The **full app context goes in the first user turn**. Later turns carry only a delta ("since your last
+  message: …"), or the full context if the delta would be bigger.
+- **Clear · 14.2k tokens** always shows what the next prompt will carry (latest request's input + cache read +
+  cache write), with the output total in small text. It turns **red once the cache has expired** (15 minutes, the
+  server's tool-session TTL) and says what that costs. Nothing clears on its own. Clearing archives the
+  conversation; Settings → Past Prompts lists, searches, resumes and deletes them.
+- The **draft** (text and images) survives tab changes, backgrounding and relaunch: text in the app state,
+  images as files under `drafts/`. It clears only after a successful send.
+
+## What it knows about you
+
+- **`about-me.md`** (Documents, included in backups) has Stated, Inferred, Patterns and Preferences sections.
+  Settings → About You is a plain text editor, and a line you edit is marked `(you)` and never overwritten. The box
+  may only append to Stated. Inferred and Patterns lines come from the reflection job. Every request includes it.
+- **Beliefs** (`Beliefs.swift`, shown in Settings → What Productium Thinks) hold every assumption the planner
+  uses: routine durations, sleep, study capacities, focus and break length, dinner. Each has a value, a
+  confidence (**Assumed**, **You said**, **Learning** 1–2 samples, **Learned** 3+, **Confirmed** when what you said
+  matches the data), a sample count and its evidence, with Correct… (opens the Inbox pre-filled) and Reset. What you
+  say is the prior until three real samples exist, then the median takes over, and a "you said 25, it's been 14
+  lately" note appears. The arbitrary steppers that used to feed the planner (max study minutes, minimum free
+  time, block and break length, dinner, chronotype, screen-time goal) were removed; `CapacityLearner` learns
+  them from planned-vs-done history, shrunk toward cold-start priors.
+- **Routines learn the moment a pair completes**, not the next day. Repeat markers for the same transition
+  within three minutes (a voice "left home" and two geofence ones) merge into one, keeping the earliest time and
+  best source. Marker categories come from the activity name (`to_school` is travel, `in_bed` is sleep), never a
+  blanket "free".
+- **Sleep without a tracker** (`SleepEstimator`): Health samples first, then check-ins (`in_bed`/`sleep start` to
+  `wake`), then overnight stillness plus no phone use, then the plan. The Sleep card says where the number
+  came from. Health status is three states (not asked, connected with no sleep source, connected with
+  sleep) because HealthKit never reveals whether read access was granted.
+- **Motion** (`MotionService`, the free build too): `CMMotionActivityManager` history becomes spans, and
+  vehicle/cycling/walking spans of five minutes or more become Travel in the day, below explicit check-ins and
+  above routine assumptions. A morning walk teaches `to_school`. Only how long you moved is kept, never where.
+- **Mystery gaps**: 40+ minutes with nothing explaining them are asked about while still fresh, in one line from
+  the lock screen, at most four a day and never in wind-down or focus.
+- **Places learn themselves**: saying you're at school offers to save it; repeat visits (`CLVisit`, with Always)
+  propose a place and ask what it's called. Location asks for When In Use first and escalates to Always once.
+- **Scrolling** has its own category. Which apps count is your list (Settings → Screen Time → Scrolling Apps),
+  never the model's guess. Shortcuts sessions are exact; Screen Time screenshot minutes are carved out of free time
+  as estimates. A screenshot is validated in code: scrolling is recomputed from the apps, a total that the apps
+  exceed is flagged "doesn't add up", a week view is stored as an average, and several screenshots of one day
+  merge per app. Sessions record which app, end on any of several signals (another app opens, charger,
+  alarm, Focus, Productium opening, a "no, I stopped" check-in), and an open session with no signal is credited
+  your median length for that app (capped at 30 minutes), marked estimated. Screenshots calibrate a per-app
+  over-count factor.
+
+## Three operations, three risk tiers
+
+The box no longer has a hand-written action per power. It has three operations over a typed registry
+(`Capabilities.swift`): `upsert(entity, id?, fields)`, `delete(entity, id)` and `set(knob, value)`, plus
+macros that expand into them (splitting an activity). Each entity and knob declares its fields, bounds and a tier:
+
+| Tier | What | Who may change it | Guard |
+|---|---|---|---|
+| 0 · data | tasks, events, markers, progress, colours, stated facts | the box (Sonnet) | applied at once, Undo |
+| 1 · learned values | routine samples and stated values, study capacity, scrolling apps | the box only from your explicit statement; otherwise the learners | marked stated vs learned |
+| 2 · behaviour | planner policy, nudge rules, new belief groups, restructuring avoided tasks | the Opus reflection only | **proposed, never applied until you approve**; bounded, logged, revertible |
+
+Every Tier 2 knob has a hard range and a maximum step per change, at most three change per reflection and one per
+knob per week. Proposals appear as one card on Today ("Productium suggests 2 changes") with Approve, Reject and
+"Never change this", and Approve All / Reject All per run. Rejected or reverted proposals are fed back so they
+aren't proposed again. Reflection can't touch what you wrote (titles, due dates), sleep need, the sleep floor
+or the trade-offs toggle. Progress is absolute (`doneMinutes`), so re-stating "200 minutes so far" twice leaves 200.
+Each task counts how often it was put off (snoozed, can't today, skipped, never started, due date moved later)
+and shows "Put off 3×".
+
+## What gets planned
+
+- **Work done** has one source: finished blocks and focus sessions, study check-ins, and progress told to the
+  box, with overlapping time counted once. What was planned for each finished day is kept (`planHistory`, 60 days)
+  so planned-vs-done works without "how did it go?" answers. Review covers today so far plus the previous six days.
+- **At-school errands** ("ask psych teacher…", or the `atSchool` flag) get a slot inside school hours (a lunch or
+  break period if the timetable names one) and a reminder, not a study block.
+- **A school timetable is the periods of the School activity**, never separate one-off events. Events that overlap
+  80% on the same day with a similar title are one event; a calendar event that is one of your activities (CS club)
+  shows once, as the activity; a day change that changes nothing is refused.
 
 ## Colours
 
@@ -182,11 +246,25 @@ usable at all (empty) is asked for once more before the receipt reports it.
 
 ## Backup
 
-Settings → Backup & Restore → Back Up All Data writes one JSON file (`format: productium-backup`,
-version 2) holding the entire app state plus the server address and the few settings kept outside it.
-The API key stays in the Keychain and is never written out. Restore reads v2 and the older partial
-backups, says what's in the file, and asks before replacing anything; the current data is saved as
-`state-before-restore.json` first. Permissions stay with the phone.
+Settings → Backup & Restore writes one JSON file (`format: productium-export`, version 3) holding **every byte the
+app keeps**: the full state (including plan history, motion spans, scroll sessions, draft), `about-me.md`, the
+active conversation and the whole archive with images and what was applied for each prompt, the whole AI call
+log, usage records, Shared defaults (scroll log, friction, check-ins), other stored files, pending and delivered
+notifications, permission statuses, and the app version, iOS version, device and time zone. Nothing is pruned
+before export. The API key stays in the Keychain and is never written out. Restore previews the file and asks
+before replacing anything; the current data is saved as `state-before-restore.json` first. Earlier formats are
+not read. A test checks every stored property of `AppState` is in the export.
+
+## Builds and releases
+
+`core-tests` and `ios-compile` run on every push and pull request. The free-account IPA and the GitHub release
+are made **only on a push to `main`**, after both pass, by one job with `concurrency: release` so two merges
+can't race. The version is `v1.0.0` when no `v*` tag exists; otherwise it's bumped from the latest tag using the
+commits since (Conventional Commits: `BREAKING CHANGE` or `!:` is major, `feat:` is minor, anything else patch).
+`MARKETING_VERSION` is that version and `CURRENT_PROJECT_VERSION` is the run number. The IPA is attached as
+`Productium-free.ipa`, so `…/releases/latest/download/Productium-free.ipa` always points to the newest build.
+The app shows its version and build under Settings → Keeping It Installed and checks the public releases API once
+a day (nothing about you is sent).
 
 ## What changed from v1 to v2 (and why)
 

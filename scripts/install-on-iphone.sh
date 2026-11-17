@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Get the CI-built app onto a USB-connected iPhone, from Linux.
 #
-#   ./scripts/install-on-iphone.sh --free          # free Apple ID: download the unsigned-for-you .ipa, sign with Impactor
+#   ./scripts/install-on-iphone.sh --free          # free Apple ID: download the latest release's .ipa, sign with Impactor
 #   ./scripts/install-on-iphone.sh                 # paid account: download the signed dev .ipa and install it
 #   ./scripts/install-on-iphone.sh path/to/app.ipa # install an already-signed .ipa
 #
@@ -23,8 +23,16 @@ fetch() {  # $1 = artifact name
   ls "$dir"/*.ipa | head -1
 }
 
+fetch_release() {  # the latest GitHub release's stable asset name
+  command -v gh >/dev/null || { echo "install the GitHub CLI (gh), or pass an .ipa path"; exit 1; }
+  local dir
+  dir=$(mktemp -d)
+  gh release download --pattern Productium-free.ipa -D "$dir" >&2
+  echo "$dir/Productium-free.ipa"
+}
+
 if [[ $FREE == 1 ]]; then
-  IPA="${IPA:-$(fetch Productium-free-ipa)}"
+  IPA="${IPA:-$(fetch_release)}"
   cat <<MSG
 Downloaded: $IPA
 
