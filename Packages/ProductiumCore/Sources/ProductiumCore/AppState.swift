@@ -62,6 +62,7 @@ public struct AppState: Codable, Sendable {
     public var routines: [Routine] = Routine.defaults
     public var markers: [TimelineEvent] = []
     public var outcomes: [BlockOutcome] = []
+    public var planHistory: [String: [PlannedBlock]] = [:]
     public var progress: [ProgressEntry] = []
     public var moods: [MoodEntry] = []
     public var health: [HealthDay] = []
@@ -132,6 +133,7 @@ public struct AppState: Codable, Sendable {
         routines = v(.routines, d.routines)
         markers = v(.markers, d.markers)
         outcomes = v(.outcomes, d.outcomes)
+        planHistory = v(.planHistory, d.planHistory)
         progress = v(.progress, d.progress)
         moods = v(.moods, d.moods)
         health = v(.health, d.health)

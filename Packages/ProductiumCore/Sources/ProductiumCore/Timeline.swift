@@ -236,12 +236,14 @@ public struct DayInputs: Sendable {
     public var motion: [MotionSpan]
     public var scrollSessions: [ScrollSession]
     public var scrollingApps: [String: Bool]
+    public var progress: [ProgressEntry]
 
     public init(day: Date, events: [TimelineEvent], commitments: [Commitment], fixedEvents: [FixedEvent] = [],
                 routines: [Routine], outcomes: [BlockOutcome], itemsById: [UUID: WorkItem] = [:],
                 health: HealthDay?, nextHealth: HealthDay? = nil, screen: ScreenDay?, prefs: Preferences,
                 exceptions: [DayException] = [], motion: [MotionSpan] = [], scrollSessions: [ScrollSession] = [],
-                scrollingApps: [String: Bool] = [:]) {
+                scrollingApps: [String: Bool] = [:], progress: [ProgressEntry] = []) {
+        self.progress = progress
         self.scrollSessions = scrollSessions
         self.scrollingApps = scrollingApps
         self.motion = motion

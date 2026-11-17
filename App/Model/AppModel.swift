@@ -106,6 +106,7 @@ final class AppModel {
                                  events: shownEvents + state.oneOffs, preferences: state.prefs, learned: state.learned,
                                  health: state.health, moods: state.moods, locked: locked, routines: state.routines,
                                  exceptions: state.exceptions, horizonDays: 14, policy: state.policy, beliefs: state.beliefs)
+        PlanHistory.record(previous: state.plan, into: &state.planHistory, now: now, calendar: cal)
         state.plan = Planner.merge(previous: state.plan, new: Planner.plan(input), now: now, calendar: cal)
         save()
         applyPlanEffects()
@@ -395,7 +396,8 @@ final class AppModel {
     func dayRecords(back n: Int) -> [DayRecord] {
         let today = cal.startOfDay(for: Date())
         let days = (1...n).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
-        return CapacityLearner.records(days: days, outcomes: state.outcomes, progress: state.progress, isSchoolDay: isSchoolDay,
+        return CapacityLearner.records(days: days, planHistory: state.planHistory, outcomes: state.outcomes, progress: state.progress,
+                                       markers: state.markers, isSchoolDay: isSchoolDay,
                                        eveningFree: { d in
                                            let segs = self.segments(on: d)
                                            guard let end = segs.filter({ [.school, .activities].contains($0.category) }).map(\.end).max() else { return nil }
@@ -582,7 +584,7 @@ final class AppModel {
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
                          screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,
                          exceptions: state.exceptions, motion: state.motion, scrollSessions: Friction.log.sessions,
-                         scrollingApps: state.scrollingApps)
+                         scrollingApps: state.scrollingApps, progress: state.progress)
     }
 
     func setScrolling(_ app: String, _ on: Bool) {
@@ -596,7 +598,7 @@ final class AppModel {
         let today = cal.startOfDay(for: Date())
         return (0..<n).reversed().compactMap { i -> DayTotals? in
             guard let d = cal.date(byAdding: .day, value: -(i + (includeToday ? 0 : 1)), to: today) else { return nil }
-            let planned = state.outcomes.filter { cal.isDate($0.plannedStart, inSameDayAs: d) }.reduce(0) { $0 + $1.plannedMinutes }
+            let planned = PlanHistory.plannedMinutes(on: d, history: state.planHistory, plan: state.plan, outcomes: state.outcomes, calendar: cal)
             return Insights.dayTotals(dayInputs(d), plannedStudy: planned, moods: state.moods,
                                       screenTarget: state.taper.targetMinutes, calendar: cal, now: Date())
         }

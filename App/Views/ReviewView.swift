@@ -7,8 +7,8 @@ struct ReviewView: View {
 
     var body: some View {
         NavigationStack {
-            let this = model.dayTotals(last: 7)
-            let prev = Array(model.dayTotals(last: 14).prefix(7))
+            let this = model.dayTotals(last: 7, includeToday: true)
+            let prev = Array(model.dayTotals(last: 14, includeToday: true).prefix(7))
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     note
@@ -18,7 +18,7 @@ struct ReviewView: View {
                     screenCard(this)
                     SectionTitle("Your Week")
                     Card {
-                        CardHeader(title: "As It Went", symbol: "calendar", color: .secondary, detail: "Last 7 days")
+                        CardHeader(title: "As It Went", symbol: "calendar", color: .secondary, detail: "Today so far and the 6 days before")
                         WeekAsLived(days: lastDays)
                     }
                 }
@@ -35,7 +35,7 @@ struct ReviewView: View {
     private var lastDays: [Date] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        return (1...7).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
+        return (0...6).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
     }
 
     private func avg(_ xs: [Int]) -> Int? { xs.isEmpty ? nil : xs.reduce(0, +) / xs.count }

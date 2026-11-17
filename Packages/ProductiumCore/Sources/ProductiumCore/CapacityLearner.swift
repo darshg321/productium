@@ -82,14 +82,14 @@ public enum CapacityLearner {
     }
 
     public static func records(days: [Date], planHistory: [String: [PlannedBlock]] = [:], outcomes: [BlockOutcome],
-                               progress: [ProgressEntry], isSchoolDay: (Date) -> Bool, eveningFree: (Date) -> Int? = { _ in nil },
+                               progress: [ProgressEntry], markers: [TimelineEvent] = [], isSchoolDay: (Date) -> Bool, eveningFree: (Date) -> Int? = { _ in nil },
                                calendar cal: Calendar) -> [DayRecord] {
         days.map { d in
             let key = dayKey(d, cal)
             let fromHistory = planHistory[key]?.filter(\.isStudy).reduce(0) { $0 + $1.minutes }
             let todays = outcomes.filter { cal.isDate($0.plannedStart, inSameDayAs: d) }
             let planned = fromHistory ?? todays.reduce(0) { $0 + $1.plannedMinutes }
-            let done = todays.filter { $0.status != .skipped }.reduce(0) { $0 + $1.actualMinutes } + progress.minutes(on: d, calendar: cal)
+            let done = WorkDone.minutes(on: d, outcomes: outcomes, progress: progress, markers: markers, calendar: cal)
             return DayRecord(day: cal.startOfDay(for: d), isSchoolDay: isSchoolDay(d), planned: planned, done: done, eveningFree: eveningFree(d))
         }
     }
