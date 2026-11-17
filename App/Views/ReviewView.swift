@@ -70,12 +70,23 @@ struct ReviewView: View {
         }
     }
 
+    /// Where last week's nights came from, e.g. "from your check-ins".
+    private var sleepSource: String? {
+        let week = model.state.health.filter { $0.sleepMinutes != nil && $0.day > Date().addingTimeInterval(-8 * 86400) }
+        let sources = Set(week.map { $0.sleepSource ?? .health })
+        guard !sources.isEmpty else { return nil }
+        return sources.count == 1 ? sources.first!.label.prefix(1).uppercased() + sources.first!.label.dropFirst() : "From Health and your check-ins"
+    }
+
     private func sleepCard(_ this: [DayTotals], _ prev: [DayTotals]) -> some View {
         let s = avg(this.compactMap(\.sleep)), before = avg(prev.compactMap(\.sleep))
         return Card {
             CardHeader(title: "Sleep", symbol: "bed.double.fill", color: Theme.sleep, detail: "Average")
             if let s {
                 DurationValue(minutes: s)
+                if let src = sleepSource {
+                    Text(src).font(.subheadline).foregroundStyle(.secondary)
+                }
                 if let b = before {
                     let d = s - b
                     Text(abs(d) < 10 ? "About the same as the week before." : "\(durationLabel(abs(d))) \(d > 0 ? "more" : "less") than the week before.")

@@ -511,10 +511,13 @@ public enum DumpApplier {
         // MARK: Markers, moods, screen time, routines
 
         func log(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
-            guard let act = a.activity?.lowercased(), !act.isEmpty else { rep.problems.append("A marker needs an activity"); return }
-            let phase = MarkerPhase(rawValue: a.phase ?? "end") ?? .end
+            guard var act = a.activity?.lowercased(), !act.isEmpty else { rep.problems.append("A marker needs an activity"); return }
+            var phase = MarkerPhase(rawValue: a.phase ?? "end") ?? .end
+            var category = TimeCategory(rawValue: a.category ?? "") ?? .free
+            // "in_bed", "woke": the sleep vocabulary, so the night can be measured from them.
+            if let (k, p) = SleepEstimator.normalised(activity: act, phase: phase) { act = k; phase = p; category = .sleep }
             s.markers.append(TimelineEvent(at: when(a.at), phrase: a.note ?? act, activity: act,
-                                           category: TimeCategory(rawValue: a.category ?? "") ?? .free, phase: phase, source: .voice))
+                                           category: category, phase: phase, source: .voice))
             rep.changes.append("Logged \(act.replacingOccurrences(of: "_", with: " "))")
         }
 

@@ -332,9 +332,12 @@ public struct HealthDay: Codable, Hashable, Sendable {
     public var wake: Date?
     public var daylightMinutes: Int?
     public var restingHeartRate: Double?
+    /// Where the night came from: nil or .health = measured; otherwise estimated (see SleepEstimator).
+    public var sleepSource: SleepSource?
 
     public init(day: Date, steps: Int? = nil, sleepMinutes: Int? = nil, bedtime: Date? = nil,
-                wake: Date? = nil, daylightMinutes: Int? = nil, restingHeartRate: Double? = nil) {
+                wake: Date? = nil, daylightMinutes: Int? = nil, restingHeartRate: Double? = nil, sleepSource: SleepSource? = nil) {
+        self.sleepSource = sleepSource
         self.day = day
         self.steps = steps
         self.sleepMinutes = sleepMinutes

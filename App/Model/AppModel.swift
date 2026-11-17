@@ -84,6 +84,7 @@ final class AppModel {
         lastRefresh = Date()
         await syncHealth()
         await syncMotion()
+        estimateSleep()
         syncCalendar()
         syncScreen()
         learnFromPastDays()
@@ -312,7 +313,7 @@ final class AppModel {
         let evs = MarkerParser.parse(phrase, at: at, commitments: state.commitments, calendar: cal, source: source)
         guard !evs.isEmpty else { return }
         state.markers += evs
-        save()
+        if evs.contains(where: { $0.category == .sleep }) { estimateSleep(); replan() } else { save() }
     }
 
     private func handleGeofence(_ place: String, entered: Bool) {
@@ -407,6 +408,16 @@ final class AppModel {
             state.routines = MotionTimeline.learnRoutines(state.motion, day: day, commitments: state.commitments,
                                                           exceptions: state.exceptions, routines: state.routines, calendar: cal)
         }
+    }
+
+    /// Nights Health didn't measure, from check-ins, stillness and phone use (SleepEstimator).
+    func estimateSleep() {
+        let today = cal.startOfDay(for: Date())
+        let days = (0..<14).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
+        let log = Friction.log
+        let phoneUse = log.sessions.flatMap { [$0.openedAt] + ($0.endedAt.map { [$0] } ?? []) }
+        state.health = SleepEstimator.fill(state.health, days: days, markers: state.markers, motion: state.motion,
+                                           phoneUse: phoneUse, sleepNeedMinutes: state.prefs.sleepNeedMinutes, calendar: cal)
     }
 
     private func syncCalendar() {
@@ -646,6 +657,7 @@ final class AppModel {
             let report = DumpApplier.apply(result, to: &ds, now: now, calendar: cal, writer: .box, turnId: turnId)
             state.dumpState = ds
             if ds.aboutMe != aboutMe { aboutMe = ds.aboutMe }
+            estimateSleep()
             // The thread always says something, even if the model sent actions with no reply.
             var reply = result.reply
             if reply.isEmpty { reply = report.changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }

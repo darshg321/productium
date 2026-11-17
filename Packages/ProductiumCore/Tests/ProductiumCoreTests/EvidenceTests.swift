@@ -150,3 +150,47 @@ final class MotionTests: XCTestCase {
         XCTAssertEqual(MotionTimeline.overnightStill(spans, morningOf: Fx.mon(0), calendar: cal)?.minutes, 410)
     }
 }
+
+final class SleepTests: XCTestCase {
+    let cal = Fx.cal
+
+    /// B2: in_bed 00:59 + sleep end 07:25 is 6 h 26 for that night, and the planner's short-night
+    /// logic uses it.
+    func testCheckInsMeasureTheNight() {
+        var s = DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [],
+                          routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpApplier.apply(DumpResult(ops: [
+            .upsert("marker", ["activity": "in_bed", "phase": "start", "at": "2026-11-16T00:59", "category": "free"]),
+            .upsert("marker", ["activity": "sleep", "phase": "end", "at": "2026-11-16T07:25"]),
+        ], reply: ""), to: &s, now: Fx.mon(12), calendar: cal)
+        XCTAssertEqual(s.markers[0].activity, "sleep")
+        XCTAssertEqual(s.markers[0].category, .sleep)
+        let health = SleepEstimator.fill([HealthDay(day: Fx.mon(0), steps: 5000)], days: [Fx.mon(0)], markers: s.markers,
+                                         motion: [], phoneUse: [], sleepNeedMinutes: 540, calendar: cal)
+        XCTAssertEqual(health.first?.sleepMinutes, 386)
+        XCTAssertEqual(health.first?.sleepSource, .checkIns)
+        XCTAssertEqual(health.first?.steps, 5000)
+        XCTAssertEqual(SleepSource.checkIns.label, "from your check-ins")
+        let plan = Planner.plan(PlannerInput(now: Fx.mon(12), calendar: cal, items: [], commitments: [Fx.school], health: health))
+        XCTAssertTrue(plan.warnings.contains { $0.message.hasPrefix("Short night (6h 26m)") }, "\(plan.warnings)")
+    }
+
+    func testStillnessThenPlanAndHealthWins() {
+        let still = MotionTimeline.spans([MotionSample(at: Fx.mon(0, -60), kind: .stationary, confidence: 2),
+                                          MotionSample(at: Fx.mon(7, 10), kind: .walking, confidence: 2)], until: Fx.mon(8))
+        let phone = [Fx.mon(0, -30), Fx.mon(7)]
+        let n = SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], motion: still, phoneUse: phone,
+                                     plannedWake: nil, sleepNeedMinutes: 540, calendar: cal)
+        XCTAssertEqual(n?.source, .motion)
+        XCTAssertEqual(n?.bedtime, Fx.mon(0, -30), "the last scroll before the stillness")
+        XCTAssertEqual(n?.wake, Fx.mon(7))
+        let measured = HealthDay(day: Fx.mon(0), sleepMinutes: 480, wake: Fx.mon(7, 30))
+        XCTAssertEqual(SleepEstimator.night(morningOf: Fx.mon(0), health: measured, markers: [], plannedWake: nil,
+                                            sleepNeedMinutes: 540, calendar: cal)?.source, .health)
+        XCTAssertEqual(SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], plannedWake: Fx.mon(7),
+                                            sleepNeedMinutes: 540, calendar: cal)?.source, .plan)
+        // An assumed night is never stored as if it were measured.
+        XCTAssertNil(SleepEstimator.fill([], days: [Fx.mon(0)], markers: [], motion: [], phoneUse: [], sleepNeedMinutes: 540,
+                                         calendar: cal).first?.sleepMinutes)
+    }
+}

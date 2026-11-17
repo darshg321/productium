@@ -264,7 +264,7 @@ public enum TimelineBuilder {
         // Layer 2: sleep (HealthKit, or the planned sleep window).
         if let h = d.health, let wake = h.wake {
             let bed = h.bedtime ?? wake.addingTimeInterval(-Double(h.sleepMinutes ?? d.prefs.sleepNeedMinutes) * 60)
-            paint(max(bed, dayStart), wake, .sleep, "Sleep", observed: true)
+            paint(max(bed, dayStart), wake, .sleep, "Sleep", observed: h.sleepSource != .motion && h.sleepSource != .plan)
         } else {
             // No Health data: assume the planned wake-up, which already knows about
             // exceptions (no school today means a free-day wake).
