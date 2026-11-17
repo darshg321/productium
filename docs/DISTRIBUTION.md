@@ -67,6 +67,10 @@ You sign it on Linux with your Apple ID:
   3. On the phone, open the repo's latest release page (CI publishes one for every merge to `main`), download `Productium-free.ipa`,
      then SideStore → **+** → pick the file. Apps SideStore installs are the ones it can refresh, so install
      Productium this way rather than with Impactor.
+  3b. Better: add the repo as a SideStore **source** (Sources → +) so updates show up on their own:
+     `https://github.com/darshg321/productium/releases/latest/download/source.json` (CI regenerates it with every
+     release), or the static `source.json` at the repo root via its raw URL. **Both need the repo to be public**:
+     SideStore can't sign in to GitHub, so with a private repo the source and the IPA won't download.
   4. Shortcuts → Automation → Time of Day (daily, e.g. 3 am) → Run Immediately → SideStore **Refresh All Apps**.
      If the shortcut says it "took too long", check SideStore → Settings → Refresh Attempts. It usually still worked.
   The app reads its own expiry date, warns on Today two days ahead, and sends a notification the day before.

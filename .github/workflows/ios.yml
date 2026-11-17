@@ -106,11 +106,15 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/Productium.app Payload/
           codesign -f -s - --entitlements app.ent Payload/Productium.app
           zip -qry Productium-free.ipa Payload
+      - name: SideStore source (always the newest build)
+        run: |
+          python3 scripts/make-source.py "${{ github.repository }}" "$BUNDLE_PREFIX.productium" \
+            "${{ steps.version.outputs.version }}" "${{ github.run_number }}" Productium-free.ipa source.json
       - name: Release (the stable asset name keeps releases/latest/download/Productium-free.ipa current for SideStore)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ steps.version.outputs.version }}" Productium-free.ipa \
+          gh release create "v${{ steps.version.outputs.version }}" Productium-free.ipa source.json \
             --target "${{ github.sha }}" --title "v${{ steps.version.outputs.version }}" \
             --generate-notes --latest
 

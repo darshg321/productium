@@ -1,0 +1,36 @@
+{
+  "name": "Productium",
+  "identifier": "com.darshg321.productium.source",
+  "subtitle": "A calm planner for school",
+  "description": "Productium plans your study around school, sleep and free time.",
+  "iconURL": "https://raw.githubusercontent.com/darshg321/productium/main/App/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+  "website": "https://github.com/darshg321/productium",
+  "apps": [
+    {
+      "name": "Productium",
+      "bundleIdentifier": "com.darshg321.productium",
+      "developerName": "darshg321",
+      "subtitle": "Plans your study around your life",
+      "localizedDescription": "A calm iOS life planner for high-school students: one box for everything, a live plan, sleep-aware wake-ups and less scrolling.",
+      "iconURL": "https://raw.githubusercontent.com/darshg321/productium/main/App/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+      "tintColor": "3478F6",
+      "category": "productivity",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "buildVersion": "1",
+          "date": "2026-11-17T23:31:05Z",
+          "localizedDescription": "See https://github.com/darshg321/productium/releases/tag/v1.0.0",
+          "downloadURL": "https://github.com/darshg321/productium/releases/latest/download/Productium-free.ipa",
+          "size": 3029780,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      }
+    }
+  ],
+  "news": []
+}
