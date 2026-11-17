@@ -106,6 +106,7 @@ final class AppModel {
             LocationService.shared.visitsWanted = true
             LocationService.shared.monitorVisits(true)
         }
+        Task { await UpdateChecker.shared.checkIfDue() }
         if state.onboarded { Task { await refresh() } }
     }
 

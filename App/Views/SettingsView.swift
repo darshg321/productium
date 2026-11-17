@@ -54,10 +54,8 @@ struct SettingsView: View {
 
             Section {
                 row("Backup & Restore", "externaldrive.fill", .gray, nil) { BackupSettings() }
-                if Signature.isFreeTier || model.signatureExpiry != nil {
-                    row("Keeping It Installed", "arrow.clockwise", .indigo,
-                        model.signatureExpiry.map { $0.formatted(.dateTime.month(.abbreviated).day()) }) { InstallSettings() }
-                }
+                row("Keeping It Installed", "arrow.clockwise", .indigo,
+                    UpdateChecker.shared.available.map { "\($0) available" } ?? "v\(UpdateChecker.installed)") { InstallSettings() }
             }
 
             Section {
@@ -886,22 +884,36 @@ struct AboutYouView: View {
 
 struct InstallSettings: View {
     @Environment(AppModel.self) private var model
+    @State private var updates = UpdateChecker.shared
 
     var body: some View {
         List {
+            Section {
+                LabeledContent("Version", value: "\(UpdateChecker.installed) (\(UpdateChecker.build))")
+                if let v = updates.available, let url = updates.latest.flatMap({ URL(string: $0.url) }) {
+                    Link(destination: url) { Label("\(v) is available", systemImage: "arrow.down.circle.fill") }
+                } else if updates.latest != nil {
+                    Label("You're up to date", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("Checked once a day against this app's public GitHub releases. Nothing about you is sent.")
+            }
             if let e = model.signatureExpiry {
                 Section { LabeledContent("Works Until", value: e.formatted(date: .abbreviated, time: .shortened)) }
             }
+            if Signature.isFreeTier || model.signatureExpiry != nil {
             Section {
                 Text("Free signing lasts 7 days. SideStore re-signs it on your phone over Wi-Fi: open SideStore, connect LocalDevVPN, tap Refresh All.")
                 Text("To make it automatic, add a daily Shortcuts automation with SideStore's “Refresh All Apps” action.")
                     .foregroundStyle(.secondary)
             }
             .font(.subheadline)
+            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Keeping It Installed")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await updates.checkIfDue() }
     }
 }
 
