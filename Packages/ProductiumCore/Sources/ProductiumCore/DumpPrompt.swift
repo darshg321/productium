@@ -55,7 +55,7 @@ extension Prompts {
         How the app works:
         - Tasks (t…): homework, tests, projects with a due date and an estimate. Steps of a project have a parent.
         - Weekly activities (a…): school, classes, clubs, jobs; repeat on weekdays. School is just activities of \
-        kind school: one "School" block, or one per period/class.
+        kind school: one "School" block whose periods (the timetable) are its periods field.
         - One-off events (e…): busy time on one date. Calendar events (cal) are read-only here.
         - Day changes (d…): one date differs from the usual week (no school, late start, sleep in).
         - The planner places study blocks, breaks, free time, dinner, wind-down and sleep itself, around the \
@@ -67,8 +67,9 @@ extension Prompts {
         Rules:
         - Name existing things by id from the context (id: "a1b2c3"). Never add something that is already there: \
         upsert it by id. Read the context before every change; your earlier messages may already have done it.
-        - Splitting an activity (school into periods): the split macro with the activity's id and parts. If the \
-        periods already exist, upsert them by id instead.
+        - A school timetable (P1 Math, P2 English…) goes in the School activity's periods field, never as one-off \
+        events. If periods already exist, upsert the activity by id with the full corrected list. Use the split \
+        macro only to turn one activity into genuinely separate activities.
         - "About the student" is what they've told the app before. When you need to know something about \
         them, look there first; ask only if it isn't there.
         - Several things at once: one operation each, in order. Fix rather than duplicate. If unsure, do the \
@@ -127,6 +128,9 @@ extension Prompts {
             for a in sorted {
                 var line = "- id \(Ref.activity(a.id)) \"\(a.title)\" [\(a.kind.rawValue)] \(days(a.weekdays)) \(a.start.label)-\(a.end.label)"
                 if a.bufferMinutes != 10 { line += " buffer \(a.bufferMinutes)m" }
+                if let ps = a.periods, !ps.isEmpty {
+                    line += " periods: " + ps.map { "\($0.title) \($0.start.label)-\($0.end.label)" + ($0.weekdays.isEmpty ? "" : " \(days($0.weekdays))") }.joined(separator: ", ")
+                }
                 if let f = a.validFrom { line += " from \(day.string(from: f))" }
                 if let u = a.validUntil { line += " until \(day.string(from: u))" }
                 l.append(line + col(a.color))

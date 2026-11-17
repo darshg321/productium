@@ -132,7 +132,8 @@ public enum Registry {
             FieldSpec("weekdays", "1=Sun..7=Sat"), FieldSpec("start", "HH:mm"), FieldSpec("end", "HH:mm"),
             FieldSpec("bufferMinutes", "travel before/after, default 10; 0 between periods"),
             FieldSpec("validFrom", "YYYY-MM-DD"), FieldSpec("validUntil", "YYYY-MM-DD"), FieldSpec("color", colorFormat),
-        ], note: "weekly: school, classes, clubs, jobs."),
+            FieldSpec("periods", "[{title, start, end, weekdays?}] classes inside this activity, e.g. a school timetable"),
+        ], note: "weekly: school, classes, clubs, jobs. A school timetable is the periods of the School activity, never one-off events."),
         EntitySpec(name: "event", tier: .data, refPrefix: "e", canDelete: true, fields: [
             FieldSpec("title", "text"), FieldSpec("date", "YYYY-MM-DD"), FieldSpec("start", "HH:mm"), FieldSpec("end", "HH:mm"),
             FieldSpec("kind", CommitmentKind.allCases.map(\.rawValue).joined(separator: "|")), FieldSpec("color", colorFormat),

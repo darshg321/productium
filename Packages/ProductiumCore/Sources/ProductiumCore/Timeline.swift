@@ -273,7 +273,13 @@ public enum TimelineBuilder {
 
         let occ = Commitment.occurrences(d.commitments, on: dayStart, exceptions: d.exceptions, calendar: cal)
         let todays = occ.map(\.commitment)
-        for o in occ { paint(o.start, o.end, TimeCategory.from(o.commitment.kind), o.commitment.title, observed: false) }
+        let weekday = cal.component(.weekday, from: dayStart)
+        for o in occ {
+            paint(o.start, o.end, TimeCategory.from(o.commitment.kind), o.commitment.title, observed: false)
+            for p in o.commitment.periods ?? [] where p.applies(on: weekday) {
+                paint(max(o.start, at(p.start)), min(o.end, at(p.end)), TimeCategory.from(o.commitment.kind), p.title, observed: false)
+            }
+        }
         for e in d.fixedEvents where cal.isDate(e.start, inSameDayAs: dayStart) {
             paint(e.start, e.end, TimeCategory.from(e.kind), e.title, observed: false)
         }

@@ -272,6 +272,7 @@ public enum DumpApplier {
             }
             if let b = a.bufferMinutes { c.bufferMinutes = max(0, min(90, b)) }
             if case .some(let col)? = colour(a.color) { c.color = col }
+            c.periods = periods(a.periods, &rep)
             c.validFrom = a.validFrom.flatMap { AIMapper.parseDate($0, timeZone: tz) }.map { cal.startOfDay(for: $0) }
             c.validUntil = a.validUntil.flatMap { AIMapper.parseDate($0, timeZone: tz) }
             if let i = s.commitments.firstIndex(where: { $0.title.plainKey == c.title.plainKey && !$0.weekdays.isDisjoint(with: c.weekdays) }) {
@@ -279,6 +280,7 @@ public enum DumpApplier {
                 c.id = id
                 if a.color == nil { c.color = s.commitments[i].color }
                 if a.bufferMinutes == nil { c.bufferMinutes = s.commitments[i].bufferMinutes }
+                if a.periods == nil { c.periods = s.commitments[i].periods }
                 s.commitments[i] = c
                 rep.changes.append("Updated \(c.title) (it was already in your week)")
             } else {
@@ -296,6 +298,7 @@ public enum DumpApplier {
             if let k = a.kind.flatMap(CommitmentKind.init(rawValue:)) { c.kind = k }
             if let b = a.bufferMinutes { c.bufferMinutes = max(0, min(90, b)) }
             if case .some(let col)? = colour(a.color) { c.color = col }
+            if a.periods != nil { c.periods = periods(a.periods, &rep) }
             if let v = a.validFrom { c.validFrom = AIMapper.parseDate(v, timeZone: tz).map { cal.startOfDay(for: $0) } }
             if let v = a.validUntil { c.validUntil = AIMapper.parseDate(v, timeZone: tz) }
             guard c.end > c.start else { rep.problems.append("\(c.title) would end before it starts, so it wasn't changed"); return }
@@ -378,9 +381,11 @@ public enum DumpApplier {
             }
             let ed = ed0 > sd ? ed0 : ed0.addingTimeInterval(86400)
             let title = a.title ?? "Busy"
-            if let i = s.oneOffs.firstIndex(where: { $0.title.plainKey == title.plainKey && cal.isDate($0.start, inSameDayAs: sd) }) {
+            let candidate = FixedEvent(id: "", title: title, start: sd, end: ed)
+            if let i = s.oneOffs.firstIndex(where: { EventMatch.duplicates($0, candidate, calendar: cal) }) {
                 s.oneOffs[i].start = sd
                 s.oneOffs[i].end = ed
+                s.oneOffs[i].title = title
                 if case .some(let c)? = colour(a.color) { s.oneOffs[i].color = c }
                 rep.changes.append("Updated \(title)")
             } else {
@@ -442,12 +447,33 @@ public enum DumpApplier {
                     ex.kind = .school
                 } else { rep.problems.append("Couldn't find activity “\(t)”"); return }
             } else if ex.wake == nil { rep.problems.append("A day change needs an activity, or a wake time"); return }
+            if !ex.cancelled, ex.wake == nil, !changesTimes(ex, s.commitments) {
+                rep.problems.append("Skipped a day change that changes nothing (not cancelled, same times)")
+                return
+            }
             s.exceptions.removeAll { cal.isDate($0.day, inSameDayAs: d) && $0.commitmentId == ex.commitmentId
                 && $0.kind == ex.kind && ($0.wake != nil) == (ex.wake != nil) }
             s.exceptions.append(ex)
             let what = ex.commitmentId.flatMap { id in s.commitments.first { $0.id == id }?.title } ?? ex.kind?.rawValue ?? "plans"
             rep.changes.append(ex.cancelled ? "No \(what) on that day" : ex.wake != nil && ex.commitmentId == nil && ex.kind == nil
                                ? "Wake-up changed that day" : "Changed \(what) that day")
+        }
+
+        func changesTimes(_ ex: DayException, _ commitments: [Commitment]) -> Bool {
+            let usual = ex.commitmentId.flatMap { id in commitments.first { $0.id == id } }
+            let startsDifferently = ex.start.map { $0 != usual?.start } ?? false
+            let endsDifferently = ex.end.map { $0 != usual?.end } ?? false
+            return startsDifferently || endsDifferently
+        }
+
+        func periods(_ parts: [DumpPart]?, _ rep: inout DumpReport) -> [ActivityPeriod]? {
+            guard let parts else { return nil }
+            return parts.compactMap { p in
+                guard let st = tod(p.start), let en = tod(p.end), en > st, !p.title.isEmpty else {
+                    rep.problems.append("Skipped period “\(p.title)”: it needs a start and a later end"); return nil
+                }
+                return ActivityPeriod(title: p.title, start: st, end: en, weekdays: weekdays(p.weekdays) ?? [])
+            }
         }
 
         func deleteDayChange(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {

@@ -103,7 +103,7 @@ final class AppModel {
             locked = [cur]
         }
         let input = PlannerInput(now: now, calendar: cal, items: state.items, commitments: state.commitments,
-                                 events: state.events + state.oneOffs, preferences: state.prefs, learned: state.learned,
+                                 events: shownEvents + state.oneOffs, preferences: state.prefs, learned: state.learned,
                                  health: state.health, moods: state.moods, locked: locked, routines: state.routines,
                                  exceptions: state.exceptions, horizonDays: 14, policy: state.policy, beliefs: state.beliefs)
         state.plan = Planner.merge(previous: state.plan, new: Planner.plan(input), now: now, calendar: cal)
@@ -382,6 +382,11 @@ final class AppModel {
         }
     }
 
+    /// Calendar events that are one of your activities (CS club) are shown once, as the activity.
+    var shownEvents: [FixedEvent] {
+        EventMatch.withoutActivityTwins(state.events, commitments: state.commitments, exceptions: state.exceptions, calendar: cal)
+    }
+
     func isSchoolDay(_ d: Date) -> Bool {
         SchoolDay.isSchoolDay(d, prefs: state.prefs, commitments: state.commitments, exceptions: state.exceptions, calendar: cal)
     }
@@ -569,7 +574,7 @@ final class AppModel {
     func dayInputs(_ day: Date) -> DayInputs {
         let next = cal.date(byAdding: .day, value: 1, to: day) ?? day
         return DayInputs(day: day, events: state.markers, commitments: state.commitments,
-                         fixedEvents: state.events + state.oneOffs, routines: state.routines, outcomes: state.outcomes, itemsById: itemsById,
+                         fixedEvents: shownEvents + state.oneOffs, routines: state.routines, outcomes: state.outcomes, itemsById: itemsById,
                          health: state.health.first { cal.isDate($0.day, inSameDayAs: day) },
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
                          screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,
@@ -711,7 +716,7 @@ final class AppModel {
         let now = Date()
         let today = cal.startOfDay(for: now)
         let context = Prompts.dumpContext(DumpContextInput(now: now, calendar: cal, state: state.dumpState,
-                                                           calendarEvents: state.events, todaySegments: segments(on: today),
+                                                           calendarEvents: shownEvents, todaySegments: segments(on: today),
                                                            plan: state.plan, warnings: activeWarnings, aboutMe: aboutMe))
         let convo = state.conversation
         let content = ConversationPolicy.userContent(for: convo, text: text, images: images, fullContext: context)

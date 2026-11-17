@@ -141,6 +141,23 @@ public enum CommitmentKind: String, Codable, CaseIterable, Sendable {
     case school, extracurricular, job, family, other
 }
 
+public struct ActivityPeriod: Codable, Hashable, Sendable {
+    public var title: String
+    public var start: TimeOfDay
+    public var end: TimeOfDay
+    @SortedSet public var weekdays: Set<Int>
+
+    public init(title: String, start: TimeOfDay, end: TimeOfDay, weekdays: Set<Int> = []) {
+        self.title = title
+        self.start = start
+        self.end = end
+        self.weekdays = weekdays
+    }
+
+    /// An empty weekday set means every day the activity runs.
+    public func applies(on weekday: Int) -> Bool { weekdays.isEmpty || weekdays.contains(weekday) }
+}
+
 public struct Commitment: Codable, Identifiable, Hashable, Sendable {
     public var id: UUID
     public var title: String
@@ -152,10 +169,12 @@ public struct Commitment: Codable, Identifiable, Hashable, Sendable {
     public var validFrom: Date?
     public var validUntil: Date?
     public var color: String?
+    public var periods: [ActivityPeriod]?
 
     public init(id: UUID = UUID(), title: String, kind: CommitmentKind, weekdays: Set<Int>,
                 start: TimeOfDay, end: TimeOfDay, bufferMinutes: Int = 10,
-                validFrom: Date? = nil, validUntil: Date? = nil, color: String? = nil) {
+                validFrom: Date? = nil, validUntil: Date? = nil, color: String? = nil, periods: [ActivityPeriod]? = nil) {
+        self.periods = periods
         self.id = id
         self.title = title
         self.kind = kind

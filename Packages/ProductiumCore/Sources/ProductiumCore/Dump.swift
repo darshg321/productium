@@ -241,6 +241,7 @@ struct DumpFields: Codable, Hashable, Sendable {
     var validFrom: String?
     var validUntil: String?
     var parts: [DumpPart]?
+    var periods: [DumpPart]?
     var date: String?
     var cancelled: Bool?
     var wake: String?
@@ -269,7 +270,7 @@ struct DumpFields: Codable, Hashable, Sendable {
             "target": s, "title": s, "kind": s, "subject": s, "due": s, "estimateMinutes": i, "importance": i,
             "difficulty": i, "doneMinutes": i, "done": b, "topics": Schemas.arr(s), "notes": s, "parent": s, "color": s,
             "weekdays": Schemas.arr(i), "start": s, "end": s, "bufferMinutes": i, "validFrom": s, "validUntil": s,
-            "parts": Schemas.arr(part), "date": s, "cancelled": b, "wake": s, "activity": s, "category": s, "phase": s,
+            "parts": Schemas.arr(part), "periods": Schemas.arr(part), "date": s, "cancelled": b, "wake": s, "activity": s, "category": s, "phase": s,
             "at": s, "minutes": i, "enabled": b, "mood": i, "energy": i, "note": s, "screenMinutes": i,
             "distractingMinutes": i,
             "apps": Schemas.arr(Schemas.obj(["name": s, "minutes": i, "distracting": b], required: ["name", "minutes"])),
