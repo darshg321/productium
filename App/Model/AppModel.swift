@@ -14,8 +14,6 @@ final class AppModel {
 
     var state: AppState
     var toast: String?
-    /// What the last brain dump did, shown under the box with Undo.
-    var receipt: Receipt?
     @ObservationIgnored private var undoSnapshot: AppState?
     var busy: Set<String> = []
     var serverOnline: Bool?
@@ -581,22 +579,15 @@ final class AppModel {
 
     // MARK: - Brain dump (the main way anything gets in or gets fixed)
 
-    struct Receipt: Equatable {
-        var input: String
-        var reply: String
-        var changes: [String]
-        var canUndo: Bool
-        var failed: Bool
-        var tokens: Int? = nil
-        var detail: String? = nil
-        var problems: [String] = []
-        /// The request behind this receipt, for "See what was sent".
-        var callId: UUID? = nil
-    }
+    /// The turn that Undo would take back (only the latest one, while nothing else has changed).
+    var undoTurnId: UUID?
 
     /// Anything at all: deadlines, corrections, what happened, how they feel, a question,
     /// screenshots (Screen Time, assignment sheets, timetables). Claude reads it in context
     /// and returns actions. The device applies them, then shows what changed, with Undo.
+    ///
+    /// The box is one ongoing session (see Conversation.swift): every earlier prompt and answer goes
+    /// back unchanged, the full context only in the first turn and a delta after that.
     @discardableResult
     func dump(_ raw: String, images: [AIImage] = []) async -> Bool {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -605,49 +596,42 @@ final class AppModel {
         defer { busy.remove("dump") }
         let now = Date()
         let today = cal.startOfDay(for: now)
-        // The whole app as it is right now, every thing with its id, rebuilt for every message: the
-        // model works from what's really there, not from what it remembers doing.
         let context = Prompts.dumpContext(DumpContextInput(now: now, calendar: cal, state: state.dumpState,
                                                            calendarEvents: state.events, todaySegments: segments(on: today),
                                                            plan: state.plan, warnings: activeWarnings))
-        let message = "Context (the app right now):\n\(context)\n\nStudent:\n\(text.isEmpty ? "(screenshots only)" : text)"
-        // The last few exchanges from the past two hours, each reply with what was actually applied,
-        // so "no, period 3 starts at 10:35" follows on. Only output tokens are counted, so this is cheap.
-        let recent = state.chatAt.map { now.timeIntervalSince($0) < 2 * 3600 } ?? false
-        let history = recent ? Array(state.chat.suffix(6)) : []
+        let convo = state.conversation
+        let content = ConversationPolicy.userContent(for: convo, text: text, images: images, fullContext: context)
+        let req = convo.request(system: Prompts.dump(), tool: ConversationPolicy.tool(schema: Schemas.dump),
+                                userContent: content, maxTokens: 3000)
         do {
-            let req = AIRequest(system: Prompts.dump(),
-                                messages: history + [AIMessage(role: "user", content: message, images: images)],
-                                schema: Schemas.dump, maxTokens: images.isEmpty ? 1800 : 3000)
             let (result, res, tokens) = try await ClaudeClient.shared.send(req, feature: .box) { DumpResult.read($0) }
             undoSnapshot = state
             let before = Set(state.items.map(\.id))
             var ds = state.dumpState
             let report = DumpApplier.apply(result, to: &ds, now: now, calendar: cal)
-            let changes = report.changes
             state.dumpState = ds
-            // The receipt always says something, even if the model sent actions with no reply.
+            // The thread always says something, even if the model sent actions with no reply.
             var reply = result.reply
-            if reply.isEmpty { reply = changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }
+            if reply.isEmpty { reply = report.changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }
             if res.isTruncated { reply += " That was a lot at once, so I may have missed the end. Check the list and send the rest again." }
-            // History carries what really happened, so the next message builds on it instead of redoing it.
-            var memory = reply
-            if !changes.isEmpty { memory += "\n[Applied: \(changes.joined(separator: "; "))]" }
-            if !report.problems.isEmpty { memory += "\n[Not applied: \(report.problems.joined(separator: "; "))]" }
-            state.chat += [AIMessage(role: "user", content: text.isEmpty ? "(screenshots)" : String(text.prefix(1500))),
-                           AIMessage(role: "assistant", content: memory)]
-            state.chatAt = now
-            receipt = Receipt(input: text, reply: reply, changes: changes, canUndo: !changes.isEmpty, failed: false,
-                              tokens: tokens.counted, problems: report.problems, callId: callLog.calls.last { $0.feature == .box && $0.ok }?.id)
+            let turn = ConversationTurn(at: now, text: text, images: images, userContent: content,
+                                        assistantContent: res.rawContent ?? .array([]), reply: reply,
+                                        applied: AppliedReport(changes: report.changes, problems: report.problems),
+                                        callId: callLog.calls.last { $0.feature == .box && $0.ok }?.id, tokens: tokens,
+                                        context: context)
+            state.conversation.add(turn)
+            undoTurnId = report.changes.isEmpty ? nil : turn.id
             replan()
             for item in state.items where !before.contains(item.id) { followUp(new: item) }
             return true
         } catch {
             let ai = error as? AIError
             let msg = ai?.errorDescription ?? "Couldn't reach your Claude server. Check that Tailscale is on, then send again."
-            receipt = Receipt(input: text, reply: msg, changes: [], canUndo: false, failed: true,
-                              detail: ai?.detail ?? (ai == nil ? error.localizedDescription : nil),
-                              callId: callLog.calls.last { $0.feature == .box }?.id)
+            state.conversation.add(ConversationTurn(at: now, text: text, images: images, userContent: content, reply: msg,
+                                                    callId: callLog.calls.last { $0.feature == .box }?.id, failed: true,
+                                                    detail: ai?.detail ?? (ai == nil ? error.localizedDescription : nil),
+                                                    context: context))
+            save()
             if let d = ai?.detail {
                 try? Data(d.utf8).write(to: Persistence.url.deletingLastPathComponent().appendingPathComponent("last-ai-error.txt"))
             }
@@ -655,15 +639,46 @@ final class AppModel {
         }
     }
 
+    /// Takes back what the latest answer changed. The conversation keeps the turn (history is never
+    /// edited); the next prompt's tool result tells the model it was undone.
     func undo() {
-        guard let snap = undoSnapshot else { return }
-        let chat = state.chat
+        guard let snap = undoSnapshot, let id = undoTurnId else { return }
+        let convo = state.conversation, archive = state.archive
         state = snap
-        state.chat = chat
+        state.conversation = convo
+        state.archive = archive
+        if let i = state.conversation.turns.firstIndex(where: { $0.id == id }) {
+            state.conversation.turns[i].applied.problems.append("The student undid all of these changes")
+            state.conversation.turns[i].applied.changes = state.conversation.turns[i].applied.changes.map { "(undone) " + $0 }
+        }
         undoSnapshot = nil
-        receipt?.canUndo = false
-        receipt?.changes = ["Undone"]
+        undoTurnId = nil
         replan()
+    }
+
+    /// Clear: the conversation goes to Past Prompts and the next prompt starts a new session.
+    func clearConversation() {
+        state.archive.archive(state.conversation, now: Date())
+        state.conversation = Conversation(startedAt: Date())
+        undoSnapshot = nil
+        undoTurnId = nil
+        save()
+    }
+
+    /// Makes an archived conversation the active one again (the current one is archived first).
+    func resumeConversation(_ id: UUID) {
+        guard var c = state.archive.remove(id) else { return }
+        state.archive.archive(state.conversation, now: Date())
+        c.archivedAt = nil
+        state.conversation = c
+        undoSnapshot = nil
+        undoTurnId = nil
+        save()
+    }
+
+    func deleteArchivedConversation(_ id: UUID) {
+        _ = state.archive.remove(id)
+        save()
     }
 
     /// Long projects get broken into steps; tests with topics get flashcards.
@@ -761,7 +776,7 @@ final class AppModel {
             state.restore(legacy)
         }
         undoSnapshot = nil
-        receipt = nil
+        undoTurnId = nil
         Persistence.save(state)
         if state.integrations.location { LocationService.shared.monitor(state.places) }
         replan()

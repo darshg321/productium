@@ -37,10 +37,13 @@ public struct AIResponse: Decodable, Sendable {
     public var content: [Block]
     public var stop_reason: String?
     public var usage: Usage?
+    /// `content` exactly as it came back, so a conversation can send it back unchanged.
+    public var rawContent: JSONValue?
 
     public init(model: String?, text: String, usage: Usage?, stopReason: String? = nil) {
         self.model = model
         self.content = [Block(type: "text", text: text, input: nil)]
+        self.rawContent = .array([.object(["type": .string("text"), "text": .string(text)])])
         self.usage = usage
         self.stop_reason = stopReason
     }
@@ -54,7 +57,8 @@ public struct AIResponse: Decodable, Sendable {
         model = try? c.decodeIfPresent(String.self, forKey: .model)
         stop_reason = try? c.decodeIfPresent(String.self, forKey: .stop_reason)
         usage = try? c.decodeIfPresent(Usage.self, forKey: .usage)
-        switch (try? c.decodeIfPresent(JSONValue.self, forKey: .content)) ?? nil {
+        rawContent = (try? c.decodeIfPresent(JSONValue.self, forKey: .content)) ?? nil
+        switch rawContent {
         case .array(let blocks)?:
             content = blocks.compactMap { b in
                 switch b {

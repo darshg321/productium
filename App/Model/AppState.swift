@@ -53,11 +53,13 @@ struct AppState: Codable {
     var integrations = Integrations()
     var review: WeeklyReview?
     var reviewAt: Date?
-    var chat: [AIMessage] = []
+    /// The Inbox box: one ongoing AI session until it's cleared.
+    var conversation = Conversation(startedAt: Date())
+    /// Cleared conversations ("Past prompts").
+    var archive = ConversationArchive()
     var focus: FocusSession?
     var learnedDays: Set<String> = []
     var dismissed: Set<String> = []
-    var chatAt: Date?                      // when the last box exchange happened
     var usage = UsageLedger()              // AI token meter
     var snoozed: [UUID: Date] = [:]        // block → when its snooze reminder fires
 
@@ -107,11 +109,11 @@ struct AppState: Codable {
         integrations = v(.integrations, d.integrations)
         review = v(.review, d.review)
         reviewAt = v(.reviewAt, d.reviewAt)
-        chat = v(.chat, d.chat)
+        conversation = v(.conversation, d.conversation)
+        archive = v(.archive, d.archive)
         focus = v(.focus, d.focus)
         learnedDays = v(.learnedDays, d.learnedDays)
         dismissed = v(.dismissed, d.dismissed)
-        chatAt = v(.chatAt, d.chatAt)
         usage = v(.usage, d.usage)
         snoozed = v(.snoozed, d.snoozed)
     }
@@ -149,7 +151,6 @@ struct AppState: Codable {
         reads.removeAll { ($0.readAt ?? $0.createdAt) < now.addingTimeInterval(-30 * 86400) }
         exceptions.removeAll { $0.day < now.addingTimeInterval(-60 * 86400) }
         oneOffs.removeAll { $0.end < cutoff }
-        if chat.count > 12 { chat.removeFirst(chat.count - 12) }
         usage.prune(now: now)
         snoozed = snoozed.filter { $0.value > now.addingTimeInterval(-3600) }
     }

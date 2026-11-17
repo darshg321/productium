@@ -50,8 +50,9 @@ struct TodayView: View {
 
 // MARK: - Inbox
 
-/// The one box. Typed text and screenshots go to Claude (Sonnet), which returns changes;
-/// the receipt says what changed, with Undo, and what it cost.
+/// The one box. Typed text and screenshots go to Claude (Sonnet), which returns changes.
+/// The box is one ongoing conversation: the thread under it shows every prompt verbatim and
+/// what each answer changed, with Undo on the latest.
 struct DumpBox: View {
     @Environment(AppModel.self) private var model
     @State private var text = ""
@@ -105,9 +106,9 @@ struct DumpBox: View {
                 }
             }
             .buttonStyle(.borderless)
-            if let r = model.receipt { ReceiptView(receipt: r) }
+            if !model.state.conversation.isEmpty { ThreadView() }
         }
-        .animation(.easeOut(duration: 0.2), value: model.receipt)
+        .animation(.easeOut(duration: 0.2), value: model.state.conversation.turns.count)
         .onChange(of: picks) { _, items in Task { await load(items) } }
     }
 
@@ -144,19 +145,80 @@ struct DumpBox: View {
     }
 }
 
-struct ReceiptView: View {
+/// The conversation so far: the student's prompts as right-aligned bubbles (exact text and
+/// thumbnails), each answer under its prompt with what it changed. Collapsed to the last exchange.
+struct ThreadView: View {
     @Environment(AppModel.self) private var model
-    let receipt: AppModel.Receipt
+    @State private var expanded = false
+
+    var body: some View {
+        let turns = model.state.conversation.turns
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            if turns.count > 1 {
+                Button(expanded ? "Show Only the Latest" : "Show All \(turns.count) Prompts") {
+                    withAnimation { expanded.toggle() }
+                }
+                .font(.footnote)
+                .buttonStyle(.borderless)
+            }
+            ForEach(expanded ? turns : Array(turns.suffix(1))) { t in
+                TurnView(turn: t)
+            }
+            HStack {
+                let stats = model.state.conversation.tokenStats
+                if stats.size > 0 {
+                    Text("\(tokensLabel(stats.size)) tokens in this conversation")
+                        .font(.caption).foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Button("Clear") { withAnimation { model.clearConversation() } }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .buttonStyle(.borderless)
+            }
+        }
+        .transition(.opacity)
+    }
+}
+
+struct TurnView: View {
+    @Environment(AppModel.self) private var model
+    let turn: ConversationTurn
     @State private var showCall: AICall?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Divider()
-            Text(receipt.reply)
+            // What the student wrote, exactly.
+            VStack(alignment: .trailing, spacing: 6) {
+                if !turn.images.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(turn.images.indices, id: \.self) { i in
+                            if let data = Data(base64Encoded: turn.images[i].base64), let img = UIImage(data: data) {
+                                Image(uiImage: img).resizable().scaledToFill()
+                                    .frame(width: 40, height: 54)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                        }
+                    }
+                }
+                if !turn.text.isEmpty {
+                    Text(turn.text)
+                        .font(.subheadline)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+
+            Text(turn.reply)
                 .font(.subheadline)
-                .foregroundStyle(receipt.failed ? Theme.alert : .primary)
+                .foregroundStyle(turn.failed ? Theme.alert : .primary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let d = receipt.detail {
+            if let d = turn.detail {
                 DisclosureGroup("Details") {
                     Text(d).font(.caption.monospaced()).foregroundStyle(.secondary)
                         .textSelection(.enabled)
@@ -164,31 +226,29 @@ struct ReceiptView: View {
                 }
                 .font(.footnote)
             }
-            ForEach(receipt.changes, id: \.self) { c in
-                Label(c, systemImage: c == "Undone" ? "arrow.uturn.backward" : "checkmark")
+            ForEach(turn.applied.changes, id: \.self) { c in
+                Label(c, systemImage: c.hasPrefix("(undone)") ? "arrow.uturn.backward" : "checkmark")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            ForEach(receipt.problems, id: \.self) { p in
+            ForEach(turn.applied.problems, id: \.self) { p in
                 Label(p, systemImage: "exclamationmark.triangle")
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
             HStack(spacing: 16) {
-                if receipt.canUndo { Button("Undo") { withAnimation { model.undo() } } }
-                if let c = model.call(receipt.callId) {
+                if model.undoTurnId == turn.id { Button("Undo") { withAnimation { model.undo() } } }
+                if let c = model.call(turn.callId) {
                     Button("Prompt") { showCall = c }.foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let t = receipt.tokens {
-                    Text("\(tokensLabel(t)) tokens out").font(.caption).foregroundStyle(.tertiary)
+                if let t = turn.tokens {
+                    Text("\(tokensLabel(t.counted)) tokens out").font(.caption).foregroundStyle(.tertiary)
                 }
-                Button("Clear") { withAnimation { model.receipt = nil } }.foregroundStyle(.secondary)
             }
             .font(.subheadline)
             .buttonStyle(.borderless)
         }
-        .transition(.opacity)
         .sheet(item: $showCall) { c in
             NavigationStack {
                 AICallDetailView(call: c)

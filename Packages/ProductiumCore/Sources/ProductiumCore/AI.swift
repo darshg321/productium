@@ -50,17 +50,28 @@ public struct AIImage: Codable, Hashable, Sendable {
     public init(mediaType: String, base64: String) { self.mediaType = mediaType; self.base64 = base64 }
 }
 
-/// A chat message. With images it's sent as content blocks (image… then text),
-/// the shape claude-server and the Anthropic API take.
+/// A chat message. With images it's sent as content blocks (image… then text), the shape
+/// claude-server and the Anthropic API take. With `raw` set, that exact `content` is sent instead:
+/// a conversation's history goes back byte-for-byte as it went the first time.
 public struct AIMessage: Codable, Hashable, Sendable {
     public var role: String
     public var content: String
     public var images: [AIImage]
+    public var raw: JSONValue?
 
     public init(role: String, content: String, images: [AIImage] = []) {
         self.role = role
         self.content = content
         self.images = images
+        self.raw = nil
+    }
+
+    /// A message whose `content` is sent exactly as given.
+    public init(role: String, raw: JSONValue) {
+        self.role = role
+        self.raw = raw
+        self.content = AIMessage.text(of: raw)
+        self.images = AIMessage.images(in: raw)
     }
 
     enum CodingKeys: String, CodingKey { case role, content }
@@ -71,23 +82,56 @@ public struct AIMessage: Codable, Hashable, Sendable {
         var source: Source?
     }
 
+    /// The readable text of a content value (text blocks, tool inputs and tool results).
+    static func text(of v: JSONValue) -> String {
+        switch v {
+        case .string(let s): return s
+        case .array(let blocks): return blocks.map(text(of:)).filter { !$0.isEmpty }.joined(separator: "\n")
+        case .object(let o):
+            switch o["type"] {
+            case .string("text")?: if case .string(let t)? = o["text"] { return t }
+            case .string("tool_use")?:
+                let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+                let input = o["input"].flatMap { try? enc.encode($0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                return "[tool call] " + input
+            case .string("tool_result")?: return "[tool result] " + (o["content"].map(text(of:)) ?? "")
+            default: break
+            }
+            return ""
+        default: return ""
+        }
+    }
+
+    static func images(in v: JSONValue) -> [AIImage] {
+        guard case .array(let blocks) = v else { return [] }
+        return blocks.compactMap { b in
+            guard case .object(let o) = b, o["type"] == .string("image"), case .object(let src)? = o["source"],
+                  case .string(let mt)? = src["media_type"], case .string(let data)? = src["data"] else { return nil }
+            return AIImage(mediaType: mt, base64: data)
+        }
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         role = try c.decode(String.self, forKey: .role)
         if let s = try? c.decode(String.self, forKey: .content) {
             content = s
             images = []
+            raw = nil
         } else {
-            let blocks = try c.decode([Block].self, forKey: .content)
-            content = blocks.compactMap(\.text).joined(separator: "\n")
-            images = blocks.compactMap { $0.source.map { AIImage(mediaType: $0.media_type, base64: $0.data) } }
+            let v = try c.decode(JSONValue.self, forKey: .content)
+            raw = v
+            content = AIMessage.text(of: v)
+            images = AIMessage.images(in: v)
         }
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(role, forKey: .role)
-        if images.isEmpty {
+        if let raw {
+            try c.encode(raw, forKey: .content)
+        } else if images.isEmpty {
             try c.encode(content, forKey: .content)
         } else {
             let blocks = images.map { Block(type: "image", text: nil, source: .init(media_type: $0.mediaType, data: $0.base64)) }
@@ -97,31 +141,64 @@ public struct AIMessage: Codable, Hashable, Sendable {
     }
 }
 
+/// A client tool. The box uses one, forced, so claude-server can keep the session alive.
+public struct AITool: Codable, Hashable, Sendable {
+    public var name: String
+    public var description: String
+    public var input_schema: JSONValue
+    public init(name: String, description: String, inputSchema: JSONValue) {
+        self.name = name
+        self.description = description
+        self.input_schema = inputSchema
+    }
+}
+
 /// A request to claude-server's Anthropic-compatible `POST /v1/messages`. Structured output goes
-/// through `output_config.format`, which the server runs as one forced tool call (one API turn).
+/// through `output_config.format`, which the server runs as one forced tool call (one API turn), or
+/// through a forced client tool (`tools` + `tool_choice`), which also keeps a live session.
 public struct AIRequest: Encodable, Sendable {
     public struct Format: Encodable, Sendable { var type = "json_schema"; var schema: JSONValue }
-    public struct OutputConfig: Encodable, Sendable { var format: Format }
+    public struct OutputConfig: Encodable, Sendable {
+        var format: Format?
+        var effort: String?
+    }
+    public struct ToolChoice: Encodable, Sendable { var type = "tool"; var name: String }
 
     public var model: String
     public var max_tokens: Int
     public var system: String
     public var messages: [AIMessage]
     public var output_config: OutputConfig?
+    public var tools: [AITool]?
+    public var tool_choice: ToolChoice?
     /// Not sent in the body: identical requests within this many seconds are answered from the server's
     /// memory without using any tokens (sent as the `x-cache-ttl` header).
     public var cacheTTL: Int?
 
-    enum CodingKeys: String, CodingKey { case model, max_tokens, system, messages, output_config }
+    enum CodingKeys: String, CodingKey { case model, max_tokens, system, messages, output_config, tools, tool_choice }
 
     public init(model: String = AIModel.sonnet, system: String, messages: [AIMessage], schema: JSONValue? = nil,
-                maxTokens: Int = 600, cacheTTL: Int? = nil) {
+                maxTokens: Int = 600, cacheTTL: Int? = nil, effort: String? = nil) {
         self.model = model
         self.max_tokens = maxTokens
         self.system = system
         self.messages = messages
-        self.output_config = schema.map { OutputConfig(format: Format(schema: $0)) }
+        self.output_config = (schema != nil || effort != nil)
+            ? OutputConfig(format: schema.map { Format(schema: $0) }, effort: effort) : nil
         self.cacheTTL = cacheTTL
+    }
+
+    /// A request answered by calling `tool` (forced).
+    public init(model: String = AIModel.sonnet, system: String, messages: [AIMessage], tool: AITool,
+                maxTokens: Int, effort: String? = nil) {
+        self.init(model: model, system: system, messages: messages, schema: nil, maxTokens: maxTokens, effort: effort)
+        self.tools = [tool]
+        self.tool_choice = ToolChoice(name: tool.name)
+    }
+
+    /// The schema the answer has to fit: the output format's, or the forced tool's.
+    public var answerSchema: JSONValue? {
+        output_config?.format?.schema ?? tool_choice.flatMap { c in tools?.first { $0.name == c.name }?.input_schema }
     }
 }
 

@@ -217,7 +217,7 @@ public struct AICall: Codable, Hashable, Identifiable, Sendable {
     public init(request r: AIRequest, feature: AIFeature, at: Date, attempt: Int = 1) {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let schema = r.output_config.flatMap { try? enc.encode($0.format.schema) }.flatMap { String(data: $0, encoding: .utf8) }
+        let schema = r.answerSchema.flatMap { try? enc.encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
         self.init(at: at, feature: feature, requestedModel: r.model, system: r.system,
                   messages: r.messages.map { Message(role: $0.role, content: $0.content, images: $0.images.count) },
                   schema: schema, maxTokens: r.max_tokens, cacheTTL: r.cacheTTL, attempt: attempt)
