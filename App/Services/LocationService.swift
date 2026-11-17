@@ -1,24 +1,63 @@
 import Foundation
 import CoreLocation
+import Observation
 
+@Observable
 final class LocationService: NSObject, CLLocationManagerDelegate {
-    static let shared = LocationService()
-    private let manager = CLLocationManager()
-    var onTransition: ((String, Bool) -> Void)?
-    private var pendingFix: CheckedContinuation<CLLocation?, Never>?
+    @ObservationIgnored static let shared = LocationService()
+    @ObservationIgnored private let manager = CLLocationManager()
+    @ObservationIgnored var onTransition: ((String, Bool) -> Void)?
+    @ObservationIgnored private var pendingFix: CheckedContinuation<CLLocation?, Never>?
+    private(set) var status: CLAuthorizationStatus = .notDetermined
+
+    private static let askedAlwaysKey = "location.askedAlways"
+    @ObservationIgnored private var wantsAlways = false
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        status = manager.authorizationStatus
     }
 
-    var authorizedAlways: Bool { manager.authorizationStatus == .authorizedAlways }
+    var authorizedAlways: Bool { status == .authorizedAlways }
 
+    /// iOS ignores an Always request made while the When-In-Use prompt is up, so ask for When In Use first
+    /// and escalate once the answer arrives (and only once).
     func requestAlways() {
-        if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
+        wantsAlways = true
+        status = manager.authorizationStatus
+        switch status {
+        case .notDetermined: manager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse: escalateIfNeeded()
+        default: break
+        }
+    }
+
+    private func escalateIfNeeded() {
+        guard wantsAlways, manager.authorizationStatus == .authorizedWhenInUse,
+              !UserDefaults.standard.bool(forKey: Self.askedAlwaysKey) else { return }
+        UserDefaults.standard.set(true, forKey: Self.askedAlwaysKey)
         manager.requestAlwaysAuthorization()
     }
+
+    func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
+        status = m.authorizationStatus
+        escalateIfNeeded()
+    }
+
+    var statusText: String {
+        switch status {
+        case .authorizedAlways: return "Always"
+        case .authorizedWhenInUse: return "Only While Using"
+        case .denied: return "Off"
+        case .restricted: return "Restricted"
+        default: return "Not Asked"
+        }
+    }
+
+    /// Arrive and leave events need Always; While Using only works with the app open.
+    var needsSettings: Bool { status == .authorizedWhenInUse || status == .denied }
 
     func currentLocation() async -> CLLocation? {
         await withCheckedContinuation { c in

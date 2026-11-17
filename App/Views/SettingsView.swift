@@ -676,8 +676,16 @@ struct PlacesSettings: View {
                     LocationService.shared.monitor(on ? model.state.places : [])
                     model.save()
                 }))
+                LabeledContent("Location Access", value: LocationService.shared.statusText)
+                if LocationService.shared.needsSettings {
+                    Button("Open Settings → Location → Always") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                }
             } footer: {
-                Text("Leaving home and arriving at school get logged on their own, so your commute is learned without tapping. Only arrive/leave events are kept, never a location history.")
+                Text(LocationService.shared.status == .authorizedWhenInUse
+                     ? "Only While Using: leaving home and arriving at school are missed when the app is closed. Choose Always in Settings so they're noticed on their own."
+                     : "Leaving home and arriving at school get logged on their own, so your commute is learned without tapping. Only arrive/leave events are kept, never a location history.")
             }
             Section("Saved Places") {
                 ForEach(["home", "school"], id: \.self) { id in

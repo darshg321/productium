@@ -310,6 +310,11 @@ struct OnboardingView: View {
         model.state.integrations.calendarImport = await CalendarService.shared.requestAccess()
         model.state.integrations.alarms = await AlarmService.requestAuthorization()
         LocationService.shared.requestAlways()
+        var waited = 0
+        while LocationService.shared.status == .notDetermined, waited < 120 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            waited += 1
+        }
         if let loc = await LocationService.shared.currentLocation() {
             model.state.places.removeAll { $0.id == "home" }
             model.state.places.append(SavedPlace(id: "home", name: "Home", latitude: loc.coordinate.latitude, longitude: loc.coordinate.longitude))
