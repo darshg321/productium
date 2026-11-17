@@ -124,33 +124,88 @@ final class NudgeTests: XCTestCase {
 
     // MARK: Scrolling
 
-    func testScrollLogCountsSessionsAndCapsMissedCloses() {
+    func testScrollLogCountsSessionsPerApp() {
         var log = ScrollLog()
-        log.opened(at: Fx.mon(19), paused: true, calendar: cal)
-        log.opened(at: Fx.mon(19, 2), paused: false, calendar: cal)      // second app, same session
-        XCTAssertEqual(log.closed(at: Fx.mon(19, 14), calendar: cal), 14)
-        XCTAssertEqual(log.closed(at: Fx.mon(19, 20), calendar: cal), 0, "close without an open counts nothing")
-        log.opened(at: Fx.mon(20), paused: false, calendar: cal)
-        XCTAssertEqual(log.closed(at: Fx.mon(23), calendar: cal), ScrollLog.sessionCap)
+        log.opened("Instagram", at: Fx.mon(19), paused: true, calendar: cal)
+        log.opened("Instagram", at: Fx.mon(19, 2), paused: false, calendar: cal)     // same app, same session
+        XCTAssertEqual(log.closed("Instagram", at: Fx.mon(19, 14)), 14)
+        XCTAssertEqual(log.closed(at: Fx.mon(19, 20)), 0, "close without an open counts nothing")
         let d = log.today(Fx.mon(23), calendar: cal)
-        XCTAssertEqual(d?.minutes, 14 + ScrollLog.sessionCap)
-        XCTAssertEqual(d?.opens, 3)
+        XCTAssertEqual(d?.opens, 2)
         XCTAssertEqual(d?.pauses, 1)
         XCTAssertTrue(log.screenDays(before: Fx.mon(23), calendar: cal).isEmpty, "today isn't finished")
-        XCTAssertEqual(log.screenDays(before: Fx.mon(8, plusDays: 1), calendar: cal).first?.distractingMinutes, 104)
+        XCTAssertEqual(log.screenDays(before: Fx.mon(8, plusDays: 1), calendar: cal).first?.distractingMinutes, 14)
     }
 
-    func testStaleOpenIsDropped() {
+    /// B15: no close (Home or lock), then the lock-screen check-in goes unanswered: credited the
+    /// typical length, not 90 minutes.
+    func testUnclosedSessionWithIgnoredCheckInIsEstimated() {
         var log = ScrollLog()
-        log.opened(at: Fx.mon(8), paused: false, calendar: cal)
-        log.opened(at: Fx.mon(19), paused: false, calendar: cal)
-        XCTAssertEqual(log.closed(at: Fx.mon(19, 5), calendar: cal), 5)
+        log.opened("Instagram", at: Fx.mon(20), paused: false, calendar: cal)
+        log.checkInSent(at: Fx.mon(20, 10))
+        log.resolve(now: Fx.mon(22))
+        let s = log.sessions[0]
+        XCTAssertEqual(s.endSource, .checkInIgnored)
+        XCTAssertLessThanOrEqual(s.minutes ?? 99, ScrollLog.priorMinutes)
+        XCTAssertTrue(s.isEstimated)
+        // With no check-in at all, it's estimated too, never left open all evening.
+        log.opened("TikTok", at: Fx.mon(22, 30), paused: false, calendar: cal)
+        log.resolve(now: Fx.mon(23, 59))
+        XCTAssertEqual(log.sessions[1].endSource, .estimated)
+        XCTAssertEqual(log.sessions[1].minutes, ScrollLog.priorMinutes)
     }
 
-    func testNoMinutesUntilClosingIsMeasured() {
+    func testEstimateLearnsTheTypicalSessionAndIsCapped() {
         var log = ScrollLog()
-        log.opened(at: Fx.mon(19), paused: false, calendar: cal)
-        XCTAssertTrue(log.screenDays(before: Fx.mon(8, plusDays: 1), calendar: cal).isEmpty)
+        for (k, m) in [12, 14, 16].enumerated() {
+            log.opened("Instagram", at: Fx.mon(10 + k), paused: false, calendar: cal)
+            log.closed("Instagram", at: Fx.mon(10 + k, m))
+        }
+        XCTAssertEqual(log.typicalMinutes("instagram"), 14)
+        for k in 0..<3 {
+            log.opened("Discord", at: Fx.mon(14 + k), paused: false, calendar: cal)
+            log.closed(at: Fx.mon(14 + k, 55))
+        }
+        XCTAssertEqual(log.typicalMinutes("Discord"), ScrollLog.estimateCap)
+        // "Yes, still scrolling" moves the estimate to at least then; "No" ends it there.
+        log.opened("Instagram", at: Fx.mon(19), paused: false, calendar: cal)
+        log.checkInSent(at: Fx.mon(19, 10))
+        log.checkInAnswered(stillScrolling: true, at: Fx.mon(19, 11))
+        log.checkInSent(at: Fx.mon(19, 20))
+        log.checkInAnswered(stillScrolling: false, at: Fx.mon(19, 21))
+        XCTAssertEqual(log.sessions.last?.minutes, 14)
+        XCTAssertEqual(log.sessions.last?.endSource, .checkIn)
+    }
+
+    func testOpeningMessagesEndsAnInstagramSession() {
+        var log = ScrollLog()
+        log.opened("Instagram", at: Fx.mon(19), paused: false, calendar: cal)
+        XCTAssertEqual(log.ended(by: .otherApp, at: Fx.mon(19, 6)), 6)
+        XCTAssertNil(log.open)
+        XCTAssertTrue(log.measuresClosing)
+    }
+
+    func testSwitchingScrollingAppsSplitsTheSession() {
+        var log = ScrollLog()
+        log.opened("Instagram", at: Fx.mon(19), paused: false, calendar: cal)
+        log.opened("Discord", at: Fx.mon(19, 20), paused: false, calendar: cal)
+        log.closed("Discord", at: Fx.mon(19, 35))
+        XCTAssertEqual(log.rawMinutes(on: Fx.mon(0), calendar: cal), ["Instagram": 20, "Discord": 15])
+        XCTAssertEqual(log.sessions[0].endSource, .otherApp)
+    }
+
+    func testScreenshotCalibrationIsApplied() {
+        var log = ScrollLog()
+        log.opened("Instagram", at: Fx.mon(19), paused: false, calendar: cal)
+        log.closed(at: Fx.mon(19, 56))                                         // Shortcuts: 56
+        log.opened("Instagram", at: Fx.mon(19, plusDays: 1), paused: false, calendar: cal)
+        log.closed(at: Fx.mon(19, 28, plusDays: 1))                            // Shortcuts: 28
+        let shot = ScreenDay(day: Fx.mon(0), distractingMinutes: 40, apps: [AppUsage(name: "Instagram", minutes: 40, distracting: true)],
+                             source: "screenshot")
+        log.calibrate(with: [shot], calendar: cal)
+        XCTAssertEqual(log.overCount["Instagram"], 1.4)
+        XCTAssertEqual(log.calibrationNotes, ["Shortcuts over-counts Instagram ~1.4×"])
+        XCTAssertEqual(log.minutes(on: Fx.mon(0, plusDays: 1), calendar: cal)["Instagram"], 20, "28 / 1.4")
     }
 
     func testScreenshotsWinOverShortcutCounts() {

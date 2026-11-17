@@ -70,6 +70,8 @@ final class AppModel {
     }
 
     func foreground() {
+        // Productium came forward: whatever scrolling session was open has ended.
+        Friction.ended(by: .productium)
         if let link = SharedConfig.defaults.string(forKey: SharedConfig.Key.pendingDeepLink) {
             deepLink = link
             SharedConfig.defaults.removeObject(forKey: SharedConfig.Key.pendingDeepLink)
@@ -403,7 +405,12 @@ final class AppModel {
 
     private func syncScreen() {
         // Free builds: minutes counted by the Shortcuts open/close automations.
-        let measured = Friction.log.screenDays(before: Date(), calendar: cal)
+        // Sessions nobody saw end are estimated, and screenshots (the truth) calibrate the counts.
+        var log = Friction.log
+        log.resolve(now: Date())
+        log.calibrate(with: state.screen, calendar: cal)
+        Friction.log = log
+        let measured = log.screenDays(before: Date(), calendar: cal)
         if !measured.isEmpty { state.screen = state.screen.merging(measured: measured, calendar: cal) }
         guard state.integrations.screenTime else { return }
         var byDay = Dictionary(state.screen.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })

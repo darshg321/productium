@@ -44,9 +44,10 @@ enum NotificationService {
         let yes = UNNotificationAction(identifier: "marker.yes", title: "Yes", options: [])
         let marker = UNNotificationCategory(identifier: markerCategory, actions: [yes], intentIdentifiers: [], options: [])
 
+        let still = UNNotificationAction(identifier: "scroll.yes", title: "Yes", options: [])
+        let stop = UNNotificationAction(identifier: "scroll.stop", title: "No, I Stopped", options: [])
         let showMe = UNNotificationAction(identifier: "scroll.gap", title: "Something Better", options: [.foreground])
-        let stop = UNNotificationAction(identifier: "scroll.stop", title: "I'm Done", options: [])
-        let scroll = UNNotificationCategory(identifier: scrollCategory, actions: [showMe, stop], intentIdentifiers: [], options: [])
+        let scroll = UNNotificationCategory(identifier: scrollCategory, actions: [still, stop, showMe], intentIdentifiers: [], options: [])
 
         let finished = UNNotificationAction(identifier: "item.done", title: "It's Done", options: [])
         let workNow = UNNotificationAction(identifier: "item.focus", title: "Work on It Now", options: [.foreground])
@@ -131,22 +132,20 @@ enum NotificationService {
 
     // MARK: Scrolling check-ins (free build, from the Shortcuts pause)
 
-    /// After "Go back anyway": a few check-ins while the app is open. The "closed" automation
-    /// cancels them, so they only arrive if you're actually still in there.
-    static func scheduleScrollCheckIns(minutes: [Int]) {
+    /// After "Go back anyway": one "still scrolling?" check-in. The next is scheduled only when
+    /// the student answers Yes, so an unanswered one (a locked phone) is the last.
+    static func scheduleScrollCheckIn(after minutes: Int, total: Int, last: Bool) {
         let center = UNUserNotificationCenter.current()
         cancelScrollCheckIns()
-        for (i, m) in minutes.enumerated() {
-            let c = UNMutableNotificationContent()
-            c.title = i == minutes.count - 1 && minutes.count > 1 ? "\(m) minutes. Time to stop?" : "\(m) minutes in"
-            c.body = i == 0 ? "Still scrolling? Productium has something short that beats it."
-                            : "That's \(m) minutes. Close the app now and the evening is still yours."
-            c.categoryIdentifier = scrollCategory
-            c.threadIdentifier = "scroll"
-            c.userInfo = ["deeplink": "productium://gap", "kind": "scroll"]
-            c.interruptionLevel = .active
-            add(center, "scroll.\(i)", c, at: Date().addingTimeInterval(Double(m) * 60))
-        }
+        let c = UNMutableNotificationContent()
+        c.title = last ? "\(total) minutes. Time to stop?" : "\(total) minutes in. Still scrolling?"
+        c.body = last ? "Close the app now and the evening is still yours."
+                      : "Tap Yes or No, I Stopped, so Productium counts it right. Something short beats it."
+        c.categoryIdentifier = scrollCategory
+        c.threadIdentifier = "scroll"
+        c.userInfo = ["deeplink": "productium://gap", "kind": "scroll"]
+        c.interruptionLevel = .active
+        add(center, "scroll.0", c, at: Date().addingTimeInterval(Double(minutes) * 60))
     }
 
     static func cancelScrollCheckIns() {

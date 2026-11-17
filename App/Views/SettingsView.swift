@@ -428,10 +428,15 @@ struct ScreenTimeSettings: View {
             }
             let log = Friction.log
             if let d = log.today(Date(), calendar: .current) {
-                Section("Today") {
+                Section {
                     LabeledContent("Opened", value: "\(d.opens)×")
                     LabeledContent("Paused", value: "\(d.pauses)×")
-                    if log.measuresClosing { LabeledContent("Time in those apps", value: durationLabel(d.minutes)) }
+                    if log.measuresClosing {
+                        let mins = log.minutes(on: Date(), calendar: .current).values.reduce(0, +)
+                        LabeledContent("Time in those apps", value: durationLabel(mins))
+                    }
+                } header: { Text("Today") } footer: {
+                    Text("“App is closed” can miss going Home or locking the phone, so a session with no clear end counts as your usual length (marked estimated), never the whole evening.")
                 }
             }
             #else
@@ -530,7 +535,7 @@ struct NudgeSettingsView: View {
                     SettingsLabel(title: "Scrolling Check-ins", symbol: "hand.raised.fill", color: .purple)
                 }
             } footer: {
-                Text("“When you get home” needs Places. Scrolling check-ins come after “Go back anyway” in a pause: \(model.state.prefs.nudges.level.scrollCheckIns.map { "\($0)" }.joined(separator: ", ")) minutes in, and stop when you close the app (with the Count Scrolling Time automation).")
+                Text("“When you get home” needs Places. Scrolling check-ins come after “Go back anyway” in a pause: \(model.state.prefs.nudges.level.scrollCheckIns.map { "\($0)" }.joined(separator: ", ")) minutes in, and the next only comes if you answer Yes, so they stop on a locked phone.")
             }
 
             Section {

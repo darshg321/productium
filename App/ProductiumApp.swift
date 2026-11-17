@@ -54,9 +54,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             } else if action == "focus.cant", let id = blockId {
                 model.logOutcome(blockId: id, status: .skipped)
             } else if action == "scroll.gap" {
+                Friction.answered(stillScrolling: false)
                 model.deepLink = "productium://gap"
+            } else if action == "scroll.yes" {
+                Friction.answered(stillScrolling: true)
             } else if action == "scroll.stop" {
-                NotificationService.cancelScrollCheckIns()
+                Friction.answered(stillScrolling: false)
             } else if action == "item.done", let id = itemId {
                 model.complete(id)
             } else if action == "item.focus", let id = itemId, let item = model.state.items.first(where: { $0.id == id }) {
