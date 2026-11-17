@@ -21,7 +21,11 @@ blocking): see **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
 - **One box for everything**: type, or drop screenshots of, anything: deadlines, what you did, how you feel,
   questions, and corrections ("didn't go to school today", "chem test moved to tues", "walk to school is 25 min").
   Claude (Sonnet) turns it into changes, applies them on the phone, and shows what changed, with Undo.
-  Health, Calendar, location and Screen Time fill in the rest.
+  It sees the whole app (every task, activity, event and day change by id, all settings, colours, and the plan
+  for the week), so it can split school into periods and then adjust one, recolour things, or change any
+  setting without making duplicates. Health, Calendar, location and Screen Time fill in the rest.
+- **Colours**: every task, activity and event can have its own colour, and categories (study, free time,
+  school, a subject…) have defaults in Settings → Schedule → Colours, or by asking the Inbox.
 - **Screen time**: a week of measuring, then a limit that tapers about 10% a week. Calm shields with a deliberate
   "15 more minutes", and apps paused during focus blocks and wind-down.
 - **Tasks and Schedule tabs**: every task in one searchable list (by due date, subject or type) with work left,
@@ -40,7 +44,9 @@ blocking): see **[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)**.
 - **Your data**: on-device JSON. Settings → Backup & Restore saves *everything* to one file you keep, and restores
   it on this or another phone. There's also CSV and .ics export, and delete-everything.
 - **Token meter**: top right on every tab, today's AI output tokens against a daily budget, with a breakdown by
-  feature. Over budget, background AI waits until tomorrow; the box always works.
+  feature. Over budget, background AI waits until tomorrow; the box always works. AI Usage also shows how much of
+  the Claude subscription is left (5-hour and weekly limits, from claude-server's `/v1/subscription`), and every
+  request in full: tap one to read the exact prompt sent and the reply that came back.
 
 ## Layout
 

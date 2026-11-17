@@ -147,6 +147,7 @@ struct DumpBox: View {
 struct ReceiptView: View {
     @Environment(AppModel.self) private var model
     let receipt: AppModel.Receipt
+    @State private var showCall: AICall?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -168,8 +169,16 @@ struct ReceiptView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            ForEach(receipt.problems, id: \.self) { p in
+                Label(p, systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
             HStack(spacing: 16) {
                 if receipt.canUndo { Button("Undo") { withAnimation { model.undo() } } }
+                if let c = model.call(receipt.callId) {
+                    Button("Prompt") { showCall = c }.foregroundStyle(.secondary)
+                }
                 Spacer()
                 if let t = receipt.tokens {
                     Text("\(tokensLabel(t)) tokens out").font(.caption).foregroundStyle(.tertiary)
@@ -180,6 +189,12 @@ struct ReceiptView: View {
             .buttonStyle(.borderless)
         }
         .transition(.opacity)
+        .sheet(item: $showCall) { c in
+            NavigationStack {
+                AICallDetailView(call: c)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showCall = nil } } }
+            }
+        }
     }
 }
 
@@ -195,7 +210,7 @@ struct NowCard: View {
         let next = model.state.plan.next(after: now)
         Card {
             if let b = current {
-                CardHeader(title: "Now", symbol: Theme.symbol(for: b.kind), color: Theme.color(for: b.kind),
+                CardHeader(title: "Now", symbol: Theme.symbol(for: b.kind), color: Theme.color(for: b),
                            detail: "until \(b.end.hm)")
             } else {
                 CardHeader(title: "Now", symbol: "clock.fill", color: .secondary)
@@ -204,7 +219,7 @@ struct NowCard: View {
             if let n = next, n.kind != .sleep {
                 Divider()
                 HStack(spacing: 8) {
-                    Circle().fill(Theme.color(for: n.kind)).frame(width: 8, height: 8)
+                    Circle().fill(Theme.color(for: n)).frame(width: 8, height: 8)
                     Text("Next: \(blockLabel(n))").font(.subheadline).lineLimit(1)
                     Spacer()
                     Text(n.start.hm).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
@@ -218,7 +233,7 @@ struct NowCard: View {
             Text(b.title).font(.title2.weight(.bold)).fixedSize(horizontal: false, vertical: true)
             Text("\(minutesLeft(b)) min left" + (b.hint.map { " · \($0)" } ?? ""))
                 .font(.subheadline).foregroundStyle(.secondary)
-            ProgressView(value: progress(b)).tint(Theme.color(for: b.kind))
+            ProgressView(value: progress(b)).tint(Theme.color(for: b))
             Button { model.startFocus(b) } label: {
                 Text("Start Focus").font(.headline).frame(maxWidth: .infinity)
             }
@@ -237,7 +252,7 @@ struct NowCard: View {
             Text("Nothing to do until \(b.end.hm). Enjoy it.").font(.subheadline).foregroundStyle(.secondary)
         } else if let b = current {
             Text(blockLabel(b)).font(.title2.weight(.bold))
-            ProgressView(value: progress(b)).tint(Theme.color(for: b.kind))
+            ProgressView(value: progress(b)).tint(Theme.color(for: b))
         } else {
             Text("Nothing planned").font(.title2.weight(.bold))
             Text("Tell the Inbox what's coming up and it'll plan it.").font(.subheadline).foregroundStyle(.secondary)
@@ -377,7 +392,7 @@ struct BlockRow: View {
     var body: some View {
         let start = max(block.start, from)
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 2).fill(Theme.color(for: block.kind)).frame(width: 4, height: 34)
+            RoundedRectangle(cornerRadius: 2).fill(Theme.color(for: block)).frame(width: 4, height: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(blockLabel(block))
                     .font(block.isStudy ? .body.weight(.semibold) : .body)

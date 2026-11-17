@@ -76,8 +76,11 @@ case for buttons and navigation, sentence case for prose.
 **The token meter.** A small ring that fills toward the daily budget (green, then orange from 80 %,
 red when spent) with today's count beside it. It counts output tokens only: what Claude wrote, including
 its hidden thinking. Tapping it opens AI Usage: today against the budget, a
-7-day chart, tokens by feature, recent requests, the server's own count for the key, and the budget
-settings. Over budget, background AI (flashcards, reads, project steps, weekly note) waits until
+7-day chart, tokens by feature, the subscription's limits (percent used of the 5-hour session and the
+week, with reset times, polled every minute while open), the server's own count for the key, recent
+requests and the budget settings. Every request is kept in full on the phone (`AICallLog`, its own file,
+last 150 calls or two weeks): tapping one shows the system prompt, each message, the schema and the raw
+reply, with copy and share. Failed requests are kept too, and a receipt has a Prompt button for its own. Over budget, background AI (flashcards, reads, project steps, weekly note) waits until
 tomorrow; the Inbox always works.
 
 ## Interruptions
@@ -127,13 +130,44 @@ Shortcuts & Automations has each recipe as numbered taps with the exact Shortcut
   (16 Inbox messages, a breakdown, flashcards, reads, the weekly note), Sonnet 5.5 wrote 8.1k output tokens
   and Haiku 5.5 wrote 14.4k, with every case right on both. Haiku 5.5's thinking can't be turned off and it
   thinks more than Sonnet does, so a second model would only add cost. Haiku 4.5 isn't used.
-- The Inbox's fixed prompt + schema went from ~5.5k to ~3.9k characters, the context it sends is
-  compacted (one line per section, only today's past segments, 20 open tasks), and chat history is only
-  the last exchange, and only within 30 minutes.
+- The Inbox trades input tokens (not counted, and its fixed part is the same every time) for being
+  right: see "The Inbox as an agent".
 - System prompts are constants; variable data goes in the user turn.
 - Flashcards and short reads are generated when gap mode opens, not on every launch, in small batches.
 - Screenshots are sent at ≤1280 px (image tokens scale with pixels).
 - Every request has a `max_tokens` close to what it needs.
+
+## The Inbox as an agent
+
+Asked to split school into periods and then adjust them, the old Inbox made duplicates: it saw
+activities by name only, matched by fuzzy title ("Period 1" vs "Period 10"), couldn't see one-off events,
+day changes, settings or the plan, and remembered only its last reply, not what was applied. Now:
+
+- **Everything has an id.** The context lists every activity, task (with its steps), one-off event and day
+  change with a short reference (`a1b2c3`, `t…`, `e…`, `d…`), plus every setting, the colours, routines,
+  read-only calendar events, recently finished tasks, warnings and the plan for the week (today and
+  tomorrow in full, then study blocks). Actions name what they change by id; titles are only a fallback.
+- **The prompt explains the app**: what each kind of thing is, that school is just activities of kind
+  school, that the planner places study blocks itself (so "do maths at 7" means changing the task or a
+  setting, said in the reply), and the rule: read the context, update rather than add.
+- **More actions**: `split_activity` (one activity into parts; days no part covers keep the original;
+  cancelled days follow to every part), `reopen_task`, `update_event`/`delete_event`,
+  `delete_day_change`, `set_color`, steps under a parent task, every setting by `key`/`value`, routines
+  on/off, activity buffers, term dates, notes.
+- **Duplicates are refused in code too**: adding an activity whose name is already on one of those days
+  updates it; the same for tasks (by title) and events (title + date); re-splitting replaces the parts.
+- **Honest receipts**: the applier reports what it couldn't do ("Couldn't find activity …") under the
+  reply, and the history the model sees on the next message carries `[Applied: …]` and `[Not applied: …]`,
+  for the last three exchanges within two hours.
+- `scripts/inbox-eval` runs a multi-turn conversation against a real claude-server with the same prompt,
+  context, history and applier, and prints the activities after each turn.
+
+## Colours
+
+Stored as strings (a system colour name or `#RRGGBB`) on tasks, activities and events, with category
+defaults in `Preferences.colors` (`study`, `free`, `school`, `subject:math`, `task:test`…). The planner
+stamps each block with its resolved colour (`Palette.paint`), most specific first: the task's own, its
+project's, its subject's, its type's, then the category; for activities their own, then their kind's.
 
 ## Reading replies
 

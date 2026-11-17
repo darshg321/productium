@@ -217,3 +217,21 @@ enum Persistence {
         try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 }
+
+/// The full AI call log (prompts and replies) lives in its own file: it's for reading when
+/// something looks off, and keeping it out of state.json keeps every save small.
+enum CallLogStore {
+    static var url: URL { SharedConfig.containerURL.appendingPathComponent("ai-calls.json") }
+
+    static func load() -> AICallLog {
+        guard let data = try? Data(contentsOf: url) else { return AICallLog() }
+        return (try? FullBackup.decoder().decode(AICallLog.self, from: data)) ?? AICallLog()
+    }
+
+    static func save(_ log: AICallLog) {
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        guard let data = try? enc.encode(log) else { return }
+        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+}

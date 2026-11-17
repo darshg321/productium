@@ -233,6 +233,8 @@ struct UsageView: View {
                 Text("The Inbox always works. Flashcards, short reads, project steps and the weekly note wait until tomorrow once the budget is spent.")
             }
 
+            SubscriptionSection()
+
             Section {
                 if let u = model.serverUsage {
                     LabeledContent("Today (server day, UTC)", value: "\(tokensLabel(u.todayTokens)) · \(u.todayRequests)×")
@@ -249,9 +251,13 @@ struct UsageView: View {
             }
 
             let recent = Array(ledger.records.suffix(8).reversed())
-            if !recent.isEmpty {
-                Section("Recent Requests") {
-                    ForEach(recent, id: \.at) { r in
+            Section {
+                ForEach(recent, id: \.at) { r in
+                    NavigationLink {
+                        if let c = model.call(r.callId) { AICallDetailView(call: c) }
+                        else { ContentUnavailableView("Not kept", systemImage: "doc.text.magnifyingglass",
+                                                      description: Text("This request is older than the saved log, or from before it existed.")) }
+                    } label: {
                         HStack(spacing: 12) {
                             IconTile(symbol: Theme.symbol(for: r.feature), color: Theme.color(for: r.feature), size: 24)
                             VStack(alignment: .leading, spacing: 1) {
@@ -266,12 +272,26 @@ struct UsageView: View {
                         }
                     }
                 }
+                NavigationLink {
+                    AICallListView()
+                } label: {
+                    LabeledContent("All Requests", value: "\(model.callLog.calls.count)")
+                }
+            } header: { Text("Recent Requests") } footer: {
+                Text("Tap one to see the exact prompt that was sent and the reply that came back, failed ones included.")
             }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("AI Usage")
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.refreshServerUsage() }
+        .task {
+            // The subscription moves while you watch (other apps use it too): poll while open.
+            while !Task.isCancelled {
+                await model.refreshSubscription()
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
         .onChange(of: model.state.usage.dailyBudget) { _, _ in model.save() }
         .onChange(of: model.state.usage.pauseBackgroundOverBudget) { _, _ in model.save() }
     }
@@ -290,21 +310,34 @@ struct ScheduleSettings: View {
                 WeekdayToggles(days: $m.state.prefs.schoolDays, label: "School Days")
             }
             Section {
-                ForEach(model.state.commitments) { c in
+                let sorted = model.state.commitments.sorted { ($0.kind == .school ? 0 : 1, $0.start, $0.title) < ($1.kind == .school ? 0 : 1, $1.start, $1.title) }
+                ForEach(sorted) { c in
                     Button { editing = c } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(c.title).foregroundStyle(.primary)
+                            HStack(spacing: 6) {
+                                Circle().fill(Theme.named(Palette.color(for: c, colors: model.state.prefs.colors)) ?? Theme.fixed)
+                                    .frame(width: 8, height: 8)
+                                Text(c.title).foregroundStyle(.primary)
+                            }
                             Text("\(c.weekdays.sorted().map { Calendar.current.shortWeekdaySymbols[$0 - 1] }.joined(separator: " ")), \(c.start.label) to \(c.end.label)")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
-                .onDelete { m.state.commitments.remove(atOffsets: $0); model.replan() }
+                .onDelete { offsets in
+                    let ids = Set(offsets.map { sorted[$0].id })
+                    m.state.commitments.removeAll { ids.contains($0.id) }
+                    m.state.exceptions.removeAll { $0.commitmentId.map(ids.contains) ?? false }
+                    model.replan()
+                }
                 Button {
                     editing = Commitment(title: "", kind: .extracurricular, weekdays: [2, 4], start: TimeOfDay(16), end: TimeOfDay(17, 30))
                 } label: { Label("Add Class or Activity", systemImage: "plus") }
             } header: { Text("Classes & Activities") } footer: {
-                Text("Or just tell the Inbox: “soccer mon and wed 4 to 5:30”.")
+                Text("Or just tell the Inbox: “soccer mon and wed 4 to 5:30”, or “split school into my periods” with your timetable.")
+            }
+            Section {
+                NavigationLink { ColorSettings() } label: { Label("Colours", systemImage: "paintpalette") }
             }
         }
         .listStyle(.insetGrouped)
@@ -859,6 +892,7 @@ struct CommitmentEditor: View {
                 TimePicker(label: "Starts", time: $commitment.start)
                 TimePicker(label: "Ends", time: $commitment.end)
                 Stepper("Travel buffer: \(commitment.bufferMinutes) min", value: $commitment.bufferMinutes, in: 0...60, step: 5)
+                ColorChoice(color: $commitment.color, automatic: Theme.fixed)
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

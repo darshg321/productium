@@ -21,6 +21,11 @@ final class AppModel {
     var serverOnline: Bool?
     /// The server's own per-key count, refreshed now and then (costs no tokens).
     var serverUsage: ServerUsage?
+    /// How much of the Claude subscription behind the server is used (no tokens).
+    var subscription: SubscriptionStatus?
+    /// Every AI request and reply in full, newest last (its own file, not part of `state`).
+    var callLog: AICallLog
+    @ObservationIgnored private var callLogSave: Task<Void, Never>?
     var deepLink: String?
     let cal = Calendar.current
     @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -28,6 +33,7 @@ final class AppModel {
 
     init() {
         state = Persistence.load()
+        callLog = CallLogStore.load()
     }
 
     // MARK: - Persistence
@@ -45,9 +51,10 @@ final class AppModel {
     // MARK: - Lifecycle
 
     func launch() {
-        ClaudeClient.shared.onUsage = { [weak self] feature, model, tokens in
-            self?.recordUsage(feature, model: model, tokens: tokens)
+        ClaudeClient.shared.onUsage = { [weak self] feature, model, tokens, callId in
+            self?.recordUsage(feature, model: model, tokens: tokens, callId: callId)
         }
+        ClaudeClient.shared.onCall = { [weak self] call in self?.logCall(call) }
         NotificationService.register()
         LocationService.shared.onTransition = { [weak self] place, entered in
             Task { @MainActor in self?.handleGeofence(place, entered: entered) }
@@ -84,6 +91,7 @@ final class AppModel {
             // Flashcards and reads are made when gap mode opens, not on every launch.
             await weeklyReviewIfDue()
             await refreshServerUsage()
+            await refreshSubscription()
         }
     }
 
@@ -451,9 +459,32 @@ final class AppModel {
     // only made when gap mode needs them; project breakdowns and the weekly note are rare.
     // Background jobs stand down over budget.
 
-    func recordUsage(_ feature: AIFeature, model: String, tokens: TokenCount) {
-        state.usage.record(UsageRecord(at: Date(), feature: feature, model: model, tokens: tokens))
+    func recordUsage(_ feature: AIFeature, model: String, tokens: TokenCount, callId: UUID? = nil) {
+        state.usage.record(UsageRecord(at: Date(), feature: feature, model: model, tokens: tokens, callId: callId))
         save()
+    }
+
+    func logCall(_ call: AICall) {
+        callLog.append(call)
+        callLogSave?.cancel()
+        let snapshot = callLog
+        callLogSave = Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if Task.isCancelled { return }
+            CallLogStore.save(snapshot)
+        }
+    }
+
+    func clearCallLog() {
+        callLog = AICallLog()
+        CallLogStore.save(callLog)
+    }
+
+    func call(_ id: UUID?) -> AICall? { id.flatMap { id in callLog.calls.last { $0.id == id } } }
+
+    func refreshSubscription() async {
+        guard ClaudeClient.shared.isConfigured else { return }
+        if let s = await ClaudeClient.shared.subscription() { subscription = s }
     }
 
     func aiAllowed(_ feature: AIFeature) -> Bool {
@@ -558,6 +589,9 @@ final class AppModel {
         var failed: Bool
         var tokens: Int? = nil
         var detail: String? = nil
+        var problems: [String] = []
+        /// The request behind this receipt, for "See what was sent".
+        var callId: UUID? = nil
     }
 
     /// Anything at all: deadlines, corrections, what happened, how they feel, a question,
@@ -571,35 +605,40 @@ final class AppModel {
         defer { busy.remove("dump") }
         let now = Date()
         let today = cal.startOfDay(for: now)
-        let context = Prompts.dumpContext(now: now, calendar: cal, items: state.items, commitments: state.commitments,
-                                          exceptions: state.exceptions, routines: state.routines,
-                                          todaySegments: segments(on: today),
-                                          todayMarkers: state.markers.filter { cal.isDate($0.at, inSameDayAs: now) },
-                                          plan: state.plan)
-        let message = "Context:\n\(context)\n\nStudent:\n\(text.isEmpty ? "(screenshots only)" : text)"
-        // Only the last exchange, and only if it was recent: enough for "no, I meant thursday",
-        // without paying to resend a long conversation on every message.
-        let recent = state.chatAt.map { now.timeIntervalSince($0) < 30 * 60 } ?? false
-        let history = recent ? Array(state.chat.suffix(2)) : []
+        // The whole app as it is right now, every thing with its id, rebuilt for every message: the
+        // model works from what's really there, not from what it remembers doing.
+        let context = Prompts.dumpContext(DumpContextInput(now: now, calendar: cal, state: state.dumpState,
+                                                           calendarEvents: state.events, todaySegments: segments(on: today),
+                                                           plan: state.plan, warnings: activeWarnings))
+        let message = "Context (the app right now):\n\(context)\n\nStudent:\n\(text.isEmpty ? "(screenshots only)" : text)"
+        // The last few exchanges from the past two hours, each reply with what was actually applied,
+        // so "no, period 3 starts at 10:35" follows on. Only output tokens are counted, so this is cheap.
+        let recent = state.chatAt.map { now.timeIntervalSince($0) < 2 * 3600 } ?? false
+        let history = recent ? Array(state.chat.suffix(6)) : []
         do {
             let req = AIRequest(system: Prompts.dump(),
                                 messages: history + [AIMessage(role: "user", content: message, images: images)],
-                                schema: Schemas.dump, maxTokens: images.isEmpty ? 700 : 1500)
+                                schema: Schemas.dump, maxTokens: images.isEmpty ? 1800 : 3000)
             let (result, res, tokens) = try await ClaudeClient.shared.send(req, feature: .box) { DumpResult.read($0) }
             undoSnapshot = state
             let before = Set(state.items.map(\.id))
             var ds = state.dumpState
-            let changes = DumpApplier.apply(result, to: &ds, now: now, calendar: cal)
+            let report = DumpApplier.apply(result, to: &ds, now: now, calendar: cal)
+            let changes = report.changes
             state.dumpState = ds
             // The receipt always says something, even if the model sent actions with no reply.
             var reply = result.reply
             if reply.isEmpty { reply = changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }
             if res.isTruncated { reply += " That was a lot at once, so I may have missed the end. Check the list and send the rest again." }
-            state.chat += [AIMessage(role: "user", content: text.isEmpty ? "(screenshots)" : String(text.prefix(500))),
-                           AIMessage(role: "assistant", content: reply)]
+            // History carries what really happened, so the next message builds on it instead of redoing it.
+            var memory = reply
+            if !changes.isEmpty { memory += "\n[Applied: \(changes.joined(separator: "; "))]" }
+            if !report.problems.isEmpty { memory += "\n[Not applied: \(report.problems.joined(separator: "; "))]" }
+            state.chat += [AIMessage(role: "user", content: text.isEmpty ? "(screenshots)" : String(text.prefix(1500))),
+                           AIMessage(role: "assistant", content: memory)]
             state.chatAt = now
             receipt = Receipt(input: text, reply: reply, changes: changes, canUndo: !changes.isEmpty, failed: false,
-                              tokens: tokens.counted)
+                              tokens: tokens.counted, problems: report.problems, callId: callLog.calls.last { $0.feature == .box && $0.ok }?.id)
             replan()
             for item in state.items where !before.contains(item.id) { followUp(new: item) }
             return true
@@ -607,7 +646,8 @@ final class AppModel {
             let ai = error as? AIError
             let msg = ai?.errorDescription ?? "Couldn't reach your Claude server. Check that Tailscale is on, then send again."
             receipt = Receipt(input: text, reply: msg, changes: [], canUndo: false, failed: true,
-                              detail: ai?.detail ?? (ai == nil ? error.localizedDescription : nil))
+                              detail: ai?.detail ?? (ai == nil ? error.localizedDescription : nil),
+                              callId: callLog.calls.last { $0.feature == .box }?.id)
             if let d = ai?.detail {
                 try? Data(d.utf8).write(to: Persistence.url.deletingLastPathComponent().appendingPathComponent("last-ai-error.txt"))
             }
@@ -731,6 +771,7 @@ final class AppModel {
     func deleteEverything() {
         ScreenTimeService.shared.disable()
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        clearCallLog()
         state = AppState()
         Persistence.save(state)
     }

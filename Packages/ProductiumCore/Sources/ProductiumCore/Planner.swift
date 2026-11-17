@@ -72,7 +72,10 @@ public enum Planner {
         ctx.buildDays()
         let demands = ctx.buildDemands()
         ctx.allocate(demands)
-        return ctx.finish()
+        var plan = ctx.finish()
+        plan.blocks = Palette.paint(plan.blocks, items: input.items, commitments: input.commitments, events: input.events,
+                                    colors: input.preferences.colors)
+        return plan
     }
 
     /// Keeps today's past blocks from the previous plan (so "Today" shows history)
@@ -212,12 +215,13 @@ public enum Planner {
                     let buf = Double(c.bufferMinutes) * 60
                     busy.append(Interval(start: s.addingTimeInterval(-buf), end: e.addingTimeInterval(buf)))
                     fixed.append(PlannedBlock(id: stableId("c", c.id.uuidString, day), kind: .commitment,
-                                              start: s, end: e, title: c.title))
+                                              start: s, end: e, title: c.title, sourceId: c.id.uuidString))
                 }
                 for ev in input.events where ev.end > day && ev.start < tomorrow {
                     busy.append(Interval(start: ev.start, end: ev.end))
                     fixed.append(PlannedBlock(id: stableId("e", ev.id, day), kind: .event,
-                                              start: max(ev.start, day), end: min(ev.end, tomorrow), title: ev.title))
+                                              start: max(ev.start, day), end: min(ev.end, tomorrow), title: ev.title,
+                                              sourceId: ev.id))
                 }
                 for b in input.locked where b.end > day && b.start < tomorrow {
                     busy.append(Interval(start: b.start, end: b.end))

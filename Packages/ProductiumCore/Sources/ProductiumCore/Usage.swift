@@ -53,12 +53,15 @@ public struct UsageRecord: Codable, Hashable, Sendable {
     public var feature: AIFeature
     public var model: String
     public var tokens: TokenCount
+    /// The full call in `AICallLog`, while it's still kept there.
+    public var callId: UUID?
 
-    public init(at: Date, feature: AIFeature, model: String, tokens: TokenCount) {
+    public init(at: Date, feature: AIFeature, model: String, tokens: TokenCount, callId: UUID? = nil) {
         self.at = at
         self.feature = feature
         self.model = model
         self.tokens = tokens
+        self.callId = callId
     }
 }
 
@@ -152,5 +155,114 @@ public func tokensLabel(_ n: Int) -> String {
     case ..<10_000: return String(format: "%.1fk", Double(n) / 1000)
     case ..<1_000_000: return "\(Int((Double(n) / 1000).rounded()))k"
     default: return String(format: "%.1fM", Double(n) / 1_000_000)
+    }
+}
+
+// MARK: - Every call, in full
+//
+// The ledger above keeps numbers. This keeps the words: the exact request the app sent (system
+// prompt, messages, schema) and the exact body that came back, so a strange reply can be read
+// rather than guessed at. Images are kept as a note of their size, not their bytes.
+
+public struct AICall: Codable, Hashable, Identifiable, Sendable {
+    public struct Message: Codable, Hashable, Sendable {
+        public var role: String
+        public var content: String
+        public var images: Int
+        public init(role: String, content: String, images: Int = 0) { self.role = role; self.content = content; self.images = images }
+    }
+
+    public var id: UUID
+    public var at: Date
+    public var feature: AIFeature
+    /// What was asked for, and what answered (the reply's `model`).
+    public var requestedModel: String
+    public var model: String?
+    public var system: String
+    public var messages: [Message]
+    /// The JSON schema, pretty-printed, when the request asked for structured output.
+    public var schema: String?
+    public var maxTokens: Int
+    public var cacheTTL: Int?
+    public var status: Int?
+    public var durationMs: Int
+    /// The response body exactly as received (trimmed only if enormous).
+    public var response: String
+    public var tokens: TokenCount?
+    public var error: String?
+    /// 2 when this was the automatic second try after an unusable reply.
+    public var attempt: Int
+
+    public init(id: UUID = UUID(), at: Date, feature: AIFeature, requestedModel: String, model: String? = nil, system: String,
+                messages: [Message], schema: String? = nil, maxTokens: Int, cacheTTL: Int? = nil, status: Int? = nil,
+                durationMs: Int = 0, response: String = "", tokens: TokenCount? = nil, error: String? = nil, attempt: Int = 1) {
+        self.id = id
+        self.at = at
+        self.feature = feature
+        self.requestedModel = requestedModel
+        self.model = model
+        self.system = system
+        self.messages = messages
+        self.schema = schema
+        self.maxTokens = maxTokens
+        self.cacheTTL = cacheTTL
+        self.status = status
+        self.durationMs = durationMs
+        self.response = response
+        self.tokens = tokens
+        self.error = error
+        self.attempt = attempt
+    }
+
+    public init(request r: AIRequest, feature: AIFeature, at: Date, attempt: Int = 1) {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let schema = r.output_config.flatMap { try? enc.encode($0.format.schema) }.flatMap { String(data: $0, encoding: .utf8) }
+        self.init(at: at, feature: feature, requestedModel: r.model, system: r.system,
+                  messages: r.messages.map { Message(role: $0.role, content: $0.content, images: $0.images.count) },
+                  schema: schema, maxTokens: r.max_tokens, cacheTTL: r.cacheTTL, attempt: attempt)
+    }
+
+    public var ok: Bool { error == nil && status == 200 }
+
+    /// The reply pretty-printed when it's JSON, as-is otherwise.
+    public var prettyResponse: String {
+        guard let data = response.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: data),
+              let out = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+              let s = String(data: out, encoding: .utf8) else { return response }
+        return s
+    }
+
+    /// The whole exchange as one text file, for Share / Copy.
+    public var transcript: String {
+        var out = ["\(feature.title) · \(ISO8601DateFormatter().string(from: at)) · \(model ?? requestedModel) · attempt \(attempt)",
+                   "HTTP \(status.map(String.init) ?? "-") · \(durationMs) ms · max_tokens \(maxTokens)"
+                   + (tokens.map { " · in \($0.input) out \($0.output) cache r/w \($0.cacheRead)/\($0.cacheWrite)" } ?? "")]
+        if let e = error { out.append("ERROR: \(e)") }
+        out.append("\n=== SYSTEM ===\n\(system)")
+        for m in messages {
+            out.append("\n=== \(m.role.uppercased()) ===\(m.images > 0 ? " (+\(m.images) image\(m.images == 1 ? "" : "s"))" : "")\n\(m.content)")
+        }
+        if let s = schema { out.append("\n=== SCHEMA ===\n\(s)") }
+        out.append("\n=== RESPONSE ===\n\(prettyResponse)")
+        return out.joined(separator: "\n")
+    }
+}
+
+/// The last calls, newest last. Kept in its own file so the main state stays small.
+public struct AICallLog: Codable, Hashable, Sendable {
+    public static let maxCalls = 150
+    public static let maxResponseChars = 60_000
+    public var calls: [AICall] = []
+
+    public init(calls: [AICall] = []) { self.calls = calls }
+
+    public mutating func append(_ c: AICall, now: Date = Date()) {
+        var c = c
+        if c.response.count > Self.maxResponseChars { c.response = String(c.response.prefix(Self.maxResponseChars)) + "\n…(cut)" }
+        calls.append(c)
+        let cutoff = now.addingTimeInterval(-14 * 86400)
+        calls.removeAll { $0.at < cutoff }
+        if calls.count > Self.maxCalls { calls.removeFirst(calls.count - Self.maxCalls) }
     }
 }

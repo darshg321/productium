@@ -53,6 +53,38 @@ enum Theme {
         }
     }
 
+    /// A stored colour string (`Palette` name or #RRGGBB) as a system colour.
+    static func named(_ s: String?) -> Color? {
+        guard let s = Palette.normalise(s) else { return nil }
+        switch s {
+        case "red": return .red
+        case "orange": return .orange
+        case "yellow": return .yellow
+        case "green": return .green
+        case "mint": return .mint
+        case "teal": return .teal
+        case "cyan": return .cyan
+        case "blue": return .blue
+        case "indigo": return .indigo
+        case "purple": return .purple
+        case "pink": return .pink
+        case "brown": return .brown
+        case "gray": return Color(.systemGray)
+        default:
+            guard s.hasPrefix("#"), let v = UInt32(s.dropFirst(), radix: 16) else { return nil }
+            return Color(red: Double((v >> 16) & 0xff) / 255, green: Double((v >> 8) & 0xff) / 255, blue: Double(v & 0xff) / 255)
+        }
+    }
+
+    /// A block's colour: its own (the planner resolves task, activity and category colours), else its kind's.
+    static func color(for block: PlannedBlock) -> Color { named(block.color) ?? color(for: block.kind) }
+
+    /// A task's colour: its own, its project's, its subject's or its type's override, else the type's default.
+    static func color(for item: WorkItem, in state: AppState) -> Color {
+        let parent = item.parentId.flatMap { id in state.items.first { $0.id == id } }
+        return named(Palette.color(for: item, parent: parent, colors: state.prefs.colors)) ?? color(for: item.kind)
+    }
+
     static func symbol(for kind: BlockKind) -> String {
         switch kind {
         case .work: return "pencil.line"
@@ -262,7 +294,7 @@ struct DayStrip: View {
                 ForEach(blocks.filter { $0.end > start && $0.start < end && $0.kind != .breakTime }) { b in
                     let x = max(0, b.start.timeIntervalSince(start)) / span
                     let w = min(b.end, end).timeIntervalSince(max(b.start, start)) / span
-                    Rectangle().fill(Theme.color(for: b.kind))
+                    Rectangle().fill(Theme.color(for: b))
                         .frame(width: max(1, g.size.width * w))
                         .offset(x: g.size.width * x)
                 }
@@ -315,5 +347,80 @@ struct TokenMeter: View {
         }
         .padding(.horizontal, 2)
         .animation(.easeOut(duration: 0.3), value: f)
+    }
+}
+
+/// Pick a colour: Auto (nil) or one of the palette's. Stored as the palette name.
+struct ColorChoice: View {
+    var label: String = "Colour"
+    @Binding var color: String?
+    /// What Auto looks like here (the type's or category's default).
+    var automatic: Color = .secondary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    swatch(nil, automatic, "Auto")
+                    ForEach(Palette.names, id: \.self) { n in swatch(n, Theme.named(n) ?? .gray, n.capitalized) }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func swatch(_ name: String?, _ fill: Color, _ title: String) -> some View {
+        let on = Palette.normalise(color) == name || (name == nil && color == nil)
+        return Button { color = name } label: {
+            ZStack {
+                Circle().fill(fill).frame(width: 28, height: 28)
+                if name == nil { Text("A").font(.caption.weight(.bold)).foregroundStyle(.white) }
+                if on { Circle().stroke(Color.primary, lineWidth: 2).frame(width: 34, height: 34) }
+            }
+            .frame(width: 36, height: 36)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// Settings → Colours: the category defaults the planner paints blocks with.
+struct ColorSettings: View {
+    @Environment(AppModel.self) private var model
+
+    private let rows: [(String, String, BlockKind?)] = [
+        ("study", "Study blocks", .work), ("break", "Breaks", .breakTime), ("free", "Free time", .free),
+        ("school", "School", .commitment), ("extracurricular", "Activities", .commitment), ("job", "Work shifts", .commitment),
+        ("family", "Family", .commitment), ("event", "Events", .event), ("meal", "Meals", .meal),
+        ("routine", "Routines & travel", .routine), ("wind_down", "Wind-down", .windDown), ("sleep", "Sleep", .sleep),
+    ]
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(rows, id: \.0) { key, title, kind in
+                    ColorChoice(label: title, color: binding(key), automatic: kind.map { Theme.color(for: $0) } ?? .secondary)
+                }
+            } footer: {
+                Text("A task's or activity's own colour wins over these. Or tell the Inbox: “make free time green and maths blue”.")
+            }
+            let subjects = model.state.prefs.colors.keys.filter { $0.hasPrefix("subject:") || $0.hasPrefix("task:") }.sorted()
+            if !subjects.isEmpty {
+                Section("Subjects & Types") {
+                    ForEach(subjects, id: \.self) { k in
+                        ColorChoice(label: k.split(separator: ":").last.map { String($0).capitalized } ?? k, color: binding(k))
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Colours")
+    }
+
+    private func binding(_ key: String) -> Binding<String?> {
+        Binding(get: { model.state.prefs.colors[key] },
+                set: { model.state.prefs.colors[key] = $0; model.replan() })
     }
 }

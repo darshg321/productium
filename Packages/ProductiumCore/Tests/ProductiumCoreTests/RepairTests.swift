@@ -161,7 +161,7 @@ final class RepairTests: XCTestCase {
         XCTAssertEqual(r.actions.map(\.type), ["", "add_task", "fly_to_moon"], "names are fixed where they can be")
         var s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
                           moods: [], screen: [], prefs: Preferences())
-        XCTAssertEqual(DumpApplier.apply(r, to: &s, now: Fx.mon(12), calendar: Fx.cal), ["Added Read ch 3"], "the rest are skipped")
+        XCTAssertEqual(DumpApplier.apply(r, to: &s, now: Fx.mon(12), calendar: Fx.cal).changes, ["Added Read ch 3"], "the rest are skipped")
         let names: [String: DumpActionType] = [
             "add_task": .addTask, "addTask": .addTask, "create-task": .addTask, "new_assignment": .addTask,
             "mark_done": .completeTask, "finish_task": .completeTask, "remove_task": .deleteTask, "reschedule_task": .updateTask,

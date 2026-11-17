@@ -153,7 +153,7 @@ struct TaskRow: View {
                 } label: {
                     Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
                         .font(.title2)
-                        .foregroundStyle(item.isDone ? Color.green : Theme.color(for: item.kind))
+                        .foregroundStyle(item.isDone ? Color.green : Theme.color(for: item, in: model.state))
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(item.isDone ? "Mark \(item.title) not done" : "Mark \(item.title) done")
@@ -165,7 +165,7 @@ struct TaskRow: View {
                         .lineLimit(2)
                     HStack(spacing: 6) {
                         Label(item.kind.title, systemImage: item.kind.symbol).labelStyle(.iconOnly)
-                            .foregroundStyle(Theme.color(for: item.kind))
+                            .foregroundStyle(Theme.color(for: item, in: model.state))
                         Text(subtitle(steps: steps))
                             .foregroundStyle(!item.isDone && item.due < now ? Theme.alert : .secondary)
                     }
@@ -304,6 +304,10 @@ struct TaskEditor: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section {
+                    ColorChoice(color: $item.color, automatic: Theme.color(for: item.kind))
                 }
 
                 Section {

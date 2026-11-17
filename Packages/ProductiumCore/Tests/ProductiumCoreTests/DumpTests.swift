@@ -61,7 +61,8 @@ final class DumpTests: XCTestCase {
         XCTAssertEqual(s.items[0].due, Fx.mon(23, 59, plusDays: 8))
         XCTAssertEqual(s.items[0].completedMinutes, 30)
         XCTAssertTrue(s.items[1].isDone)
-        XCTAssertEqual(log.count, 3)
+        XCTAssertEqual(log.changes.count, 3)
+        XCTAssertEqual(log.problems.count, 1, "the missing task is reported, not silently dropped")
     }
 
     func testLogsRoutinesScreenTimeSettings() {

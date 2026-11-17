@@ -99,12 +99,14 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
     public var source: ItemSource
     public var externalId: String?
     public var createdAt: Date
+    /// The student's colour for this task (a `Palette` name or #RRGGBB). Nil = by type/subject.
+    public var color: String?
 
     public init(id: UUID = UUID(), title: String, kind: TaskKind, subject: String? = nil, due: Date,
                 estimateMinutes: Int? = nil, completedMinutes: Int = 0, importance: Int = 3,
                 difficulty: Int = 2, isDone: Bool = false, doneAt: Date? = nil, parentId: UUID? = nil,
                 topics: [String] = [], notes: String? = nil, source: ItemSource = .manual,
-                externalId: String? = nil, createdAt: Date = Date()) {
+                externalId: String? = nil, createdAt: Date = Date(), color: String? = nil) {
         self.id = id
         self.title = title
         self.kind = kind
@@ -122,6 +124,7 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
         self.source = source
         self.externalId = externalId
         self.createdAt = createdAt
+        self.color = color
     }
 }
 
@@ -144,10 +147,11 @@ public struct Commitment: Codable, Identifiable, Hashable, Sendable {
     public var bufferMinutes: Int
     public var validFrom: Date?
     public var validUntil: Date?
+    public var color: String?
 
     public init(id: UUID = UUID(), title: String, kind: CommitmentKind, weekdays: Set<Int>,
                 start: TimeOfDay, end: TimeOfDay, bufferMinutes: Int = 10,
-                validFrom: Date? = nil, validUntil: Date? = nil) {
+                validFrom: Date? = nil, validUntil: Date? = nil, color: String? = nil) {
         self.id = id
         self.title = title
         self.kind = kind
@@ -157,6 +161,7 @@ public struct Commitment: Codable, Identifiable, Hashable, Sendable {
         self.bufferMinutes = bufferMinutes
         self.validFrom = validFrom
         self.validUntil = validUntil
+        self.color = color
     }
 }
 
@@ -167,13 +172,15 @@ public struct FixedEvent: Codable, Identifiable, Hashable, Sendable {
     public var start: Date
     public var end: Date
     public var kind: CommitmentKind
+    public var color: String?
 
-    public init(id: String, title: String, start: Date, end: Date, kind: CommitmentKind = .other) {
+    public init(id: String, title: String, start: Date, end: Date, kind: CommitmentKind = .other, color: String? = nil) {
         self.id = id
         self.title = title
         self.start = start
         self.end = max(end, start)
         self.kind = kind
+        self.color = color
     }
 }
 
@@ -219,6 +226,9 @@ public struct Preferences: Codable, Hashable, Sendable {
     public var autoWake: Bool
     /// How much the phone interrupts, and with what.
     public var nudges: NudgeSettings
+    /// Colour overrides by category (see `Palette.categories`): "free" → "green", "school" → "teal",
+    /// "subject:math" → "blue". A task's or activity's own colour beats these.
+    public var colors: [String: String]
 
     public init(sleepNeedMinutes: Int = 540, sleepFloorMinutes: Int = 420,
                 schoolDayWake: TimeOfDay = TimeOfDay(6, 45), freeDayWake: TimeOfDay = TimeOfDay(8, 30),
@@ -228,7 +238,8 @@ public struct Preferences: Codable, Hashable, Sendable {
                 minFreeMinutesSchoolDay: Int = 60, minFreeMinutesFreeDay: Int = 180,
                 allowSleepTradeoffs: Bool = true, chronotype: Chronotype = .late,
                 schoolDays: Set<Int> = [2, 3, 4, 5, 6], screenTimeGoalMinutes: Int = 45,
-                interests: [String] = [], autoWake: Bool = true, nudges: NudgeSettings = NudgeSettings()) {
+                interests: [String] = [], autoWake: Bool = true, nudges: NudgeSettings = NudgeSettings(),
+                colors: [String: String] = [:]) {
         self.sleepNeedMinutes = sleepNeedMinutes
         self.sleepFloorMinutes = sleepFloorMinutes
         self.schoolDayWake = schoolDayWake
@@ -249,6 +260,7 @@ public struct Preferences: Codable, Hashable, Sendable {
         self.interests = interests
         self.autoWake = autoWake
         self.nudges = nudges
+        self.colors = colors
     }
 
     /// Missing keys fall back to defaults, so adding a preference in an update keeps the rest.
@@ -276,6 +288,7 @@ public struct Preferences: Codable, Hashable, Sendable {
         interests = v(.interests, d.interests)
         autoWake = v(.autoWake, d.autoWake)
         nudges = v(.nudges, d.nudges)
+        colors = v(.colors, d.colors)
     }
 }
 
@@ -371,9 +384,14 @@ public struct PlannedBlock: Codable, Identifiable, Hashable, Sendable {
     public var borrowsSleep: Bool
     /// True when this block sits in time that would normally be free time.
     public var usesFreeTime: Bool
+    /// Resolved colour (task/activity/category override), nil = the kind's default.
+    public var color: String?
+    /// The activity (commitment) or one-off event this block came from.
+    public var sourceId: String?
 
     public init(id: UUID = UUID(), kind: BlockKind, start: Date, end: Date, title: String,
-                itemId: UUID? = nil, hint: String? = nil, borrowsSleep: Bool = false, usesFreeTime: Bool = false) {
+                itemId: UUID? = nil, hint: String? = nil, borrowsSleep: Bool = false, usesFreeTime: Bool = false,
+                color: String? = nil, sourceId: String? = nil) {
         self.id = id
         self.kind = kind
         self.start = start
@@ -383,6 +401,8 @@ public struct PlannedBlock: Codable, Identifiable, Hashable, Sendable {
         self.hint = hint
         self.borrowsSleep = borrowsSleep
         self.usesFreeTime = usesFreeTime
+        self.color = color
+        self.sourceId = sourceId
     }
 
     public var minutes: Int { Int(end.timeIntervalSince(start) / 60) }

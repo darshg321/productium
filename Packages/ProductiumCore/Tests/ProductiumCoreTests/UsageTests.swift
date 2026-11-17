@@ -76,10 +76,38 @@ final class UsageTests: XCTestCase {
         XCTAssertNil(plain["output_config"])
     }
 
-    /// The box runs on every message, so its fixed cost is watched. ~3.5 characters per token.
+    /// The box runs on every message, so its fixed cost is watched. ~3.5 characters per token. Only output
+    /// tokens count against the budget and this part is identical every time (prompt-cached), so it may be
+    /// as long as the app guide needs, within reason.
     func testBoxPromptStaysSmall() throws {
         let schema = try JSONEncoder().encode(Schemas.dump)
         let tokens = (Prompts.dump().count + schema.count) / 7 * 2
-        XCTAssertLessThan(tokens, 1300, "box system prompt + schema is ~\(tokens) tokens")
+        XCTAssertLessThan(tokens, 2600, "box system prompt + schema is ~\(tokens) tokens")
+    }
+}
+
+final class CallLogTests: XCTestCase {
+    func testCallKeepsTheWholeExchangeButNotImageBytes() {
+        let req = AIRequest(system: "sys", messages: [AIMessage(role: "user", content: "hello", images: [AIImage(mediaType: "image/png", base64: String(repeating: "A", count: 5000))])],
+                            schema: Schemas.dump, maxTokens: 900, cacheTTL: 60)
+        var c = AICall(request: req, feature: .box, at: Fx.mon(12))
+        c.status = 200
+        c.response = #"{"content":[{"type":"text","text":"hi"}],"model":"claude-sonnet-5-5"}"#
+        XCTAssertEqual(c.messages, [AICall.Message(role: "user", content: "hello", images: 1)])
+        XCTAssertTrue(c.schema?.contains("split_activity") == true)
+        XCTAssertTrue(c.ok)
+        XCTAssertTrue(c.prettyResponse.contains("\n"))
+        XCTAssertFalse(c.transcript.contains("AAAA"))
+        XCTAssertTrue(c.transcript.contains("=== SYSTEM ===\nsys") && c.transcript.contains("(+1 image)"))
+
+        var log = AICallLog()
+        for i in 0..<(AICallLog.maxCalls + 5) { var x = c; x.id = UUID(); x.at = Fx.mon(12).addingTimeInterval(Double(i)); log.append(x, now: Fx.mon(13)) }
+        XCTAssertEqual(log.calls.count, AICallLog.maxCalls)
+        var old = c; old.at = Fx.mon(12, plusDays: -20)
+        log.append(old, now: Fx.mon(13))
+        XCTAssertFalse(log.calls.contains { $0.at == old.at }, "two weeks at most")
+        var big = c; big.response = String(repeating: "x", count: AICallLog.maxResponseChars + 10)
+        log.append(big, now: Fx.mon(13))
+        XCTAssertTrue(log.calls.last!.response.hasSuffix("(cut)"))
     }
 }

@@ -179,7 +179,7 @@ struct DaySummaryCard: View {
                     ForEach(due) { i in
                         NavigationLink { TaskDetailView(itemId: i.id) } label: {
                             HStack(spacing: 10) {
-                                IconTile(symbol: i.kind.symbol, color: Theme.color(for: i.kind), size: 24)
+                                IconTile(symbol: i.kind.symbol, color: Theme.color(for: i, in: model.state), size: 24)
                                 Text(i.title).font(.subheadline).foregroundStyle(.primary).lineLimit(1)
                                 Spacer()
                                 Text(i.due.hm).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
@@ -302,7 +302,7 @@ struct TimelineBlock: View {
     let original: PlannedBlock
 
     var body: some View {
-        let color = Theme.color(for: block.kind)
+        let color = Theme.color(for: block)
         let tall = block.minutes >= 25
         let content = HStack(alignment: .top, spacing: 6) {
             RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 3)
@@ -414,7 +414,7 @@ struct DueRow: View {
         let short = (model.state.plan.shortfalls[item.id] ?? 0) > 0
         NavigationLink { TaskDetailView(itemId: item.id) } label: {
             HStack(spacing: 12) {
-                IconTile(symbol: item.kind.symbol, color: Theme.color(for: item.kind))
+                IconTile(symbol: item.kind.symbol, color: Theme.color(for: item, in: model.state))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title).lineLimit(2)
                     Text(steps.isEmpty ? "Due \(item.due.relativeDay) at \(item.due.hm)"
