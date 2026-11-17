@@ -98,6 +98,18 @@ public struct ProposalBook: Codable, Hashable, Sendable {
         proposals.filter { $0.status == .approved || $0.status == .reverted }.sorted { ($0.decidedAt ?? $0.at) > ($1.decidedAt ?? $1.at) }
     }
 
+    /// One line for the box and the weekly note: what the student has approved lately, and what's waiting.
+    public func changeSummary(now: Date, limit: Int = 4) -> String? {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        let approved = history.filter { $0.status == .approved }.prefix(limit)
+            .map { "\($0.title) (\(f.string(from: $0.decidedAt ?? $0.at)))" }
+        var parts: [String] = []
+        if !approved.isEmpty { parts.append("Changes the student approved: " + approved.joined(separator: "; ")) }
+        if !pending.isEmpty { parts.append("\(pending.count) suggested change\(pending.count == 1 ? "" : "s") waiting for their approval") }
+        return parts.isEmpty ? nil : parts.joined(separator: ". ")
+    }
+
     public mutating func expire(now: Date) {
         for i in proposals.indices where proposals[i].status == .pending
             && now.timeIntervalSince(proposals[i].at) > Self.expiryDays * 86400 {

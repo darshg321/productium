@@ -30,9 +30,12 @@ public struct DumpContextInput: Sendable {
     public var plan: Plan
     public var warnings: [PlanWarning]
     public var aboutMe: AboutMe
+    public var changes: String?
 
     public init(now: Date, calendar: Calendar, state: DumpState, calendarEvents: [FixedEvent] = [],
-                todaySegments: [Segment] = [], plan: Plan = .empty, warnings: [PlanWarning] = [], aboutMe: AboutMe = .empty) {
+                todaySegments: [Segment] = [], plan: Plan = .empty, warnings: [PlanWarning] = [], aboutMe: AboutMe = .empty,
+                changes: String? = nil) {
+        self.changes = changes
         self.aboutMe = aboutMe
         self.now = now
         self.calendar = calendar
@@ -114,8 +117,9 @@ extension Prompts {
                  + "\(p.freeDayWake.label), autoWake \(p.autoWake), windDownMinutes \(p.windDownMinutes), allowSleepTradeoffs "
                  + "\(p.allowSleepTradeoffs), schoolDays \(days(p.schoolDays)), nudgeLevel \(p.nudges.level.rawValue), alarms "
                  + "\(p.nudges.alarms), interests \(p.interests.isEmpty ? "none" : p.interests.joined(separator: ", "))")
-        l.append("Beliefs (set by knob when they state one): " + s.beliefs.items.map { "\($0.id) \($0.display) \($0.confidence.title.lowercased())" }
-            .joined(separator: ", "))
+        l.append("Beliefs (set by knob when they state one): " + (Beliefs.routines(s.routines) + s.beliefs.items)
+            .map { "\($0.id) \($0.display) \($0.confidence.title.lowercased())" }.joined(separator: ", "))
+        if let changes = c.changes { l.append(changes) }
         if !p.colors.isEmpty {
             l.append("Colours set: " + p.colors.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))
         }

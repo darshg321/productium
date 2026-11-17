@@ -843,7 +843,9 @@ final class AppModel {
         defer { busy.remove("review") }
         let summary = Insights.summarize(dayTotals(last: 7), learned: state.learned)
         let ctx = Prompts.context(now: Date(), items: state.items, plan: state.plan, summary: summary, moods: state.moods,
-                                  taper: state.taper, learned: state.learned, calendar: cal, aboutMe: aboutMe)
+                                  taper: state.taper, learned: state.learned, calendar: cal, aboutMe: aboutMe,
+                                  beliefs: state.beliefs.summary(routines: state.routines),
+                                  changes: state.proposals.changeSummary(now: Date()))
         guard let r = try? await ClaudeClient.shared.structured(feature: .review, system: Prompts.weeklyReview(), user: ctx,
                                                                schema: Schemas.weeklyReview, as: WeeklyReview.self,
                                                                maxTokens: 500, accept: { !$0.headline.isEmpty }) else { return }
@@ -865,7 +867,8 @@ final class AppModel {
         let today = cal.startOfDay(for: now)
         let context = Prompts.dumpContext(DumpContextInput(now: now, calendar: cal, state: state.dumpState,
                                                            calendarEvents: shownEvents, todaySegments: segments(on: today),
-                                                           plan: state.plan, warnings: activeWarnings, aboutMe: aboutMe))
+                                                           plan: state.plan, warnings: activeWarnings, aboutMe: aboutMe,
+                                                           changes: state.proposals.changeSummary(now: now)))
         let convo = state.conversation
         let content = ConversationPolicy.userContent(for: convo, text: text, images: images, fullContext: context)
         let req = convo.request(system: Prompts.dump(), tool: ConversationPolicy.tool(schema: Schemas.dump),

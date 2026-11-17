@@ -351,7 +351,7 @@ public enum Prompts {
         Write the student's weekly review from the data. Headline under 10 words. wins: 1-2 short sentences on what \
         went well. suggestions: at most 2 small, specific, research-backed tweaks (sleep regularity, spacing, \
         self-testing, shorter blocks, planning less if follow-through is low, phone out of the room). Be \
-        self-compassionate about misses. You can't change settings: the app learns them.
+        self-compassionate about misses. You can't change settings: the app learns them, and any change to how it behaves is a suggestion the student approves.
         """
     }
 
@@ -382,10 +382,12 @@ public enum Prompts {
 
     public static func context(now: Date, items: [WorkItem], plan: Plan, summary: PeriodSummary?, moods: [MoodEntry],
                                taper: ScreenTaper, learned: LearnedModel, calendar cal: Calendar,
-                               aboutMe: AboutMe = .empty) -> String {
+                               aboutMe: AboutMe = .empty, beliefs: String? = nil, changes: String? = nil) -> String {
         let df = DateFormatter.local("EEE MMM d HH:mm", cal)
         var lines = ["Now: \(df.string(from: now))"]
         if !aboutMe.isEmpty { lines.append(aboutMe.promptText) }
+        if let beliefs { lines.append(beliefs) }
+        if let changes { lines.append(changes) }
         let open = items.filter { !$0.isDone && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(8)
         if !open.isEmpty {
             lines.append("Coming up: " + open.map { "\($0.title) (\(df.string(from: $0.due)), \($0.completedMinutes)/\($0.estimateMinutes)m)" }

@@ -96,3 +96,23 @@ final class ProposalTests: XCTestCase {
         XCTAssertEqual(s.beliefs.groups.last?.createdBy, "reflection")
     }
 }
+
+final class KnowledgeSummaryTests: XCTestCase {
+    func testBoxAndWeeklyNoteSeeBeliefsAndApprovedChanges() {
+        var book = ProposalBook()
+        let run = ReflectionRun(at: Fx.mon(9), note: "n", model: "opus")
+        var s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
+                          moods: [], screen: [], prefs: Preferences())
+        book.submit(run, [BehaviourProposal(runId: run.id, change: .knob(key: "planner.maxBlockMinutes", to: 45), from: "55", to: "45",
+                                            reason: "r", evidence: [], model: "opus", at: Fx.mon(9))], state: s, now: Fx.mon(9))
+        XCTAssertEqual(book.changeSummary(now: Fx.mon(10)), "1 suggested change waiting for their approval")
+        _ = book.approve(book.pending[0].id, in: &s, now: Fx.mon(10), calendar: Fx.cal)
+        let line = book.changeSummary(now: Fx.mon(11))
+        XCTAssertTrue(line?.hasPrefix("Changes the student approved:") == true, line ?? "nil")
+        let box = Prompts.dumpContext(DumpContextInput(now: Fx.mon(12), calendar: Fx.cal, state: s, changes: line))
+        XCTAssertTrue(box.contains("routines.to_school 20 min assumed") && box.contains("Changes the student approved"))
+        let weekly = Prompts.context(now: Fx.mon(12), items: [], plan: .empty, summary: nil, moods: [], taper: ScreenTaper(),
+                                     learned: LearnedModel(), calendar: Fx.cal, beliefs: s.beliefs.summary(routines: s.routines), changes: line)
+        XCTAssertTrue(weekly.contains("What the app believes:") && weekly.contains("Changes the student approved"))
+    }
+}
