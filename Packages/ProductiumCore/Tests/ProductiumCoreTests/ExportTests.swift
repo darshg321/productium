@@ -43,6 +43,8 @@ final class ExportTests: XCTestCase {
         s.archive.archive(c, now: now)
         s.focus = FocusSession(blockId: UUID(), itemId: nil, title: "Essay", startedAt: now, plannedEnd: now.addingTimeInterval(2400))
         s.learnedDays = ["2026-11-16"]
+        s.gaps = GapLog(asked: [AskedGap(start: now, end: now.addingTimeInterval(3000), askedAt: now, answer: "gym", activity: "exercise")])
+        s.appOpens = [now]
         s.dismissed = ["a warning"]
         s.usage.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(output: 90)))
         s.snoozed = [UUID(): now.addingTimeInterval(600)]

@@ -72,6 +72,7 @@ final class AppModel {
     func foreground() {
         // Productium came forward: whatever scrolling session was open has ended.
         Friction.ended(by: .productium)
+        state.appOpens.append(Date())
         if let link = SharedConfig.defaults.string(forKey: SharedConfig.Key.pendingDeepLink) {
             deepLink = link
             SharedConfig.defaults.removeObject(forKey: SharedConfig.Key.pendingDeepLink)
@@ -129,6 +130,8 @@ final class AppModel {
         let plan = state.plan
         let now = Date()
         let nudges = nudgeInput(now: now)
+        dueGap = GapDetector.due(gapInput(now: now), calendar: cal)
+        if state.integrations.notifications { scheduleGapQuestion(now: now) }
         if state.integrations.notifications {
             NotificationService.schedule(NudgePlanner.plan(nudges))
             NotificationService.scheduleHousekeeping(freeTier: Signature.isFreeTier, expiry: signatureExpiry)
@@ -463,6 +466,54 @@ final class AppModel {
         }
         if state.learnedDays.count > 60 {
             state.learnedDays = Set(state.learnedDays.sorted().suffix(30))
+        }
+    }
+
+    // MARK: - "What were you doing?"
+
+    /// The gap to ask about on Today right now (a small banner), if any.
+    var dueGap: MysteryGap?
+
+    func gapInput(now: Date = Date()) -> GapInput {
+        let log = Friction.log
+        let phone = state.appOpens + log.sessions.flatMap { [$0.openedAt] + ($0.endedAt.map { [$0] } ?? []) }
+            + state.markers.filter { $0.source != .geofence && $0.source != .inferred }.map(\.at)
+        return GapInput(now: now, day: dayInputs(cal.startOfDay(for: now)), scrolling: log.sessions, phoneUse: phone,
+                        plan: state.plan, focusing: state.focus != nil, log: state.gaps)
+    }
+
+    /// One pending question at most: 45 minutes into the stretch going on now, if nothing else
+    /// happens first (any new check-in reschedules it).
+    private func scheduleGapQuestion(now: Date) {
+        state.gaps.asked.removeAll { $0.answer == nil && $0.askedAt > now }
+        guard let next = GapDetector.nextAsk(gapInput(now: now), calendar: cal) else {
+            NotificationService.cancelGapQuestion()
+            return
+        }
+        NotificationService.scheduleGapQuestion(GapDetector.question(next.gap, calendar: cal), start: next.gap.start,
+                                                end: next.gap.end, at: next.at)
+        state.gaps.asked.append(AskedGap(start: next.gap.start, end: next.gap.end, askedAt: next.at))
+    }
+
+    /// The answer becomes a marker pair for that window: known phrases on the device, anything else
+    /// through the box with the window attached.
+    func answerGap(_ text: String, gap: MysteryGap) async {
+        let known = state.gaps.asked
+        var asked = state.gaps.asked.first { abs($0.start.timeIntervalSince(gap.start)) < 60 }
+            ?? AskedGap(start: gap.start, end: gap.end, askedAt: Date())
+        state.gaps.asked.removeAll { $0.id == asked.id }
+        asked.end = gap.end
+        asked.answer = text
+        if let markers = GapAnswer.markers(for: text, gap: gap, commitments: state.commitments, known: known, calendar: cal) {
+            state.markers += markers
+            asked.activity = markers.first?.activity
+            state.gaps.asked.append(asked)
+            dueGap = nil
+            replan()
+        } else {
+            state.gaps.asked.append(asked)
+            dueGap = nil
+            await dump(GapAnswer.boxText(text, gap: gap, calendar: cal))
         }
     }
 

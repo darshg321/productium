@@ -72,7 +72,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 model.deepLink = link
             }
         }
-        if let text = (response as? UNTextInputNotificationResponse)?.userText, !text.isEmpty {
+        guard let text = (response as? UNTextInputNotificationResponse)?.userText, !text.isEmpty else { return }
+        if action == "gap.reply", let s = info["start"] as? Double, let e = info["end"] as? Double {
+            await AppModel.shared.answerGap(text, gap: MysteryGap(start: Date(timeIntervalSince1970: s),
+                                                                  end: min(Date(), Date(timeIntervalSince1970: e)), ongoing: false))
+        } else {
             await AppModel.shared.dump(text)
         }
     }

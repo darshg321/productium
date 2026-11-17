@@ -25,6 +25,7 @@ struct TodayView: View {
                             .foregroundStyle(.secondary)
                             .textCase(.uppercase)
                         DumpBox()
+                        if let g = model.dueGap { GapQuestionCard(gap: g) }
                         NowCard(now: now, showGap: $showGap)
                         Attention(now: now)
                         SectionTitle("Rest of Today")
@@ -255,6 +256,35 @@ struct TurnView: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showCall = nil } } }
             }
         }
+    }
+}
+
+/// "What were you doing 3:10–4:05?" while it's fresh. One line fills in the day.
+struct GapQuestionCard: View {
+    @Environment(AppModel.self) private var model
+    let gap: MysteryGap
+    @State private var answer = ""
+
+    var body: some View {
+        Card {
+            CardHeader(title: GapDetector.question(gap, calendar: .current), symbol: "questionmark.circle.fill", color: .purple)
+            HStack {
+                TextField("e.g. gym, homework, with friends", text: $answer)
+                    .submitLabel(.send)
+                    .onSubmit(send)
+                Button("Send", action: send).disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button { model.dueGap = nil } label: { Image(systemName: "xmark") }
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Not now")
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private func send() {
+        let t = answer
+        answer = ""
+        Task { await model.answerGap(t, gap: gap) }
     }
 }
 

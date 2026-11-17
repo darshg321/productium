@@ -98,6 +98,10 @@ public struct AppState: Codable, Sendable {
     public var focus: FocusSession?
     @SortedSet public var learnedDays: Set<String> = []
     @SortedSet public var dismissed: Set<String> = []
+    /// "What were you doing?" questions and their answers.
+    public var gaps = GapLog()
+    /// When Productium was opened (phone-use evidence for gaps and sleep).
+    public var appOpens: [Date] = []
     public var usage = UsageLedger()              // AI token meter
     public var snoozed: [UUID: Date] = [:]        // block → when its snooze reminder fires
 
@@ -158,6 +162,8 @@ public struct AppState: Codable, Sendable {
         focus = v(.focus, d.focus)
         learnedDays = v(.learnedDays, d.learnedDays)
         dismissed = v(.dismissed, d.dismissed)
+        gaps = v(.gaps, d.gaps)
+        appOpens = v(.appOpens, d.appOpens)
         usage = v(.usage, d.usage)
         snoozed = v(.snoozed, d.snoozed)
     }

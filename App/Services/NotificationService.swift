@@ -17,6 +17,7 @@ enum NotificationService {
     static let markerCategory = "MARKER"
     static let scrollCategory = "SCROLL"
     static let deadlineCategory = "DEADLINE"
+    static let gapCategory = "GAP"
 
     static func register() {
         let done = UNNotificationAction(identifier: "done", title: "Done ✓", options: [])
@@ -53,7 +54,11 @@ enum NotificationService {
         let workNow = UNNotificationAction(identifier: "item.focus", title: "Work on It Now", options: [.foreground])
         let deadline = UNNotificationCategory(identifier: deadlineCategory, actions: [workNow, finished], intentIdentifiers: [], options: [])
 
-        UNUserNotificationCenter.current().setNotificationCategories([block, start, lead, checkIn, marker, scroll, deadline])
+        let gapReply = UNTextInputNotificationAction(identifier: "gap.reply", title: "Answer", options: [],
+                                                     textInputButtonTitle: "Send", textInputPlaceholder: "e.g. gym, homework, with friends")
+        let gap = UNNotificationCategory(identifier: gapCategory, actions: [gapReply], intentIdentifiers: [], options: [])
+
+        UNUserNotificationCenter.current().setNotificationCategories([block, start, lead, checkIn, marker, scroll, deadline, gap])
     }
 
     static func requestAuthorization() async -> Bool {
@@ -178,6 +183,21 @@ enum NotificationService {
         let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
         center.add(UNNotificationRequest(identifier: id, content: content,
                                          trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
+    }
+
+    /// "What were you doing 3:10–4:05?", answered in one line from the lock screen.
+    static func scheduleGapQuestion(_ question: String, start: Date, end: Date, at date: Date) {
+        cancelGapQuestion()
+        let c = UNMutableNotificationContent()
+        c.title = question
+        c.body = "One line is enough. It fills in your day."
+        c.categoryIdentifier = gapCategory
+        c.userInfo = ["kind": "gap", "start": start.timeIntervalSince1970, "end": end.timeIntervalSince1970]
+        add(UNUserNotificationCenter.current(), "gap.next", c, at: date)
+    }
+
+    static func cancelGapQuestion() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["gap.next"])
     }
 
     static func notify(_ title: String, _ body: String, deeplink: String? = nil, blockId: UUID? = nil) {
