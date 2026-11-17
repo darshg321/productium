@@ -135,10 +135,10 @@ struct ClaudeSettings: View {
             }
 
             Section {
-                LabeledContent("Model", value: "Sonnet")
-                LabeledContent("Effort", value: "Low")
+                LabeledContent("Inbox, screenshots, reads", value: AIFeature.box.route.title)
+                LabeledContent("Reflection (rare, needs your OK)", value: AIFeature.reflection.route.title)
             } header: { Text("Model") } footer: {
-                Text("Everything uses Sonnet at low effort. On this app's own requests it wrote a little over half the tokens Haiku 5.5 did, because Haiku's thinking can't be turned off. Flashcards and short reads are made in small batches, only when you open a gap.")
+                Text("Everything uses Sonnet at low effort, except the rare reflection, which uses Opus at medium effort and only ever proposes changes for you to approve. On this app's own requests it wrote a little over half the tokens Haiku 5.5 did, because Haiku's thinking can't be turned off. Flashcards and short reads are made in small batches, only when you open a gap.")
             }
         }
         .listStyle(.insetGrouped)

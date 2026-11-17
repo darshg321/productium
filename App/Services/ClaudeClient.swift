@@ -204,8 +204,11 @@ final class ClaudeClient {
     }
 
     func structured<T: Decodable>(feature: AIFeature, system: String, user: String, schema: JSONValue, as type: T.Type,
-                                  maxTokens: Int, cacheTTL: Int? = nil, model: String = AIModel.sonnet, effort: String? = nil,
+                                  maxTokens: Int, cacheTTL: Int? = nil, model: String? = nil, effort: String? = nil,
                                   accept: @escaping (T) -> Bool = { _ in true }) async throws -> T {
+        let route = feature.route
+        let model = model ?? route.model
+        let effort = effort ?? route.effort
         let req = AIRequest(model: model, system: system, messages: [AIMessage(role: "user", content: user)],
                             schema: schema, maxTokens: maxTokens, cacheTTL: cacheTTL, effort: effort)
         return try await send(req, feature: feature) { $0.decoded(T.self, schema: schema, accept: accept) }.value

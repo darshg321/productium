@@ -631,7 +631,7 @@ final class AppModel {
                                       items: state.items, trigger: trigger, question: question, calendar: cal)
         guard let out = try? await ClaudeClient.shared.structured(
             feature: .reflection, system: Reflection.system(), user: user, schema: Reflection.schema, as: Reflection.Output.self,
-            maxTokens: 1500, model: AIModel.opus, effort: "medium", accept: { !$0.note.isEmpty }) else { return }
+            maxTokens: 1500, accept: { !$0.note.isEmpty }) else { return }
         state.reflectionAt = now
         let run = ReflectionRun(at: now, note: out.note, model: AIModel.opus)
         let drafts = Reflection.drafts(out, runId: run.id, items: state.items, now: now, model: AIModel.opus, calendar: cal)
@@ -869,7 +869,8 @@ final class AppModel {
         let convo = state.conversation
         let content = ConversationPolicy.userContent(for: convo, text: text, images: images, fullContext: context)
         let req = convo.request(system: Prompts.dump(), tool: ConversationPolicy.tool(schema: Schemas.dump),
-                                userContent: content, maxTokens: 3000)
+                                userContent: content, maxTokens: 3000, model: AIFeature.box.route.model,
+                                effort: AIFeature.box.route.effort)
         do {
             let (result, res, tokens) = try await ClaudeClient.shared.send(req, feature: .box) { DumpResult.read($0) }
             undoSnapshot = state

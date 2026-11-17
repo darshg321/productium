@@ -104,3 +104,20 @@ final class CallLogTests: XCTestCase {
         XCTAssertEqual(log.calls[1].response.count, 200_000)
     }
 }
+
+final class RoutingTests: XCTestCase {
+    func testOnlyReflectionRunsOnOpus() {
+        for f in AIFeature.allCases where f != .reflection {
+            XCTAssertEqual(f.route, AIRoute(model: "sonnet", effort: "low"), "\(f)")
+        }
+        XCTAssertEqual(AIFeature.reflection.route, AIRoute(model: "opus", effort: "medium"))
+        XCTAssertEqual(AIFeature.reflection.title, "Opus · reflection")
+    }
+
+    func testEffortIsSentAsOutputConfig() throws {
+        let req = AIRequest(model: "opus", system: "s", messages: [AIMessage(role: "user", content: "hi")], schema: nil, maxTokens: 100,
+                            effort: AIFeature.reflection.route.effort)
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(req)) as! [String: Any]
+        XCTAssertEqual((json["output_config"] as? [String: Any])?["effort"] as? String, "medium")
+    }
+}

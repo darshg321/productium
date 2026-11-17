@@ -36,6 +36,26 @@ public enum AIFeature: String, Codable, CaseIterable, Sendable {
     }
 
     public var isBackground: Bool { self != .box }
+
+    /// Which model and effort a feature runs on. Everything is Sonnet at low effort except the rare,
+    /// approval-gated reflection (which also creates belief groups), which runs on Opus at medium.
+    public var route: AIRoute {
+        switch self {
+        case .reflection: return AIRoute(model: AIModel.opus, effort: "medium")
+        case .box, .flashcards, .reads, .breakdown, .review: return AIRoute(model: AIModel.sonnet, effort: "low")
+        }
+    }
+}
+
+public struct AIRoute: Hashable, Sendable {
+    public var model: String
+    public var effort: String
+    public init(model: String, effort: String) {
+        self.model = model
+        self.effort = effort
+    }
+
+    public var title: String { "\(model.capitalized) · \(effort) effort" }
 }
 
 public struct UsageRecord: Codable, Hashable, Sendable {
