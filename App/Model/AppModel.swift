@@ -495,6 +495,13 @@ final class AppModel {
         state.gaps.asked.append(AskedGap(start: next.gap.start, end: next.gap.end, askedAt: next.at))
     }
 
+    /// "Not now": counts as asked, so it isn't asked again.
+    func dismissGap(_ gap: MysteryGap) {
+        state.gaps.asked.append(AskedGap(start: gap.start, end: gap.end, askedAt: Date(), answer: ""))
+        dueGap = nil
+        save()
+    }
+
     /// The answer becomes a marker pair for that window: known phrases on the device, anything else
     /// through the box with the window attached.
     func answerGap(_ text: String, gap: MysteryGap) async {

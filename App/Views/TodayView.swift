@@ -273,7 +273,7 @@ struct GapQuestionCard: View {
                     .submitLabel(.send)
                     .onSubmit(send)
                 Button("Send", action: send).disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button { model.dueGap = nil } label: { Image(systemName: "xmark") }
+                Button { model.dismissGap(gap) } label: { Image(systemName: "xmark") }
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Not now")
             }
