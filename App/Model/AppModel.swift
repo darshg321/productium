@@ -41,13 +41,20 @@ final class AppModel {
         set { state.draft.text = newValue; save() }
     }
 
-    var draftImages: [(file: String, image: UIImage, ai: AIImage)] {
+    struct DraftImage: Identifiable {
+        let file: String
+        let image: UIImage
+        let ai: AIImage
+        var id: String { file }
+    }
+
+    var draftImages: [DraftImage] {
         state.draft.imageFiles.compactMap { file in
-            if let c = draftImageCache[file] { return (file, c.0, c.1) }
+            if let c = draftImageCache[file] { return DraftImage(file: file, image: c.0, ai: c.1) }
             guard let data = try? Data(contentsOf: Self.draftsURL.appendingPathComponent(file)), let img = UIImage(data: data) else { return nil }
             let ai = AIImage(mediaType: "image/jpeg", base64: data.base64EncodedString())
             draftImageCache[file] = (img, ai)
-            return (file, img, ai)
+            return DraftImage(file: file, image: img, ai: ai)
         }
     }
 

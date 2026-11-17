@@ -63,7 +63,7 @@ struct DumpBox: View {
             if !images.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(images, id: \.file) { pic in
+                        ForEach(images) { pic in
                             Image(uiImage: pic.image).resizable().scaledToFill()
                                 .frame(width: 54, height: 72)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
