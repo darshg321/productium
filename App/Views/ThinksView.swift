@@ -9,10 +9,64 @@ struct ThinksView: View {
         List {
             Section {
                 NavigationLink { ChangesView() } label: {
-                    LabeledContent("Changes", value: "\(model.state.proposals.pending.count) waiting")
+                    LabeledContent("Changes", value: "\(model.state.changes.applied.count)")
                 }
             } footer: {
-                Text("What the weekly reflection suggested about how Productium behaves. Nothing changes until you approve it.")
+                Text("What Productium adjusted about how it plans and reminds you, from how your weeks went. Each one can be undone.")
+            }
+            let live = model.state.situations.filter { $0.isActive(on: Date(), calendar: .current) }
+            if !live.isEmpty {
+                Section {
+                    ForEach(live) { s in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.said.isEmpty ? s.scope.text(.current) : s.said)
+                            Text(([s.scope.text(.current)] + s.effects.map(\.summary)).joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .swipeActions { Button("Remove", role: .destructive) { model.removeSituation(s.id) } }
+                    }
+                } header: { Text("Situations") } footer: {
+                    Text("Days that differ from your usual week. Swipe to remove one.")
+                }
+            }
+            if !model.state.alarmRules.isEmpty {
+                Section {
+                    ForEach(model.state.alarmRules) { r in
+                        Toggle(isOn: Binding(get: { r.enabled }, set: { model.setAlarmRule(r.id, enabled: $0) })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(r.summary(items: model.state.items, calendar: .current))
+                                Text(r.source == .reflection ? "Added by Productium" : "You asked for it").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .swipeActions { Button("Remove", role: .destructive) { model.removeAlarmRule(r.id) } }
+                    }
+                } header: { Text("Alarms You or Productium Added") } footer: {
+                    Text("These are on top of the wake-up, bedtime and leave-by alarms. Ask the box to move or remove any of them.")
+                }
+            }
+            let reminders = model.state.policy.intentions.filter { $0.byStudent == true }
+            if !reminders.isEmpty {
+                Section("Your Reminders") {
+                    ForEach(reminders) { r in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(r.text)
+                            Text(r.trigger == IntentionNudge.Trigger.arriveHome ? "When you get home" : (r.time?.label ?? "")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .swipeActions { Button("Remove", role: .destructive) { model.removeReminder(r.id) } }
+                    }
+                }
+            }
+            if !model.state.gapNotes.isEmpty {
+                Section {
+                    ForEach(model.state.gapNotes.reversed()) { g in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(g.wanted)
+                            if !g.said.isEmpty { Text("“\(g.said)”").font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                } header: { Text("Things I Couldn't Do Yet") } footer: {
+                    Text("What you asked for that Productium has no way to do. It's in the backup, and it's the list for the next version.")
+                }
             }
             Section {
                 ForEach(Beliefs.routines(model.state.routines)) { BeliefRow(belief: $0) }
@@ -116,49 +170,65 @@ struct ChangesView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let book = model.state.proposals
+        let log = model.state.changes
         List {
             Section {
-                if book.pending.isEmpty { Text("Nothing waiting.").foregroundStyle(.secondary) }
-                ForEach(book.pending) { ProposalRow(proposal: $0) }
-            } header: { Text("Waiting for You") } footer: {
-                Text("Suggestions come from a weekly reflection by Claude Opus. It runs rarely (it's the costliest AI call), and only when something is worth a look.")
+                if log.history.isEmpty { Text("Nothing yet.").foregroundStyle(.secondary) }
+                ForEach(log.history) { c in ChangeRow(change: c) }
+            } footer: {
+                Text("Changed with the weekly note, in small steps, at most once a week each. Undo anything here; Productium won't try it again for a month.")
             }
             Section {
-                if model.busy.contains("reflection") {
+                if model.busy.contains("review") {
                     HStack(spacing: 10) { ProgressView(); Text("Thinking about your week…").foregroundStyle(.secondary) }
                 } else {
                     Button("Why Do I Keep Putting Things Off?") {
-                        Task { await model.reflectIfDue(asked: "Why do I keep putting things off?") }
+                        Task { await model.insightPass(asked: "Why do I keep putting things off?") }
                     }
                 }
-            }
-            Section("Changed") {
-                if book.history.isEmpty { Text("Nothing yet.").foregroundStyle(.secondary) }
-                ForEach(book.history) { p in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(p.title).font(.subheadline)
-                        Text("\(p.status == .reverted ? "Reverted" : "Approved") \((p.decidedAt ?? p.at).formatted(date: .abbreviated, time: .omitted)) · \(p.reason)")
-                            .font(.caption).foregroundStyle(.secondary)
-                        if p.status == .approved {
-                            Button("Revert") { model.revertProposal(p.id) }.font(.subheadline).buttonStyle(.borderless)
+            } footer: { Text("The answer appears in the Weekly Note on Review.") }
+            if !log.pinned.isEmpty {
+                Section("Never Changed") {
+                    ForEach(log.pinned.sorted(), id: \.self) { k in
+                        HStack {
+                            Text(Registry.knob(k)?.note.capitalizedFirstLetter ?? k)
+                            Spacer()
+                            Button("Allow") { model.unpin(k) }.font(.subheadline).buttonStyle(.borderless)
                         }
                     }
                 }
             }
-            if !book.pinned.isEmpty {
-                Section("Never Changed") {
-                    ForEach(book.pinned.sorted(), id: \.self) { k in
-                        Text(Registry.knob(k)?.note.capitalizedFirstLetter ?? k)
-                    }
-                }
-            }
-            if book.isPaused(now: Date()), let until = book.pausedUntil {
-                Section { Text("Suggestions are paused until \(until.formatted(date: .abbreviated, time: .omitted)), since you turned down the last two.") }
-            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Changes")
+    }
+}
+
+struct ChangeRow: View {
+    @Environment(AppModel.self) private var model
+    let change: LoggedChange
+
+    private var statusLine: String {
+        switch change.status {
+        case .applied: return "Changed \(change.at.formatted(date: .abbreviated, time: .omitted))"
+        case .reverted: return "Undone \((change.revertedAt ?? change.at).formatted(date: .abbreviated, time: .omitted))"
+        case .declined: return "You turned this down"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(change.title).font(.subheadline)
+            Text("\(statusLine) · \(change.reason)").font(.caption).foregroundStyle(.secondary)
+            if change.status == .applied {
+                HStack(spacing: 16) {
+                    Button("Revert") { model.revertChange(change.id) }
+                    Button("Never Change This") { model.neverChange(change.id) }.foregroundStyle(.secondary)
+                }
+                .font(.subheadline)
+                .buttonStyle(.borderless)
+            }
+        }
     }
 }
 

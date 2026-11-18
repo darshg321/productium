@@ -4,11 +4,15 @@ public struct DumpApp: Codable, Hashable, Sendable {
     public var name: String
     public var minutes: Int
     public var category: String?
+    public var pickups: Int?
+    public var notifications: Int?
 
-    public init(name: String, minutes: Int, category: String? = nil) {
+    public init(name: String, minutes: Int, category: String? = nil, pickups: Int? = nil, notifications: Int? = nil) {
         self.name = name
         self.minutes = minutes
         self.category = category
+        self.pickups = pickups
+        self.notifications = notifications
     }
 }
 
@@ -200,6 +204,17 @@ public struct DumpState: Sendable {
     public var beliefs: Beliefs
     public var scrollingApps: [String: Bool] = [:]
     public var screenAverages: [ScreenDay] = []
+    /// Conditional overrides (v1.1 A). The insight pass adds them through `ChangeLog`; the box through `SituationRules.admit`.
+    public var situations: [Situation] = []
+    public var dayRules = DayRuleBook()
+    public var gapNotes: [GapNote] = []
+    public var alarmRules: [AlarmRule] = []
+    public var metricTiles: [MetricID] = MetricID.defaultTiles
+    /// Read-only here: whether the device has allowed alarms (the box can't grant that).
+    public var alarmsAllowed = false
+    public var rewardSettings = RewardSettings()
+    /// Read-only: imported calendar events (a situation can't free their time).
+    public var calendarEvents: [FixedEvent] = []
 
     public init(items: [WorkItem], commitments: [Commitment], exceptions: [DayException], oneOffs: [FixedEvent],
                 markers: [TimelineEvent], routines: [Routine], moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences,
@@ -264,6 +279,27 @@ struct DumpFields: Codable, Hashable, Sendable {
     var dateLabelShown: String?
     var partial: Bool?
     var apps: [DumpApp]?
+    var pickups: Int?
+    var firstPickup: String?
+    var notifications: Int?
+    var said: String?
+    var scope: String?
+    var effects: [String]?
+    var expires: String?
+    var wanted: String?
+    var name: String?
+    var rule: String?
+    var anchor: String?
+    var dates: [String]?
+    var remove: Bool?
+    var label: String?
+    var time: String?
+    var task: String?
+    var alarmKind: String?
+    var text: String?
+    var trigger: String?
+    var alarm: Int?
+    var blockAlarm: Int?
 
     var id: String?
 
@@ -279,13 +315,26 @@ struct DumpFields: Codable, Hashable, Sendable {
             "weekdays": Schemas.arr(i), "start": s, "end": s, "bufferMinutes": i, "validFrom": s, "validUntil": s,
             "parts": Schemas.arr(part), "periods": Schemas.arr(part), "date": s, "cancelled": b, "wake": s, "activity": s, "category": s, "phase": s,
             "at": s, "minutes": i, "enabled": b, "mood": i, "energy": i, "note": s, "screenMinutes": i,
-            "period": s, "dateLabelShown": s, "partial": b,
-            "apps": Schemas.arr(Schemas.obj(["name": s, "minutes": i, "category": s], required: ["name", "minutes"])),
+            "period": s, "dateLabelShown": s, "partial": b, "pickups": i, "firstPickup": s, "notifications": i,
+            "said": s, "scope": s, "effects": Schemas.arr(s), "expires": s, "wanted": s, "name": s, "rule": s, "anchor": s,
+            "dates": Schemas.arr(s), "remove": b, "label": s, "time": s, "task": s, "alarmKind": s, "text": s, "trigger": s, "alarm": i, "blockAlarm": i,
+            "apps": Schemas.arr(Schemas.obj(["name": s, "minutes": i, "category": s, "pickups": i, "notifications": i], required: ["name", "minutes"])),
         ], required: [])
     }()
 
     static func read(_ op: DumpOp) -> DumpFields {
-        let raw: JSONValue = .object(op.fields ?? [:])
+        // The model sometimes writes a rule or effect as a real object instead of a JSON string: turn it into the string.
+        func text(_ v: JSONValue) -> JSONValue {
+            switch v {
+            case .object, .array: return (try? JSONEncoder().encode(v)).flatMap { String(data: $0, encoding: .utf8) }.map(JSONValue.string) ?? v
+            default: return v
+            }
+        }
+        var fields = op.fields ?? [:]
+        for k in ["scope", "rule"] { if let v = fields[k] { fields[k] = text(v) } }
+        if case .array(let es)? = fields["effects"] { fields["effects"] = .array(es.map(text)) }
+        else if let e = fields["effects"] { fields["effects"] = .array([text(e)]) }
+        let raw: JSONValue = .object(fields)
         var f = (try? StructuredRepair.coerce(raw, to: schema).decode(DumpFields.self)) ?? DumpFields()
         f.id = op.id.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
         return f

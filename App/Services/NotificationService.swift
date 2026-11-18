@@ -88,8 +88,7 @@ enum NotificationService {
         default: break
         }
         if let b = n.blockId { c.threadIdentifier = b.uuidString }
-        // Time Sensitive needs a paid-account entitlement; without it iOS treats it as .active.
-        c.interruptionLevel = n.urgent ? .timeSensitive : .active
+        c.interruptionLevel = .active
         c.relevanceScore = n.urgent ? 0.9 : 0.4
         return c
     }
@@ -103,7 +102,7 @@ enum NotificationService {
         c.categoryIdentifier = startCategory
         c.userInfo = ["blockId": blockId.uuidString, "deeplink": "productium://now", "kind": "snooze"]
         c.threadIdentifier = blockId.uuidString
-        c.interruptionLevel = .timeSensitive
+        c.interruptionLevel = .active
         add(center, "snooze.\(blockId)", c, at: Date().addingTimeInterval(Double(minutes) * 60))
     }
 
@@ -141,10 +140,10 @@ enum NotificationService {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: (0..<4).map { "scroll.\($0)" })
     }
 
-    static func scheduleHousekeeping(freeTier: Bool, expiry: Date?) {
+    static func scheduleHousekeeping(expiry: Date?) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: ["house.screenshot", "house.expiry"])
-        if freeTier {
+        do {
             let c = UNMutableNotificationContent()
             c.title = "Screen Time screenshot"
             c.body = "Settings → Screen Time → See All Activity → Week. Screenshot it and drop it in the box."

@@ -20,10 +20,8 @@ public struct Integrations: Codable, Hashable, Sendable {
     public var health = false
     public var calendarImport = false
     public var calendarExport = false
-    public var screenTime = false
     public var location = false
     public var alarms = false
-    public var liveActivities = true
     public var notifications = false
     public var motion = false
     public var healthNeedsRequest = false
@@ -34,8 +32,8 @@ public struct Integrations: Codable, Hashable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         func v(_ k: CodingKeys, _ d: Bool) -> Bool { (try? c.decodeIfPresent(Bool.self, forKey: k)) ?? d }
         health = v(.health, false); calendarImport = v(.calendarImport, false); calendarExport = v(.calendarExport, false)
-        screenTime = v(.screenTime, false); location = v(.location, false); alarms = v(.alarms, false)
-        liveActivities = v(.liveActivities, true); notifications = v(.notifications, false); motion = v(.motion, false)
+        location = v(.location, false); alarms = v(.alarms, false)
+        notifications = v(.notifications, false); motion = v(.motion, false)
         healthNeedsRequest = v(.healthNeedsRequest, false)
     }
 }
@@ -78,6 +76,8 @@ public struct AppState: Codable, Sendable {
     public var markers: [TimelineEvent] = []
     public var outcomes: [BlockOutcome] = []
     public var planHistory: [String: [PlannedBlock]] = [:]
+    /// Planned bedtime per night, keyed by the morning (for "in bed on time").
+    public var plannedBedtimes: [String: Date] = [:]
     public var progress: [ProgressEntry] = []
     public var moods: [MoodEntry] = []
     public var health: [HealthDay] = []
@@ -88,6 +88,14 @@ public struct AppState: Codable, Sendable {
     public var events: [FixedEvent] = []
     public var oneOffs: [FixedEvent] = []
     public var exceptions: [DayException] = []
+    /// v1.1 A.2: overrides on the planner's inputs over any span of days.
+    public var situations: [Situation] = []
+    /// Named day sequences (A/B rotations) and labels ("exam-week", "no-school").
+    public var dayRules = DayRuleBook()
+    /// Things the student said that the app couldn't act on (v1.2's backlog).
+    public var gapNotes: [GapNote] = []
+    /// Alarms added, moved or switched off by the box or the insight pass (`AlarmRules`).
+    public var alarmRules: [AlarmRule] = []
     public var learned = LearnedModel()
     public var beliefs = Beliefs()
     public var policy = BehaviourPolicy()
@@ -106,8 +114,15 @@ public struct AppState: Codable, Sendable {
     public var draft = Draft()
     public var focus: FocusSession?
     @SortedSet public var dismissed: Set<String> = []
-    public var proposals = ProposalBook()
-    public var reflectionAt: Date?
+    /// What the insight pass changed (v1.0 key `proposals`).
+    public var changes = ChangeLog()
+    /// When the insight pass last ran (v1.0 key `reflectionAt`).
+    public var insightAt: Date?
+    /// Celebrations (v1.1 F): what was shown and how much the student wants.
+    public var rewards = RewardLog()
+    /// Which Life Metrics tiles show on Review, in order (G3).
+    public var metricTiles: [MetricID] = MetricID.defaultTiles
+    public var rewardSettings = RewardSettings()
     public var gaps = GapLog()
     public var appOpens: [Date] = []
     public var usage = UsageLedger()
@@ -115,9 +130,18 @@ public struct AppState: Codable, Sendable {
 
     public var dumpState: DumpState {
         get {
-            DumpState(items: items, commitments: commitments, exceptions: exceptions, oneOffs: oneOffs, markers: markers,
+            var ds = DumpState(items: items, commitments: commitments, exceptions: exceptions, oneOffs: oneOffs, markers: markers,
                       routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy,
                       progress: progress, beliefs: beliefs, scrollingApps: scrollingApps, screenAverages: screenAverages)
+            ds.situations = situations
+            ds.dayRules = dayRules
+            ds.gapNotes = gapNotes
+            ds.alarmRules = alarmRules
+            ds.metricTiles = metricTiles
+            ds.alarmsAllowed = integrations.alarms
+            ds.rewardSettings = rewardSettings
+            ds.calendarEvents = events
+            return ds
         }
         set {
             items = newValue.items
@@ -134,6 +158,12 @@ public struct AppState: Codable, Sendable {
             beliefs = newValue.beliefs
             scrollingApps = newValue.scrollingApps
             screenAverages = newValue.screenAverages
+            situations = newValue.situations
+            dayRules = newValue.dayRules
+            gapNotes = newValue.gapNotes
+            alarmRules = newValue.alarmRules
+            metricTiles = newValue.metricTiles
+            rewardSettings = newValue.rewardSettings
         }
     }
 
@@ -152,6 +182,7 @@ public struct AppState: Codable, Sendable {
         markers = v(.markers, d.markers)
         outcomes = v(.outcomes, d.outcomes)
         planHistory = v(.planHistory, d.planHistory)
+        plannedBedtimes = v(.plannedBedtimes, d.plannedBedtimes)
         progress = v(.progress, d.progress)
         moods = v(.moods, d.moods)
         health = v(.health, d.health)
@@ -162,6 +193,10 @@ public struct AppState: Codable, Sendable {
         events = v(.events, d.events)
         oneOffs = v(.oneOffs, d.oneOffs)
         exceptions = v(.exceptions, d.exceptions)
+        situations = v(.situations, d.situations)
+        dayRules = v(.dayRules, d.dayRules)
+        gapNotes = v(.gapNotes, d.gapNotes)
+        alarmRules = v(.alarmRules, d.alarmRules)
         learned = v(.learned, d.learned)
         beliefs = v(.beliefs, d.beliefs)
         policy = v(.policy, d.policy)
@@ -180,13 +215,21 @@ public struct AppState: Codable, Sendable {
         draft = v(.draft, d.draft)
         focus = v(.focus, d.focus)
         dismissed = v(.dismissed, d.dismissed)
-        proposals = v(.proposals, d.proposals)
-        reflectionAt = v(.reflectionAt, d.reflectionAt)
+        let legacy = try? decoder.container(keyedBy: LegacyKeys.self)
+        changes = (try? c.decodeIfPresent(ChangeLog.self, forKey: .changes)).flatMap { $0 }
+            ?? (try? legacy?.decodeIfPresent(ChangeLog.self, forKey: .proposals)).flatMap { $0 } ?? d.changes
+        insightAt = (try? c.decodeIfPresent(Date.self, forKey: .insightAt)).flatMap { $0 }
+            ?? (try? legacy?.decodeIfPresent(Date.self, forKey: .reflectionAt)).flatMap { $0 }
+        rewards = v(.rewards, d.rewards)
+        metricTiles = v(.metricTiles, d.metricTiles)
+        rewardSettings = v(.rewardSettings, d.rewardSettings)
         gaps = v(.gaps, d.gaps)
         appOpens = v(.appOpens, d.appOpens)
         usage = v(.usage, d.usage)
         snoozed = v(.snoozed, d.snoozed)
     }
+
+    enum LegacyKeys: String, CodingKey { case proposals, reflectionAt }
 
     public mutating func prune(now: Date) {
         snoozed = snoozed.filter { $0.value > now.addingTimeInterval(-3600) }

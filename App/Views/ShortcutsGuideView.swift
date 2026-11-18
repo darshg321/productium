@@ -32,11 +32,7 @@ struct ShortcutsGuideView: View {
             Section {
                 ForEach(Recipe.scrolling) { r in NavigationLink { RecipeView(recipe: r) } label: { RecipeRow(recipe: r) } }
             } header: { Text("Less Scrolling") } footer: {
-                #if FREE_TIER
-                Text("This build can't use Screen Time, so these do its job. Set up the first two together.")
-                #else
-                Text("Screen Time already pauses apps in this build. These add a pause outside focus blocks and a count you can see.")
-                #endif
+                Text("These pause the apps you scroll and count your minutes. Set up the first two together.")
             }
 
             Section("Starting Work") {
@@ -230,6 +226,24 @@ struct Recipe: Identifiable {
                     "Tap **Done**.",
                 ]),
                ]),
+        Recipe(id: "grayapps", title: "Grayscale While You Scroll", trigger: "When those apps are opened and closed",
+               symbol: "circle.lefthalf.filled.inverse", color: .gray,
+               why: "In trials, turning the screen gray cut daily screen time (a 2023 randomised field experiment, about 110 people, found a drop right away that outlasted time limits). It's the reverse of the pause: the apps stay, they just feel less rewarding. This turns gray on while one of those apps is open and back off when you leave.",
+               parts: [
+                Part(title: "Once", steps: [
+                    "In **Settings**, go to **Accessibility** → **Display & Text Size** → **Color Filters**, choose **Grayscale**, then turn Color Filters back off.",
+                ]),
+                Part(title: "When the apps open", steps: start("Tap **App**.") + [
+                    "Tap **Choose**, tick the apps you lose time in, then **Done**. Leave **Is Opened** ticked and untick **Is Closed**.",
+                    runNow, blank,
+                    "Add **Set Color Filters** and leave it on **Turn On**. Tap **Done**.",
+                ]),
+                Part(title: "When the apps close", steps: start("Tap **App**.") + [
+                    "Choose the same apps. Untick **Is Opened** and tick **Is Closed**.",
+                    runNow, blank,
+                    "Add **Set Color Filters** and tap **Turn** to switch it to **Turn Off**. Tap **Done**.",
+                ], note: "“Is Closed” can miss going Home, so the screen may stay gray until you open and leave an app again. Triple-click the side button can turn Color Filters off at any time if you add it under Accessibility Shortcut."),
+               ]),
     ]
 
     static let starting: [Recipe] = [
@@ -253,7 +267,7 @@ struct Recipe: Identifiable {
                ]),
         Recipe(id: "notify", title: "Let Reminders Through Focus", trigger: "Settings, once",
                symbol: "bell.badge.fill", color: .red,
-               why: "Block starts, leave-by warnings and bedtime can be silenced by a Focus.\(Signature.isFreeTier ? " This build can't mark them Time Sensitive (that needs a paid developer account)," : "") so allow Productium in the Focuses you use.",
+               why: "Block starts, leave-by warnings and bedtime can be silenced by a Focus, so allow Productium in the Focuses you use.",
                parts: [
                 Part(title: "For each Focus you use", steps: [
                     "Open **Settings** → **Focus** and tap the Focus (e.g. Sleep, Personal).",

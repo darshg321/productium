@@ -1,5 +1,4 @@
 import SwiftUI
-import FamilyControls
 import UniformTypeIdentifiers
 import Charts
 import ProductiumCore
@@ -48,6 +47,7 @@ struct SettingsView: View {
             Section {
                 row("Connections", "link", .green, nil) { ConnectionSettings() }
                 row("Places", "location.fill", .blue, model.state.integrations.location ? "On" : "Off") { PlacesSettings() }
+                row("Celebrations", "party.popper.fill", .pink, model.state.rewardSettings.level.title) { CelebrationSettings() }
                 row("What Productium Thinks", "brain.head.profile", .orange, nil) { ThinksView() }
                 row("About You", "person.text.rectangle.fill", .teal, nil) { AboutYouView() }
             }
@@ -133,10 +133,9 @@ struct ClaudeSettings: View {
             }
 
             Section {
-                LabeledContent("Inbox, screenshots, reads", value: AIFeature.box.route.title)
-                LabeledContent("Reflection (rare, needs your OK)", value: AIFeature.reflection.route.title)
+                LabeledContent("Everything", value: AIFeature.box.route.title)
             } header: { Text("Model") } footer: {
-                Text("Everything uses Sonnet at low effort, except the rare reflection, which uses Opus at medium effort and only ever proposes changes for you to approve. On this app's own requests it wrote a little over half the tokens Haiku 5.5 did, because Haiku's thinking can't be turned off. Flashcards and short reads are made in small batches, only when you open a gap.")
+                Text("The Inbox, screenshots, reads and the weekly note all use Sonnet at low effort. On this app's own requests it wrote a little over half the tokens Haiku 5.5 did, because Haiku's thinking can't be turned off. Flashcards and short reads are made in small batches, only when you open a gap.")
             }
         }
         .listStyle(.insetGrouped)
@@ -397,16 +396,8 @@ struct StudySettings: View {
 
 struct ScreenTimeSettings: View {
     @Environment(AppModel.self) private var model
-    @State private var showPicker = false
-    @State private var selection = FamilyActivitySelection()
-
     var body: some View {
-        @Bindable var m = model
         List {
-            #if FREE_TIER
-            Section {
-                Text("Blocking and measuring apps uses Apple's Screen Time API, which needs a paid developer account. This build was signed with a free one.")
-            }
             Section {
                 ForEach(Recipe.scrolling) { r in NavigationLink { RecipeView(recipe: r) } label: { RecipeRow(recipe: r) } }
             } header: { Text("Add a Pause Instead") } footer: {
@@ -425,36 +416,6 @@ struct ScreenTimeSettings: View {
                     Text("“App is closed” can miss going Home or locking the phone, so a session with no clear end counts as your usual length (marked estimated), never the whole evening.")
                 }
             }
-            #else
-            Section {
-                Toggle("Measure & Limit Apps", isOn: Binding(get: { model.state.integrations.screenTime }, set: { on in
-                    Task {
-                        if on { m.state.integrations.screenTime = await ScreenTimeService.shared.requestAuthorization() }
-                        else { m.state.integrations.screenTime = false; ScreenTimeService.shared.disable() }
-                        model.replan()
-                    }
-                }))
-                if model.state.integrations.screenTime {
-                    Button("Choose Distracting Apps & Sites") {
-                        selection = ScreenTimeService.shared.selection
-                        showPicker = true
-                    }
-                }
-            } footer: {
-                Text("First week: measuring only. Then the daily limit drops about 10% a week, held steady after a tough week, down to your goal. Apps also pause during focus blocks and wind-down.")
-            }
-            if model.state.integrations.screenTime {
-                Section {
-                    LabeledContent("Heading for", value: durationLabel(model.state.taper.goalMinutes))
-                    if let t = model.state.taper.targetMinutes {
-                        LabeledContent("Today's limit", value: durationLabel(t))
-                    }
-                    Toggle("Offer a Short Read When Blocked", isOn: Binding(
-                        get: { SharedConfig.defaults.bool(forKey: SharedConfig.Key.nudgeOnShield) },
-                        set: { SharedConfig.defaults.set($0, forKey: SharedConfig.Key.nudgeOnShield) }))
-                }
-            }
-            #endif
             Section {
                 NavigationLink { ScrollingAppsView() } label: {
                     LabeledContent("Scrolling Apps", value: "\(model.state.scrollingApps.values.filter { $0 }.count) on")
@@ -465,8 +426,6 @@ struct ScreenTimeSettings: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Screen Time")
-        .familyActivityPicker(isPresented: $showPicker, selection: $selection)
-        .onChange(of: selection) { _, s in ScreenTimeService.shared.selection = s; model.replan() }
         .onChange(of: model.state.prefs) { _, _ in model.replan() }
     }
 }
@@ -546,8 +505,14 @@ struct NudgeSettingsView: View {
                 Toggle(isOn: $m.state.prefs.nudges.scrollCheckIns) {
                     SettingsLabel(title: "Scrolling Check-ins", symbol: "hand.raised.fill", color: .purple)
                 }
+                Toggle(isOn: $m.state.prefs.nudges.movement) {
+                    SettingsLabel(title: "Stand-Up Breaks", symbol: "figure.walk", color: .green)
+                }
+                Toggle(isOn: $m.state.prefs.nudges.daylight) {
+                    SettingsLabel(title: "Morning Light", symbol: "sun.max.fill", color: .yellow)
+                }
             } footer: {
-                Text("“When you get home” needs Places. Scrolling check-ins come after “Go back anyway” in a pause: \(model.state.prefs.nudges.level.scrollCheckIns.map { "\($0)" }.joined(separator: ", ")) minutes in, and the next only comes if you answer Yes, so they stop on a locked phone.")
+                Text("“When you get home” needs Places. Scrolling check-ins come after “Go back anyway” in a pause: \(model.state.prefs.nudges.level.scrollCheckIns.map { "\($0)" }.joined(separator: ", ")) minutes in, and the next only comes if you answer Yes, so they stop on a locked phone. Stand-up breaks come after about 90 minutes of study; morning light only on days with nothing fixed.")
             }
 
             Section {
@@ -555,6 +520,7 @@ struct NudgeSettingsView: View {
                     Task {
                         let ok = v ? await AlarmService.requestAuthorization() : false
                         m.state.prefs.nudges.alarms = v && ok
+                        model.syncAlarms()
                         if v && !ok { model.toast = "Alarms aren't allowed. Settings → Productium → Alarms." }
                     }
                 })) {
@@ -581,9 +547,7 @@ struct NudgeSettingsView: View {
                         }
                     }
                 } header: { Text("Coming Up") } footer: {
-                    Text(Signature.isFreeTier
-                         ? "This build can't mark notifications Time Sensitive, so a Focus can hold them back. Settings → Focus → each Focus → Apps → Add Productium."
-                         : "Starts, leave-by and bedtime are Time Sensitive, so they get through most Focuses.")
+                    Text("A Focus can hold notifications back. Settings → Focus → each Focus → Apps → Add Productium.")
                 }
             }
         }
@@ -640,11 +604,8 @@ struct ConnectionSettings: View {
                     m.state.integrations.alarms = on ? await AlarmService.requestAuthorization() : false
                     model.replan()
                 }
-                #if !FREE_TIER
-                Toggle(isOn: $m.state.integrations.liveActivities) {
-                    SettingsLabel(title: "Live Activity", symbol: "platter.filled.top.iphone", color: .blue)
-                }
-                #endif
+            } footer: {
+                Text("Wake-Up Alarms: one real alarm each morning, set from your first class and your usual commute. Bedtime, leave-by and missed-start alarms are a separate switch in Nudges (“Alarms for the Important Ones”).")
             }
         }
         .listStyle(.insetGrouped)
@@ -861,7 +822,7 @@ struct AboutYouView: View {
             TextEditor(text: $text)
                 .font(.callout.monospaced())
                 .padding(.horizontal, 12)
-            Text("What Productium knows about you. Lines you write or change end in (you), and the AI never overwrites them. Stated lines come from what you tell the Inbox; Inferred and Patterns lines come from the weekly reflection.")
+            Text("What Productium knows about you. Lines you write or change end in (you), and the AI never overwrites them. Stated lines come from what you tell the Inbox; Inferred and Patterns lines come from the weekly note, and are listed under What Productium Thinks → Changes.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .padding(16)
@@ -901,7 +862,7 @@ struct InstallSettings: View {
             if let e = model.signatureExpiry {
                 Section { LabeledContent("Works Until", value: e.formatted(date: .abbreviated, time: .shortened)) }
             }
-            if Signature.isFreeTier || model.signatureExpiry != nil {
+            do {
             Section {
                 Text("Free signing lasts 7 days. SideStore re-signs it on your phone over Wi-Fi: open SideStore, connect LocalDevVPN, tap Refresh All.")
                 Text("To make it automatic, add a daily Shortcuts automation with SideStore's “Refresh All Apps” action.")
@@ -1008,5 +969,36 @@ struct ScienceView: View {
             .padding(.vertical, 4)
         }
         .navigationTitle("The science")
+    }
+}
+
+struct CelebrationSettings: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var m = model
+        List {
+            Section {
+                Picker("Celebrations", selection: $m.state.rewardSettings.level) {
+                    ForEach(CelebrationLevel.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                Toggle("Sound", isOn: $m.state.rewardSettings.sound)
+            } footer: {
+                Text("Full: a banner when you finish focus, a task or the day's plan, and a bigger one for milestones and personal bests. Subtle: a light tap only. Off: nothing. There are never points or streaks that can break, and nothing for just opening the app.")
+            }
+            let recent = model.state.rewards.moments.suffix(8).reversed()
+            if !recent.isEmpty {
+                Section("Lately") {
+                    ForEach(Array(recent.enumerated()), id: \.offset) { _, r in
+                        LabeledContent(r.title, value: r.at.formatted(.dateTime.month(.abbreviated).day()))
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Celebrations")
+        .onChange(of: model.state.rewardSettings) { _, _ in model.save() }
     }
 }

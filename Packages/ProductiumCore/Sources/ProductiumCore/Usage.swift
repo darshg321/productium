@@ -22,7 +22,7 @@ public struct TokenCount: Codable, Hashable, Sendable {
 }
 
 public enum AIFeature: String, Codable, CaseIterable, Sendable {
-    case box, flashcards, reads, breakdown, review, reflection
+    case box, flashcards, reads, breakdown, review
 
     public var title: String {
         switch self {
@@ -31,19 +31,18 @@ public enum AIFeature: String, Codable, CaseIterable, Sendable {
         case .reads: return "Short reads"
         case .breakdown: return "Project steps"
         case .review: return "Weekly note"
-        case .reflection: return "Opus · reflection"
         }
     }
 
     public var isBackground: Bool { self != .box }
 
-    /// Which model and effort a feature runs on. Everything is Sonnet at low effort except the rare,
-    /// approval-gated reflection (which also creates belief groups), which runs on Opus at medium.
-    public var route: AIRoute {
-        switch self {
-        case .reflection: return AIRoute(model: AIModel.opus, effort: "medium")
-        case .box, .flashcards, .reads, .breakdown, .review: return AIRoute(model: AIModel.sonnet, effort: "low")
-        }
+    /// Every feature runs on Sonnet at low effort (v1.1: the Opus reflection became part of the weekly note).
+    public var route: AIRoute { AIRoute(model: AIModel.sonnet, effort: "low") }
+
+    /// v1.0 logged the reflection as its own feature; it's the weekly note's insight pass now.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = raw == "reflection" ? .review : (AIFeature(rawValue: raw) ?? .box)
     }
 }
 

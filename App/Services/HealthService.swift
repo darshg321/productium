@@ -9,19 +9,27 @@ final class HealthService {
     var available: Bool { HKHealthStore.isHealthDataAvailable() }
 
     private var readTypes: Set<HKObjectType> {
-        [HKQuantityType(.stepCount), HKCategoryType(.sleepAnalysis), HKQuantityType(.timeInDaylight),
-         HKQuantityType(.restingHeartRate)]
+        var types: Set<HKObjectType> = [HKQuantityType(.stepCount), HKCategoryType(.sleepAnalysis), HKQuantityType(.timeInDaylight),
+                                        HKQuantityType(.restingHeartRate), HKQuantityType(.appleExerciseTime), HKObjectType.workoutType()]
+        if #available(iOS 18.0, *) { types.insert(HKObjectType.stateOfMindType()) }
+        return types
+    }
+
+    private var shareTypes: Set<HKSampleType> {
+        var types: Set<HKSampleType> = [HKCategoryType(.mindfulSession)]
+        if #available(iOS 18.0, *) { types.insert(HKObjectType.stateOfMindType()) }
+        return types
     }
 
     func requestAuthorization() async throws {
         guard available else { return }
-        try await store.requestAuthorization(toShare: [HKCategoryType(.mindfulSession)], read: readTypes)
+        try await store.requestAuthorization(toShare: shareTypes, read: readTypes)
     }
 
     /// True when iOS still has to ask. It says nothing about whether read access was granted.
     func requestNeeded() async -> Bool {
         guard available else { return false }
-        let status = try? await store.statusForAuthorizationRequest(toShare: [HKCategoryType(.mindfulSession)], read: readTypes)
+        let status = try? await store.statusForAuthorizationRequest(toShare: shareTypes, read: readTypes)
         return status == .shouldRequest
     }
 
@@ -34,14 +42,22 @@ final class HealthService {
         async let daylight = dailySum(.timeInDaylight, unit: .minute(), from: start, to: end, cal: cal)
         async let rhr = dailyAverage(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: start, to: end, cal: cal)
         async let nights = sleepNights(from: start, to: end, cal: cal)
-        let (s, d, r, sl) = await (steps, daylight, rhr, nights)
+        async let exercise = dailySum(.appleExerciseTime, unit: .minute(), from: start, to: end, cal: cal)
+        async let workouts = workoutMinutes(from: start, to: end, cal: cal)
+        var (s, d, r, sl) = await (steps, daylight, rhr, nights)
+        let (ex, wo) = await (exercise, workouts)
+        // No Health permission for steps? The phone's own pedometer has the last 7 days.
+        if s.isEmpty {
+            for (day, n) in await MotionService.shared.stepsByDay(back: min(n, 7), calendar: cal) { s[day] = Double(n) }
+        }
         var out: [HealthDay] = []
         var day = start
         while day < end {
             let night = sl[day]
             out.append(HealthDay(day: day, steps: s[day].map { Int($0) }, sleepMinutes: night?.minutes,
                                  bedtime: night?.bed, wake: night?.wake, daylightMinutes: d[day].map { Int($0) },
-                                 restingHeartRate: r[day]))
+                                 restingHeartRate: r[day], exerciseMinutes: ex[day].map { Int($0) },
+                                 workoutMinutes: wo[day].map { Int($0) }))
             day = cal.date(byAdding: .day, value: 1, to: day)!
         }
         return out
@@ -67,6 +83,41 @@ final class HealthService {
             if let v = value(stats) { out[cal.startOfDay(for: stats.startDate)] = v }
         }
         return out
+    }
+
+    /// Minutes of logged workouts per day.
+    private func workoutMinutes(from: Date, to: Date, cal: Calendar) async -> [Date: Double] {
+        let q = HKSampleQueryDescriptor(predicates: [.workout(HKQuery.predicateForSamples(withStart: from, end: to))],
+                                        sortDescriptors: [SortDescriptor(\.startDate)])
+        guard let ws = try? await q.result(for: store) else { return [:] }
+        var out: [Date: Double] = [:]
+        for w in ws { out[cal.startOfDay(for: w.startDate), default: 0] += w.duration / 60 }
+        return out
+    }
+
+    /// Moods logged elsewhere (an Apple Watch, the Health app) as 1-5, for the last `n` days. iOS 18+.
+    func stateOfMind(back n: Int) async -> [(Date, Int)] {
+        guard available, #available(iOS 18.0, *) else { return [] }
+        let start = Date().addingTimeInterval(-Double(n) * 86400)
+        let samples: [HKSample] = await withCheckedContinuation { c in
+            let q = HKSampleQuery(sampleType: HKObjectType.stateOfMindType(),
+                                  predicate: HKQuery.predicateForSamples(withStart: start, end: Date()), limit: HKObjectQueryNoLimit,
+                                  sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]) { _, results, _ in
+                c.resume(returning: results ?? [])
+            }
+            store.execute(q)
+        }
+        return samples.compactMap { $0 as? HKStateOfMind }.filter { $0.metadata?["productium"] == nil }
+            .map { ($0.startDate, Int((((($0.valence + 1) / 2) * 4) + 1).rounded())) }
+    }
+
+    /// Writes a mood logged in Productium to Health (valence -1...1). iOS 18+.
+    func logStateOfMind(_ mood: Int, at date: Date = Date()) {
+        guard available, #available(iOS 18.0, *) else { return }
+        let valence = Double(max(1, min(5, mood)) - 3) / 2
+        let s = HKStateOfMind(date: date, kind: .dailyMood, valence: valence, labels: [], associations: [],
+                              metadata: ["productium": true])
+        store.save(s) { _, _ in }
     }
 
     struct Night { var minutes: Int; var bed: Date; var wake: Date }

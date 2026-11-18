@@ -1,27 +1,13 @@
 #!/usr/bin/env bash
 # Get the CI-built app onto a USB-connected iPhone, from Linux.
 #
-#   ./scripts/install-on-iphone.sh --free          # free Apple ID: download the latest release's .ipa, sign with Impactor
-#   ./scripts/install-on-iphone.sh                 # paid account: download the signed dev .ipa and install it
+#   ./scripts/install-on-iphone.sh                 # download the latest release's .ipa, sign it with Impactor (free Apple ID)
 #   ./scripts/install-on-iphone.sh path/to/app.ipa # install an already-signed .ipa
 #
 # Uses the GitHub CLI (gh) to fetch artifacts and pymobiledevice3 (through uvx) to install.
 set -euo pipefail
 
-FREE=0
-[[ "${1:-}" == "--free" ]] && { FREE=1; shift; }
 IPA="${1:-}"
-
-fetch() {  # $1 = artifact name
-  command -v gh >/dev/null || { echo "install the GitHub CLI (gh), or pass an .ipa path"; exit 1; }
-  local dir run
-  dir=$(mktemp -d)
-  run=$(gh run list --workflow ios.yml --status success --limit 20 --json databaseId,event \
-        --jq 'map(select(.event=="workflow_dispatch"))[0].databaseId')
-  [[ -n "$run" && "$run" != "null" ]] || { echo "no successful manual ios run found"; exit 1; }
-  gh run download "$run" -n "$1" -D "$dir"
-  ls "$dir"/*.ipa | head -1
-}
 
 fetch_release() {  # the latest GitHub release's stable asset name
   command -v gh >/dev/null || { echo "install the GitHub CLI (gh), or pass an .ipa path"; exit 1; }
@@ -31,8 +17,8 @@ fetch_release() {  # the latest GitHub release's stable asset name
   echo "$dir/Productium-free.ipa"
 }
 
-if [[ $FREE == 1 ]]; then
-  IPA="${IPA:-$(fetch_release)}"
+if [[ -z "$IPA" ]]; then
+  IPA="$(fetch_release)"
   cat <<MSG
 Downloaded: $IPA
 
@@ -49,7 +35,6 @@ MSG
   exit 0
 fi
 
-IPA="${IPA:-$(fetch Productium-ipa)}"
 echo "==> device"
 uvx pymobiledevice3 usbmux list
 echo "==> installing $IPA"

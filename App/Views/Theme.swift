@@ -2,11 +2,13 @@ import SwiftUI
 import ProductiumCore
 
 enum Theme {
+    // Category colours come from `CategoryPalette` (core, J1): their lightness differs enough to tell apart in grayscale.
+    // Each category also has a symbol and a word wherever it's shown, and inferred time is hatched, never only paler.
     static let focus = Color.blue
-    static let free = Color.orange
+    static let free = Color.yellow
     static let sleep = Color.indigo
-    static let fixed = Color(.systemGray3)
-    static let screen = Color.purple
+    static let fixed = Color.gray
+    static let screen = Color.teal
     static let alert = Color.red
 
     static let background = Color(.systemGroupedBackground)
@@ -96,7 +98,6 @@ enum Theme {
         case .reads: return .brown
         case .breakdown: return .purple
         case .review: return .teal
-        case .reflection: return .indigo
         }
     }
 
@@ -107,7 +108,6 @@ enum Theme {
         case .reads: return "text.book.closed.fill"
         case .breakdown: return "list.bullet.indent"
         case .review: return "sparkles"
-        case .reflection: return "brain.head.profile"
         }
     }
 
@@ -216,6 +216,63 @@ struct Notice: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
             .padding(.horizontal, 16)
+    }
+}
+
+/// Confetti drawn with `Canvas`, no dependency. Reduce Motion gets nothing here (the banner fades in instead).
+struct ConfettiView: View {
+    private struct Piece { var x: Double; var speed: Double; var size: Double; var hue: Double; var spin: Double; var phase: Double }
+    @State private var start = Date()
+    private let pieces: [Piece] = (0..<70).map { i in
+        var g = SystemRandomNumberGenerator()
+        _ = i
+        return Piece(x: Double.random(in: 0...1, using: &g), speed: Double.random(in: 0.25...0.6, using: &g),
+                     size: Double.random(in: 5...9, using: &g), hue: Double.random(in: 0...1, using: &g),
+                     spin: Double.random(in: -4...4, using: &g), phase: Double.random(in: 0...0.4, using: &g))
+    }
+
+    var body: some View {
+        TimelineView(.animation) { tl in
+            let t = tl.date.timeIntervalSince(start)
+            Canvas { ctx, size in
+                guard t < 3.5 else { return }
+                for p in pieces {
+                    let life = t - p.phase
+                    guard life > 0 else { continue }
+                    let y = life * p.speed * size.height * 0.5 - 20
+                    let x = p.x * size.width + sin(life * 3 + p.spin) * 18
+                    var c = ctx
+                    c.translateBy(x: x, y: y)
+                    c.rotate(by: .radians(life * p.spin))
+                    c.opacity = max(0, 1 - life / 3.5)
+                    c.fill(Path(CGRect(x: 0, y: 0, width: p.size, height: p.size * 0.5)), with: .color(Color(hue: p.hue, saturation: 0.7, brightness: 0.95)))
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// A celebration that says what happened (from data). A symbol and words, so it reads the same in grayscale;
+/// no motion beyond the slide-in, so Reduce Motion needs nothing special.
+struct RewardBanner: View {
+    let moment: RewardMoment
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: moment.kind == .milestone || moment.kind == .personalBest ? "trophy.fill" : "checkmark.seal.fill")
+                .font(.title2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(moment.title).font(.headline)
+                if let d = moment.detail { Text(d).font(.subheadline).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        .padding(.horizontal, 16)
+        .accessibilityElement(children: .combine)
     }
 }
 

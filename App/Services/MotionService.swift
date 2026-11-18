@@ -43,4 +43,20 @@ final class MotionService {
         }
         return MotionSample(at: a.startDate, kind: kind, confidence: conf)
     }
+
+    /// Steps per day from the phone itself (no Health permission), up to 7 days back.
+    func stepsByDay(back n: Int, calendar cal: Calendar) async -> [Date: Int] {
+        guard CMPedometer.isStepCountingAvailable() else { return [:] }
+        let pedometer = CMPedometer()
+        let today = cal.startOfDay(for: Date())
+        var out: [Date: Int] = [:]
+        for i in 0..<max(1, min(n, 7)) {
+            guard let day = cal.date(byAdding: .day, value: -i, to: today), let next = cal.date(byAdding: .day, value: 1, to: day) else { continue }
+            let steps: Int? = await withCheckedContinuation { c in
+                pedometer.queryPedometerData(from: day, to: min(next, Date())) { data, _ in c.resume(returning: data?.numberOfSteps.intValue) }
+            }
+            if let steps { out[day] = steps }
+        }
+        return out
+    }
 }

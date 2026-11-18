@@ -61,9 +61,13 @@ extension Prompts {
         kind school: one "School" block whose periods (the timetable) are its periods field.
         - One-off events (e…): busy time on one date. Calendar events (cal) are read-only here.
         - Day changes (d…): one date differs from the usual week (no school, late start, sleep in).
+        - Alarms (r…): your own, with or without a task (a clock alarm, before a task is due, before its study blocks), and \
+        changes to Productium's own: move, switch off, or add on some days. A task can carry its own alarm fields.
+        - Situations (s…): overrides for any set of days, written as a day rule plus effects: A/B timetables, sick days, \
+        a visitor, a trip, exam week, a changed commute. Use one situation instead of many day changes.
         - The planner places study blocks, breaks, free time, dinner, wind-down and sleep itself, around the \
-        fixed things. You can't place or move a study block directly: change the task (due, estimate), the \
-        activities, a day change or a knob, and say so if they asked for a specific time.
+        fixed things. To study something at a specific time, use a situation with a place effect on that date; \
+        otherwise change the task (due, estimate), the activities, a day change or a knob.
         - Colours: every task, activity and event can have its own; categories have defaults (study blue, free \
         orange, sleep indigo, fixed time gray).
 
@@ -73,8 +77,7 @@ extension Prompts {
         - A school timetable (P1 Math, P2 English…) goes in the School activity's periods field, never as one-off \
         events. If periods already exist, upsert the activity by id with the full corrected list. Use the split \
         macro only to turn one activity into genuinely separate activities.
-        - "About the student" is what they've told the app before. When you need to know something about \
-        them, look there first; ask only if it isn't there.
+        - "About the student" is what they've told the app before; ask only if it isn't there.
         - Several things at once: one operation each, in order. Fix rather than duplicate. If unsure, do the \
         likely thing and say so.
         - Values the app learns (routines, beliefs, sleep need, wake times) change only when the student \
@@ -116,7 +119,8 @@ extension Prompts {
         l.append("Settings: sleepNeedMinutes \(p.sleepNeedMinutes), schoolDayWake \(p.schoolDayWake.label), freeDayWake "
                  + "\(p.freeDayWake.label), autoWake \(p.autoWake), windDownMinutes \(p.windDownMinutes), allowSleepTradeoffs "
                  + "\(p.allowSleepTradeoffs), schoolDays \(days(p.schoolDays)), nudgeLevel \(p.nudges.level.rawValue), alarms "
-                 + "\(p.nudges.alarms), interests \(p.interests.isEmpty ? "none" : p.interests.joined(separator: ", "))")
+                 + "\(p.nudges.alarms), wakeAlarms \(p.wakeAlarms), movementNudges \(p.nudges.movement), daylightNudges \(p.nudges.daylight), "
+                 + "celebrations \(s.rewardSettings.level.rawValue), interests \(p.interests.isEmpty ? "none" : p.interests.joined(separator: ", "))")
         l.append("Beliefs (set by knob when they state one): " + (Beliefs.routines(s.routines) + s.beliefs.items)
             .map { "\($0.id) \($0.display) \($0.confidence.title.lowercased())" }.joined(separator: ", "))
         if let changes = c.changes { l.append(changes) }
@@ -151,6 +155,33 @@ extension Prompts {
                                                      e.wake.map { "wake \($0.label)" }].compactMap { $0 }.joined(separator: ", ")
                 l.append("- id \(Ref.dayChange(e.id)) \(day.string(from: e.day)) \(what) \(how)\(e.note.map { " (\($0))" } ?? "")")
             }
+        }
+
+        if !s.alarmRules.isEmpty {
+            l.append("Alarms (r…; Productium's own wake/bedtime/leave/missedStart alarms aren't listed):")
+            for r in s.alarmRules {
+                l.append("- id \(Ref.alarm(r.id)) " + r.summary(items: s.items, calendar: cal) + (r.enabled ? "" : " (off)")
+                         + (r.expires.map { " until \(day.string(from: $0))" } ?? ""))
+            }
+        }
+        if !s.policy.intentions.isEmpty {
+            l.append("Reminders (n…):")
+            for r in s.policy.intentions {
+                l.append("- id \(Ref.reminder(r.id)) \"\(r.text)\" " + (r.trigger == IntentionNudge.Trigger.arriveHome ? "when they get home" : r.time.map { "at \($0.label)" } ?? "")
+                         + (r.weekdays.isEmpty ? "" : " on \(r.weekdays.map { wd[$0] }.joined(separator: "/"))"))
+            }
+        }
+        let live = s.situations.filter { $0.isActive(on: today, calendar: cal) }
+        if !live.isEmpty {
+            l.append("Situations:")
+            for x in live {
+                l.append("- id \(Ref.situation(x.id)) \"\(x.said)\" days: \(x.scope.text(cal)); " + x.effects.map(\.summary).joined(separator: "; ")
+                         + (x.expires.map { "; until \(day.string(from: $0))" } ?? ""))
+            }
+        }
+        if !s.dayRules.sequences.isEmpty || !s.dayRules.labels.isEmpty {
+            l.append("Day rules: " + (s.dayRules.sequences.map { "sequence \"\($0.name)\" counts \($0.rule.text(cal)) from \(day.string(from: $0.anchor))" }
+                + s.dayRules.labels.sorted { $0.key < $1.key }.map { "label \"\($0.key)\" (\($0.value.count) days)" }).joined(separator: "; "))
         }
 
         let events = s.oneOffs.filter { $0.end > now }.sorted { $0.start < $1.start }.prefix(20)

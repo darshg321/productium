@@ -1,40 +1,37 @@
 import SwiftUI
 import ProductiumCore
 
+/// One screen, no modes (v1.1 Part I): a week strip on top and the selected day as an agenda below. Study blocks are
+/// the only prominent rows; fixed time is one quiet row each; free time is a gap row; due items sit at their time.
 struct ScheduleView: View {
-    enum Mode: String, CaseIterable { case day = "Day", week = "Week" }
     @Environment(AppModel.self) private var model
-    @AppStorage("schedule.mode") private var mode: Mode = .day
     @State private var day = Calendar.current.startOfDay(for: Date())
+    @State private var weekStart = ScheduleView.week(of: Date())
+
+    static func week(of d: Date) -> Date {
+        let cal = Calendar.current
+        return cal.dateInterval(of: .weekOfYear, for: d)?.start ?? cal.startOfDay(for: d)
+    }
 
     var body: some View {
         NavigationStack {
-            Group {
-                switch mode {
-                case .day:
-                    VStack(spacing: 0) {
-                        DayChips(selected: $day)
-                        Divider()
-                        DayTimelinePage(day: day)
-                    }
-                case .week:
-                    WeekList { d in day = d; mode = .day }
-                }
+            VStack(spacing: 0) {
+                WeekStrip(selected: $day, weekStart: $weekStart)
+                Divider()
+                AgendaList(day: day)
             }
             .background(Theme.background)
-            .navigationTitle(mode == .day ? dayTitle : "Next 7 Days")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Picker("View", selection: $mode) {
-                        ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 130)
-                }
-                if mode == .day && !Calendar.current.isDateInToday(day) {
+                if !Calendar.current.isDateInToday(day) {
                     ToolbarItem(placement: .primaryAction) {
-                        Button("Today") { withAnimation { day = Calendar.current.startOfDay(for: Date()) } }
+                        Button("Today") {
+                            withAnimation {
+                                day = Calendar.current.startOfDay(for: Date())
+                                weekStart = ScheduleView.week(of: day)
+                            }
+                        }
                     }
                 }
             }
@@ -42,7 +39,7 @@ struct ScheduleView: View {
         }
     }
 
-    private var dayTitle: String {
+    private var title: String {
         let cal = Calendar.current
         if cal.isDateInToday(day) { return "Today" }
         if cal.isDateInTomorrow(day) { return "Tomorrow" }
@@ -50,369 +47,189 @@ struct ScheduleView: View {
     }
 }
 
-struct DayChips: View {
+struct WeekStrip: View {
     @Environment(AppModel.self) private var model
     @Binding var selected: Date
+    @Binding var weekStart: Date
 
     var body: some View {
         let cal = Calendar.current
-        let start = cal.startOfDay(for: Date())
-        let days = (0..<14).compactMap { cal.date(byAdding: .day, value: $0, to: start) }
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(days, id: \.self) { d in
-                        let on = cal.isDate(d, inSameDayAs: selected)
-                        let study = model.state.plan.blocks(on: d, calendar: cal).contains(where: \.isStudy)
-                        let due = model.state.items.contains { !$0.isDone && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: d) }
-                        Button { withAnimation(.snappy) { selected = d } } label: {
-                            VStack(spacing: 4) {
-                                Text(d.formatted(.dateTime.weekday(.narrow)))
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(on ? Color.white.opacity(0.85) : .secondary)
-                                Text(d.formatted(.dateTime.day()))
-                                    .font(.headline.monospacedDigit())
-                                    .foregroundStyle(on ? .white : cal.isDateInToday(d) ? Color.red : .primary)
-                                HStack(spacing: 3) {
-                                    Circle().fill(study ? Theme.focus : .clear).frame(width: 5, height: 5)
-                                    Circle().fill(due ? Theme.alert : .clear).frame(width: 5, height: 5)
-                                }
-                            }
-                            .frame(width: 44, height: 64)
-                            .background(on ? (cal.isDateInToday(d) ? Color.red : Color.accentColor) : Color.clear,
-                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                        .id(d)
-                        .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).month().day())
-                                            + (study ? ", work planned" : "") + (due ? ", something due" : ""))
-                        .accessibilityAddTraits(on ? .isSelected : [])
+        let days = (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: weekStart) }
+        HStack(spacing: 4) {
+            Button { shift(-1) } label: { Image(systemName: "chevron.left") }
+                .accessibilityLabel("Previous week")
+            ForEach(days, id: \.self) { d in
+                let on = cal.isDate(d, inSameDayAs: selected)
+                let today = cal.isDateInToday(d)
+                let due = model.state.items.contains { !$0.isDone && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: d) }
+                Button { withAnimation(.snappy) { selected = d } } label: {
+                    VStack(spacing: 3) {
+                        Text(d.formatted(.dateTime.weekday(.narrow))).font(.caption2.weight(.semibold))
+                        Text(d.formatted(.dateTime.day())).font(.headline.monospacedDigit())
+                            .padding(6)
+                            .overlay { if today { Circle().strokeBorder(on ? Color(.systemBackground) : Color.primary, lineWidth: 1.5) } }
+                        Image(systemName: "flag.fill").font(.system(size: 8)).opacity(due ? 1 : 0)
                     }
+                    .foregroundStyle(on ? Color(.systemBackground) : .primary)
+                    .frame(maxWidth: .infinity, minHeight: 66)
+                    .background(on ? Color.primary : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-            .onChange(of: selected) { _, d in withAnimation { proxy.scrollTo(d, anchor: .center) } }
-        }
-        .background(Theme.card)
-    }
-}
-
-struct DayTimelinePage: View {
-    @Environment(AppModel.self) private var model
-    let day: Date
-
-    var body: some View {
-        let cal = Calendar.current
-        let window = self.window(cal)
-        let blocks = model.state.plan.blocks.filter { $0.end > window.start && $0.start < window.end }
-        let due = model.state.items.filter { !$0.isDone && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: day) }
-            .sorted { $0.due < $1.due }
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    DaySummaryCard(day: day, due: due)
-                    Card {
-                        DayTimeline(day: day, start: window.start, end: window.end, blocks: blocks, due: due)
-                    }
-                }
-                .padding(16)
-            }
-            .onAppear { scroll(proxy, window: window) }
-            .onChange(of: day) { _, _ in scroll(proxy, window: self.window(cal)) }
-        }
-    }
-
-    private func window(_ cal: Calendar) -> (start: Date, end: Date) {
-        let dayStart = cal.startOfDay(for: day)
-        let plan = model.state.plan
-        let wake = plan.wakePlans.first { cal.isDate($0.day, inSameDayAs: day) }?.wake
-        let first = plan.blocks.filter { cal.isDate($0.start, inSameDayAs: day) && $0.kind != .sleep }.map(\.start).min()
-        var start = [wake, first].compactMap { $0 }.min() ?? dayStart.addingTimeInterval(7 * 3600)
-        start = cal.dateInterval(of: .hour, for: start)?.start ?? start
-        let bed = plan.blocks.first { $0.kind == .sleep && cal.isDate($0.start, inSameDayAs: day) }?.start
-        var end = (bed ?? dayStart.addingTimeInterval(22 * 3600)).addingTimeInterval(3600)
-        end = cal.dateInterval(of: .hour, for: end)?.end ?? end
-        if end.timeIntervalSince(start) < 6 * 3600 { end = start.addingTimeInterval(6 * 3600) }
-        return (start, end)
-    }
-
-    private func scroll(_ proxy: ScrollViewProxy, window: (start: Date, end: Date)) {
-        let cal = Calendar.current
-        let target: Date
-        if cal.isDateInToday(day) { target = Date().addingTimeInterval(-3600) }
-        else if let s = model.state.plan.blocks(on: day, calendar: cal).first(where: \.isStudy) { target = s.start.addingTimeInterval(-3600) }
-        else { return }
-        let hour = cal.component(.hour, from: max(window.start, min(target, window.end)))
-        DispatchQueue.main.async { withAnimation { proxy.scrollTo("hour.\(hour)", anchor: .top) } }
-    }
-}
-
-struct DaySummaryCard: View {
-    @Environment(AppModel.self) private var model
-    let day: Date
-    let due: [WorkItem]
-
-    var body: some View {
-        let cal = Calendar.current
-        let wake = model.state.plan.wakePlans.first { cal.isDate($0.day, inSameDayAs: day) }
-        let study = model.state.plan.blocks(on: day, calendar: cal).filter(\.isStudy).reduce(0) { $0 + $1.minutes }
-        let bed = model.state.plan.blocks.first { $0.kind == .sleep && cal.isDate($0.start, inSameDayAs: day) }?.start
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                if let w = wake { stat("Up", "alarm.fill", .orange, w.wake.hm) }
-                if let l = wake?.leaveBy { stat("Leave", "figure.walk", .green, l.hm) }
-                stat("Work", "pencil.line", Theme.focus, study > 0 ? durationLabel(study) : "None")
-                if let b = bed { stat("Bed", "moon.fill", Theme.sleep, b.hm) }
-            }
-            if !due.isEmpty {
-                Card {
-                    CardHeader(title: "Due", symbol: "flag.fill", color: Theme.alert, detail: "\(due.count)")
-                    ForEach(due) { i in
-                        NavigationLink { TaskDetailView(itemId: i.id) } label: {
-                            HStack(spacing: 10) {
-                                IconTile(symbol: i.kind.symbol, color: Theme.color(for: i, in: model.state), size: 24)
-                                Text(i.title).font(.subheadline).foregroundStyle(.primary).lineLimit(1)
-                                Spacer()
-                                Text(i.due.hm).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
-                                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            if let reason = wake?.reason, !reason.isEmpty {
-                Text(reason).font(.footnote).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func stat(_ title: String, _ symbol: String, _ color: Color, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: symbol).font(.caption.weight(.semibold)).foregroundStyle(color)
-            Text(value).font(.system(.subheadline, design: .rounded).weight(.semibold)).monospacedDigit()
-                .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityElement(children: .combine)
-    }
-}
-
-struct DayTimeline: View {
-    let day: Date
-    let start: Date
-    let end: Date
-    let blocks: [PlannedBlock]
-    let due: [WorkItem]
-    private let perMinute: CGFloat = 1.2
-    private let gutter: CGFloat = 46
-
-    var body: some View {
-        let height = y(end)
-        let shown = blocks.map { b -> PlannedBlock in
-            var c = b
-            c.start = max(b.start, start)
-            c.end = min(b.end, end)
-            return c
-        }.filter { $0.end > $0.start }
-        let lanes = TimelineLayout.lanes(shown.map { (start: $0.start, end: $0.end) })
-        ZStack(alignment: .topLeading) {
-            hourGrid
-            GeometryReader { g in
-                let width = g.size.width - gutter
-                ForEach(Array(shown.enumerated()), id: \.element.id) { i, b in
-                    let lane = lanes[i]
-                    let w = width / CGFloat(lane.of)
-                    TimelineBlock(block: b, original: blocks.first { $0.id == b.id } ?? b)
-                        .frame(width: max(10, w - 3), height: max(4, y(b.end) - y(b.start) - 2))
-                        .offset(x: gutter + CGFloat(lane.lane) * w, y: y(b.start) + 1)
-                }
-                ForEach(due.filter { $0.due >= start && $0.due <= end }) { item in
-                    HStack(spacing: 4) {
-                        Image(systemName: "flag.fill").font(.caption2)
-                        Text("\(item.title) due").font(.caption2.weight(.semibold)).lineLimit(1)
-                    }
-                    .foregroundStyle(Theme.alert)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.background, in: Capsule())
-                    .overlay(Capsule().stroke(Theme.alert.opacity(0.5)))
-                    .offset(x: gutter + 4, y: y(item.due) - 9)
-                    .accessibilityLabel("\(item.title) due at \(item.due.hm)")
-                }
-            }
-            if Calendar.current.isDateInToday(day) {
-                TimelineView(.periodic(from: .now, by: 60)) { ctx in
-                    if ctx.date >= start && ctx.date <= end {
-                        HStack(spacing: 0) {
-                            Text(ctx.date.hm).font(.caption2.weight(.bold).monospacedDigit()).foregroundStyle(.red)
-                                .frame(width: gutter - 4, alignment: .trailing)
-                                .padding(.trailing, 4)
-                                .background(Theme.card)
-                            Circle().fill(.red).frame(width: 7, height: 7)
-                            Rectangle().fill(.red).frame(height: 1.5)
-                        }
-                        .offset(y: y(ctx.date) - 7)
-                        .accessibilityHidden(true)
-                    }
-                }
-            }
-        }
-        .frame(height: height)
-    }
-
-    private var hourGrid: some View {
-        let cal = Calendar.current
-        let count = max(1, Int((end.timeIntervalSince(start) / 3600).rounded()))
-        let hours = (0..<count).compactMap { cal.date(byAdding: .hour, value: $0, to: start) }
-        return VStack(spacing: 0) {
-            ForEach(hours, id: \.self) { d in
-                HStack(alignment: .center, spacing: 6) {
-                    Text(d.formatted(.dateTime.hour()))
-                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                        .frame(width: gutter - 6, alignment: .trailing)
-                    Rectangle().fill(Color(.separator)).frame(height: 0.5)
-                }
-                .frame(height: 14)
-                .offset(y: -7)
-                .frame(height: 60 * perMinute, alignment: .top)
-                .id("hour.\(cal.component(.hour, from: d))")
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
-    private func y(_ d: Date) -> CGFloat { CGFloat(d.timeIntervalSince(start) / 60) * perMinute }
-}
-
-struct TimelineBlock: View {
-    let block: PlannedBlock
-    let original: PlannedBlock
-
-    var body: some View {
-        let color = Theme.color(for: block)
-        let tall = block.minutes >= 25
-        let content = HStack(alignment: .top, spacing: 6) {
-            RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 3)
-            if block.minutes >= 12 {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(blockLabel(block))
-                        .font((block.isStudy ? Font.caption.weight(.semibold) : .caption))
-                        .foregroundStyle(block.isStudy ? .primary : .secondary)
-                        .lineLimit(tall ? 2 : 1)
-                    if tall {
-                        Text("\(original.start.hm) – \(original.end.hm)")
-                            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 3)
-            }
-            Spacer(minLength: 0)
-            if block.borrowsSleep {
-                Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(Theme.alert).padding(4)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(color.opacity(block.isStudy ? 0.22 : 0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(blockLabel(block)), \(original.start.hm) to \(original.end.hm)")
-
-        if let id = block.itemId, block.isStudy {
-            NavigationLink { TaskDetailView(itemId: id) } label: { content }
                 .buttonStyle(.plain)
-                .accessibilityAddTraits(.isButton)
-        } else {
-            content
-        }
-    }
-}
-
-struct WeekList: View {
-    @Environment(AppModel.self) private var model
-    var open: (Date) -> Void
-
-    var body: some View {
-        List {
-            let overdue = model.state.items.filter { !$0.isDone && $0.parentId == nil && $0.due < Date() }
-            if !overdue.isEmpty {
-                Section {
-                    ForEach(overdue) { DueRow(item: $0) }
-                } header: {
-                    Label("Past Due", systemImage: "exclamationmark.circle.fill").foregroundStyle(Theme.alert)
-                }
+                .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).month().day()) + (today ? ", today" : "") + (due ? ", something due" : ""))
+                .accessibilityAddTraits(on ? .isSelected : [])
             }
-            ForEach(days, id: \.self) { d in DaySection(day: d, open: open) }
+            Button { shift(1) } label: { Image(systemName: "chevron.right") }
+                .accessibilityLabel("Next week")
         }
-        .listStyle(.insetGrouped)
+        .font(.subheadline)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Theme.card)
+        .gesture(DragGesture(minimumDistance: 30).onEnded { v in
+            if v.translation.width < -40 { shift(1) } else if v.translation.width > 40 { shift(-1) }
+        })
     }
 
-    private var days: [Date] {
+    private func shift(_ weeks: Int) {
         let cal = Calendar.current
-        let start = cal.startOfDay(for: Date())
-        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: start) }
+        withAnimation {
+            weekStart = cal.date(byAdding: .weekOfYear, value: weeks, to: weekStart) ?? weekStart
+            selected = cal.date(byAdding: .weekOfYear, value: weeks, to: selected) ?? selected
+        }
     }
 }
 
-struct DaySection: View {
+struct AgendaList: View {
     @Environment(AppModel.self) private var model
     let day: Date
-    var open: (Date) -> Void
 
     var body: some View {
         let cal = Calendar.current
-        let due = model.state.items.filter { !$0.isDone && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: day) }.sorted { $0.due < $1.due }
-        let blocks = model.state.plan.blocks(on: day, calendar: cal)
-        let study = blocks.filter(\.isStudy).reduce(0) { $0 + $1.minutes }
-        let start = cal.date(bySettingHour: 6, minute: 0, second: 0, of: day) ?? day
-        Section {
-            Button { open(day) } label: {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(cal.isDateInToday(day) ? "Today" : cal.isDateInTomorrow(day) ? "Tomorrow" : day.formatted(.dateTime.weekday(.wide)))
-                            .font(.headline).foregroundStyle(.primary)
-                        Text(day.formatted(.dateTime.month(.abbreviated).day())).font(.subheadline).foregroundStyle(.secondary)
-                        Spacer()
-                        if study > 0 {
-                            Label(durationLabel(study), systemImage: "pencil.line")
-                                .font(.subheadline).foregroundStyle(Theme.focus)
-                                .labelStyle(.titleAndIcon)
-                        }
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    DayStrip(blocks: blocks, start: start, end: start.addingTimeInterval(18 * 3600))
+        let rows = Agenda.rows(day: day, plan: model.state.plan, items: model.state.items, now: Date(), calendar: cal)
+        let overdue = model.state.items.filter { !$0.isDone && $0.parentId == nil && $0.due < Date() }
+        ScrollViewReader { proxy in
+            List {
+                if !overdue.isEmpty {
+                    Label("\(overdue.count) overdue. See the Tasks tab.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .listRowBackground(Theme.card)
                 }
-                .padding(.vertical, 4)
+                if rows.isEmpty {
+                    Text("Nothing planned for this day.").foregroundStyle(.secondary)
+                }
+                ForEach(rows) { r in AgendaRowView(row: r).id(r.id) }
             }
-            ForEach(due) { DueRow(item: $0) }
+            .listStyle(.plain)
+            .onAppear { scrollToNext(proxy, rows) }
+            .onChange(of: day) { _, _ in scrollToNext(proxy, Agenda.rows(day: day, plan: model.state.plan, items: model.state.items, now: Date(), calendar: cal)) }
         }
+    }
+
+    private func scrollToNext(_ proxy: ScrollViewProxy, _ rows: [AgendaRow]) {
+        let target = rows.first { $0.kind == .now }?.id ?? rows.first { $0.kind == .study }?.id
+        if let target { DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) } }
     }
 }
 
-struct DueRow: View {
+struct AgendaRowView: View {
     @Environment(AppModel.self) private var model
-    let item: WorkItem
+    let row: AgendaRow
+    @State private var open = false
+
+    private func time(_ d: Date) -> String { d.formatted(date: .omitted, time: .shortened) }
+    private var span: String { row.end.map { "\(time(row.start))–\(time($0))" } ?? time(row.start) }
 
     var body: some View {
-        let steps = model.state.items.filter { $0.parentId == item.id }
-        let short = (model.state.plan.shortfalls[item.id] ?? 0) > 0
-        NavigationLink { TaskDetailView(itemId: item.id) } label: {
-            HStack(spacing: 12) {
-                IconTile(symbol: item.kind.symbol, color: Theme.color(for: item, in: model.state))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title).lineLimit(2)
-                    Text(steps.isEmpty ? "Due \(item.due.relativeDay) at \(item.due.hm)"
-                                       : "\(steps.filter(\.isDone).count) of \(steps.count) steps done")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                if short {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        .accessibilityLabel("Not enough time planned")
+        switch row.kind {
+        case .study:
+            if let id = row.itemId {
+                NavigationLink { TaskDetailView(itemId: id) } label: { study }
+            } else { study }
+        case .fixed:
+            if row.children.isEmpty { quiet("building.2", row.title, span) } else {
+                DisclosureGroup(isExpanded: $open) {
+                    ForEach(row.children) { c in
+                        HStack { Text(c.title).font(.footnote); Spacer(); Text("\(time(c.start))–\(time(c.end ?? c.start))").font(.footnote.monospacedDigit()) }
+                            .foregroundStyle(.secondary)
+                    }
+                } label: { quiet("building.2", row.title, span) }
+            }
+        case .breakTime: quiet("cup.and.saucer", "Break", span).opacity(0.8)
+        case .windDown: quiet("moon", "Wind down", span)
+        case .free:
+            HStack(spacing: 10) {
+                Image(systemName: "sun.max").frame(width: 22)
+                Text("Free").font(.subheadline)
+                Spacer()
+                Text("\(span) · \(durationLabel(row.minutes ?? 0))").font(.subheadline.monospacedDigit())
+            }
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 2)
+        case .due:
+            if let id = row.itemId {
+                NavigationLink { TaskDetailView(itemId: id) } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "flag.fill").frame(width: 22)
+                        Text("Due: \(row.title)").font(.subheadline.weight(.semibold)).lineLimit(2)
+                        Spacer()
+                        Text(time(row.start)).font(.subheadline.monospacedDigit())
+                    }
                 }
             }
+        case .now:
+            HStack(spacing: 8) {
+                Image(systemName: "arrowtriangle.right.fill").font(.caption)
+                Text("Now · \(time(row.start))").font(.caption.weight(.bold))
+                Rectangle().frame(height: 1)
+            }
+            .foregroundStyle(.primary)
+            .accessibilityLabel("Now, \(time(row.start))")
+        case .wake:
+            Button { open.toggle() } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "alarm").frame(width: 22)
+                        Text("Wake up").font(.subheadline)
+                        Spacer()
+                        Text(time(row.start)).font(.subheadline.monospacedDigit())
+                    }
+                    if open, let why = row.detail, !why.isEmpty { Text(why).font(.footnote).foregroundStyle(.secondary).padding(.leading, 32) }
+                }
+            }
+            .buttonStyle(.plain)
+        case .leave:
+            plain("figure.walk", "Leave by", time(row.start))
+        case .bed:
+            plain("bed.double", "Bed", time(row.start))
+        }
+    }
+
+    private var study: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "pencil.line").font(.title3).frame(width: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title).font(.headline).lineLimit(2)
+                Text("\(span) · \(durationLabel(row.minutes ?? 0))").font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func quiet(_ symbol: String, _ title: String, _ detail: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol).frame(width: 22)
+            Text(title).font(.subheadline).lineLimit(1)
+            Spacer()
+            Text(detail).font(.subheadline.monospacedDigit())
+        }
+        .foregroundStyle(.secondary)
+    }
+
+    private func plain(_ symbol: String, _ title: String, _ detail: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol).frame(width: 22)
+            Text(title).font(.subheadline)
+            Spacer()
+            Text(detail).font(.subheadline.monospacedDigit())
         }
     }
 }

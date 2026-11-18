@@ -69,9 +69,11 @@ enum ExportService {
         var snapshots: [String: JSONValue] = [:]
         if let u = model.serverUsage.flatMap(JSONValue.encoding) { snapshots["usage"] = u }
         if let s = model.subscription.flatMap(JSONValue.encoding) { snapshots["subscription"] = s }
+        // The alarms Productium has on the device (v1.1 C3), to compare with what the plan says should exist.
+        if let al = JSONValue.encoding(await AlarmScheduler.shared.current()) { snapshots["alarms"] = al }
         return ExportBundle(exportedAt: Date(), device: device, state: model.state, aboutMe: model.aboutMe.markdown,
                             callLog: model.callLog,
-                            sharedDefaults: PlistJSON.domain(SharedConfig.defaults.persistentDomain(forName: SharedConfig.appGroup)),
+                            sharedDefaults: [:],
                             appDefaults: PlistJSON.domain(UserDefaults.standard.persistentDomain(forName: appDomainName)),
                             files: files(), pendingNotifications: pending, deliveredNotifications: delivered,
                             permissions: await permissions(), serverSnapshots: snapshots)
@@ -79,7 +81,7 @@ enum ExportService {
 
     static func files() -> [String: String] {
         var out: [String: String] = [:]
-        for (prefix, root) in [("container", SharedConfig.containerURL), ("documents", documentsURL)] {
+        for (prefix, root) in [("container", LocalStore.containerURL), ("documents", documentsURL)] {
             guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else { continue }
             for case let url as URL in e {
                 guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
@@ -108,6 +110,7 @@ enum ExportService {
                 ("health.sleep", HKCategoryType(.sleepAnalysis)), ("health.steps", HKQuantityType(.stepCount)),
                 ("health.daylight", HKQuantityType(.timeInDaylight)), ("health.restingHeartRate", HKQuantityType(.restingHeartRate)),
                 ("health.mindful", HKCategoryType(.mindfulSession)),
+                ("health.exercise", HKQuantityType(.appleExerciseTime)), ("health.workouts", HKObjectType.workoutType()),
             ]
             for (name, type) in types {
                 p[name] = ["notDetermined", "sharingDenied", "sharingAuthorized"][safe: store.authorizationStatus(for: type).rawValue] ?? "?"
@@ -135,14 +138,14 @@ enum ExportService {
         model.aboutMe = AboutMe.parse(b.aboutMe)
         model.callLog = b.callLog
         CallLogStore.save(b.callLog)
-        let shared = SharedConfig.defaults
-        for (k, v) in b.sharedDefaults { shared.set(PlistJSON.value(v), forKey: k) }
+        // v1.0 exports kept friction counters etc. in an App Group suite; they now live in the standard defaults.
+        for (k, v) in b.sharedDefaults { UserDefaults.standard.set(PlistJSON.value(v), forKey: k) }
         for (k, v) in b.appDefaults { UserDefaults.standard.set(PlistJSON.value(v), forKey: k) }
         for (key, base64) in b.files where key != "container/state-before-restore.json" {
             guard let data = Data(base64Encoded: base64) else { continue }
             let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { continue }
-            let root = parts[0] == "documents" ? documentsURL : SharedConfig.containerURL
+            let root = parts[0] == "documents" ? documentsURL : LocalStore.containerURL
             let url = root.appendingPathComponent(parts[1])
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: url, options: .atomic)

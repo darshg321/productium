@@ -60,8 +60,12 @@ public struct IntentionNudge: Codable, Hashable, Identifiable, Sendable {
     public var time: TimeOfDay?
     public var text: String
     public var itemId: UUID?
+    /// Set when the student (through the box) made it; the insight pass counts and changes only its own.
+    public var byStudent: Bool?
 
-    public init(id: UUID = UUID(), trigger: Trigger, weekdays: [Int] = [], time: TimeOfDay? = nil, text: String, itemId: UUID? = nil) {
+    public init(id: UUID = UUID(), trigger: Trigger, weekdays: [Int] = [], time: TimeOfDay? = nil, text: String, itemId: UUID? = nil,
+                byStudent: Bool? = nil) {
+        self.byStudent = byStudent
         self.id = id
         self.trigger = trigger
         self.weekdays = weekdays
@@ -126,6 +130,8 @@ public enum Registry {
             FieldSpec("doneMinutes", "minutes done so far in total (absolute, never added)"),
             FieldSpec("done", "true|false"), FieldSpec("atSchool", "true: done in school hours (ask a teacher), gets a school slot"),
             FieldSpec("topics", "list"), FieldSpec("notes", "text"),
+            FieldSpec("alarm", "minutes before it's due to ring (0 = at the due time; -1 removes it)"),
+            FieldSpec("blockAlarm", "minutes before each study block of this task to ring (-1 removes)"),
             FieldSpec("color", colorFormat), FieldSpec("parent", "a task id, for a step"),
         ], note: "homework, tests, projects. One per deadline on an assignment sheet."),
         EntitySpec(name: "activity", tier: .data, refPrefix: "a", canDelete: true, fields: [
@@ -144,6 +150,32 @@ public enum Registry {
             FieldSpec("cancelled", "true|false"), FieldSpec("start", "HH:mm"), FieldSpec("end", "HH:mm"),
             FieldSpec("wake", "HH:mm (alone: sleeping in)"), FieldSpec("note", "text"),
         ], note: "one date differs from the usual week. \"Didn't go to school\" is a day_change, not a marker."),
+        EntitySpec(name: "situation", tier: .data, refPrefix: "s", canDelete: true, fields: [
+            FieldSpec("said", "their words"), FieldSpec("scope", "a day rule (see Day rules): which days"),
+            FieldSpec("effects", "list of effect JSON strings (see Effects)"),
+            FieldSpec("expires", "YYYY-MM-DD, last day it applies (always give one for something temporary)"),
+        ], note: "overrides for some days (A/B days, sick, a visitor, a trip, exam week). Prefer it to many day_changes. setInput planner.* only with an end date (expires). \"Forever\", \"every Friday\", \"from now on\" is refused: say you can't and that Productium adjusts that from how their weeks go."),
+        EntitySpec(name: "alarm", tier: .data, refPrefix: "r", canDelete: true, fields: [
+            FieldSpec("kind", "clock|before_due|before_blocks|shift|off"), FieldSpec("label", "what it says when it rings"),
+            FieldSpec("time", "clock: HH:mm"), FieldSpec("task", "a task id: before_due, before_blocks (omit for any block); not needed for a plain clock alarm"),
+            FieldSpec("minutes", "before_due/before_blocks: how long before; shift: minutes later (negative: earlier)"),
+            FieldSpec("alarmKind", "shift/off: which of Productium's own alarms: wake|bedtime|leave|missedStart"),
+            FieldSpec("scope", "a day rule: which days (clock with no scope: the next time it's that time)"),
+            FieldSpec("enabled", "true|false (false keeps it but stops it ringing)"), FieldSpec("expires", "YYYY-MM-DD, last day"),
+        ], note: "your own alarms, with or without a task, and changes to Productium's: move the bedtime alarm earlier on Fridays, no leave-by alarm on Wednesdays. Wake-up alarm on/off is the wakeAlarms setting."),
+        EntitySpec(name: "reminder", tier: .data, refPrefix: "n", canDelete: true, fields: [
+            FieldSpec("text", "what it says"), FieldSpec("time", "HH:mm"), FieldSpec("weekdays", "1=Sun..7=Sat; empty = every day"),
+            FieldSpec("task", "a task id, optional"), FieldSpec("trigger", "time|arrive_home"),
+        ], note: "a notification at a time or when they get home (\"remind me to pack my bag at 9pm\"). Not an alarm: it doesn't ring through silent mode."),
+        EntitySpec(name: "day_rule", tier: .data, refPrefix: nil, canDelete: false, fields: [
+            FieldSpec("name", "sequence or label name"), FieldSpec("kind", "sequence|label"),
+            FieldSpec("rule", "sequence: the counted days, e.g. {\"all\":[{\"weekdays\":[2,3,4,5,6]},{\"not\":{\"label\":\"no-school\"}}]}"),
+            FieldSpec("anchor", "sequence: YYYY-MM-DD of an A day"),
+            FieldSpec("dates", "label: YYYY-MM-DD list"), FieldSpec("remove", "true: take them out of the label"),
+        ], note: "a rotation (sequence \"school\" for A/B days) or a set of days (label \"exam-week\") that rules can use."),
+        EntitySpec(name: "gap", tier: .data, refPrefix: nil, canDelete: false, fields: [
+            FieldSpec("said", "their words"), FieldSpec("wanted", "what you'd have done if the app could"),
+        ], note: "only when nothing here can do what they asked; say so in the reply."),
         EntitySpec(name: "marker", tier: .data, refPrefix: nil, canDelete: false, fields: [
             FieldSpec("activity", "short key: to_school, from_school, school, study, sleep, wake, get_ready…"),
             FieldSpec("phase", "start|end"), FieldSpec("at", "YYYY-MM-DDTHH:mm"), FieldSpec("note", "their words"),
@@ -155,7 +187,9 @@ public enum Registry {
             FieldSpec("period", "day|week|average: what the screenshot shows (a week view is a daily average)"),
             FieldSpec("date", "YYYY-MM-DD of the day shown"), FieldSpec("dateLabelShown", "the label on screen: Today, Yesterday, Mon 16 Nov"),
             FieldSpec("screenMinutes", "the total shown"),
-            FieldSpec("apps", "[{name, minutes, category as shown}] every app listed"),
+            FieldSpec("pickups", "Pickups total shown, if any"), FieldSpec("firstPickup", "First Pickup time shown, e.g. 6:42 AM"),
+            FieldSpec("notifications", "Notifications total shown, if any"),
+            FieldSpec("apps", "[{name, minutes, category as shown, pickups?, notifications?}] every app listed"),
             FieldSpec("partial", "true if the app list is cut off"),
         ], note: "one per screenshot. Copy the numbers exactly; the app works out scrolling itself. Several screenshots of one day are merged."),
         EntitySpec(name: "routine", tier: .learned, refPrefix: nil, canDelete: false, fields: [
@@ -175,7 +209,11 @@ public enum Registry {
         KnobSpec("autoWake", .data, "true|false (work the wake-up back from the first class)"),
         KnobSpec("windDownMinutes", .data, "0-90"),
         KnobSpec("nudgeLevel", .data, "gentle|standard|persistent"),
-        KnobSpec("alarms", .data, "true|false"), KnobSpec("scrollCheckIns", .data, "true|false"),
+        KnobSpec("alarms", .data, "true|false"), KnobSpec("wakeAlarms", .data, "true|false (the morning alarm)"),
+        KnobSpec("movementNudges", .data, "true|false"), KnobSpec("daylightNudges", .data, "true|false"),
+        KnobSpec("celebrations", .data, "full|subtle|off"), KnobSpec("celebrationSound", .data, "true|false"),
+        KnobSpec("metricTiles", .data, "comma list of: \(MetricID.allCases.map(\.rawValue).joined(separator: "|")) (the Review tiles, in order)"),
+        KnobSpec("scrollingApps", .data, "App:on|off, … (what counts as scrolling)"), KnobSpec("scrollCheckIns", .data, "true|false"),
         KnobSpec("arrivingHome", .data, "true|false"), KnobSpec("deadlineNudges", .data, "true|false"),
         KnobSpec("sleepNeedMinutes", .learned, "450-600", reflectionForbidden: true),
         KnobSpec("sleepFloorMinutes", .learned, "360-480", reflectionForbidden: true),
@@ -223,8 +261,11 @@ public enum Registry {
             let ref = e.refPrefix.map { " (\($0)…)" } ?? ""
             let tier = e.tier == .learned ? " [only when they state it]" : ""
             l.append("- \(e.name)\(ref)\(tier): \(e.note) Fields: " + e.fields.map { "\($0.name) (\($0.format))" }.joined(separator: ", ")
-                     + (e.canDelete ? "" : ". Can't be deleted."))
+                     )
         }
+        l.append("Only " + entities.filter(\.canDelete).map(\.name).joined(separator: ", ") + " can be deleted (delete: entity, id).")
+        l.append(SituationText.grammar)
+        l.append("setInput paths: " + SituationInputs.promptText)
         l.append("Macros:")
         for m in macros { l.append("- \(m.name) (\(m.entity)): \(m.note) Fields: " + m.fields.map { "\($0.name) \($0.format)" }.joined(separator: ", ")) }
         l.append("Knobs (set: knob, value as text):")
@@ -274,10 +315,10 @@ public enum Knobs {
     public static func set(_ rawKey: String, _ value: String, by writer: Writer, in s: inout DumpState) -> KnobResult {
         guard let spec = Registry.knob(rawKey) else { return .refused("There's no setting called “\(rawKey)”") }
         guard writer.mayApply(spec.tier) else {
-            return .refused("“\(spec.key)” changes how the app behaves, so only the weekly reflection can suggest it, and you approve it")
+            return .refused("“\(spec.key)” changes how the app behaves, so Productium only adjusts it from how your weeks go (you can see and undo it in What Productium Thinks)")
         }
         if writer == .reflection && spec.reflectionForbidden {
-            return .refused("“\(spec.key)” is yours to change, never the reflection's")
+            return .refused("“\(spec.key)” is yours to change, never Productium's")
         }
         if spec.tier == .behaviour {
             guard let target = Double(value.trimmingCharacters(in: .whitespaces).filter { $0.isNumber || $0 == "." || $0 == "-" }),
@@ -312,6 +353,37 @@ public enum Knobs {
             }
             s.prefs.colors[cat] = c
             return .changed("\(cat.replacingOccurrences(of: "_", with: " ").capitalized) is \(c)")
+        }
+        let lowerValue = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch spec.key {
+        case "celebrations":
+            guard let l = CelebrationLevel(rawValue: lowerValue) else { return .refused("celebrations is full, subtle or off") }
+            s.rewardSettings.level = l
+            return .changed("Celebrations → \(l.title)")
+        case "metricTiles":
+            let ids = value.split(whereSeparator: { $0 == "," || $0 == " " }).compactMap { MetricID(rawValue: String($0).trimmingCharacters(in: .whitespaces)) }
+            guard !ids.isEmpty else { return .refused("metricTiles is a list like scrolling, sleep, focus") }
+            var seen = Set<MetricID>()
+            s.metricTiles = ids.filter { seen.insert($0).inserted }.prefix(12).map { $0 }
+            return .changed("Review tiles: \(s.metricTiles.map(\.rawValue).joined(separator: ", "))")
+        case "celebrationSound":
+            guard let b = ["true", "on", "yes"].contains(lowerValue) ? true : ["false", "off", "no"].contains(lowerValue) ? false : nil else { return .refused("celebrationSound is true or false") }
+            s.rewardSettings.sound = b
+            return .changed("Celebration sound → \(b ? "on" : "off")")
+        case "scrollingApps":
+            var n = 0
+            for part in value.split(separator: ",") {
+                let bits = part.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                guard bits.count == 2, !bits[0].isEmpty else { continue }
+                s.scrollingApps[bits[0]] = ["on", "true", "yes", "1"].contains(bits[1].lowercased())
+                n += 1
+            }
+            return n > 0 ? .changed("Scrolling apps: \(n) updated") : .refused("scrollingApps looks like Instagram:on, Slack:off")
+        case "wakeAlarms":
+            if ["true", "on", "yes", "1"].contains(lowerValue), !s.prefs.wakeAlarms, !s.alarmsAllowed {
+                return .refused("The morning alarm needs alarms allowed first: Settings → Connections → Wake-Up Alarms")
+            }
+        default: break
         }
         guard let line = PreferenceKnobs.apply(key: spec.key, value: value, to: &s.prefs) else {
             return .refused("Couldn't set \(spec.key) to “\(value)”")
@@ -356,6 +428,9 @@ enum PreferenceKnobs {
         case "nudgelevel":
             guard let l = NudgeLevel(rawValue: lower) else { return nil }; p.nudges.level = l
         case "alarms": guard let b = bool() else { return nil }; p.nudges.alarms = b
+        case "wakealarms": guard let b = bool() else { return nil }; p.wakeAlarms = b
+        case "movementnudges": guard let b = bool() else { return nil }; p.nudges.movement = b
+        case "daylightnudges": guard let b = bool() else { return nil }; p.nudges.daylight = b
         case "scrollcheckins": guard let b = bool() else { return nil }; p.nudges.scrollCheckIns = b
         case "arrivinghome": guard let b = bool() else { return nil }; p.nudges.arrivingHome = b
         case "deadlinenudges": guard let b = bool() else { return nil }; p.nudges.deadlines = b

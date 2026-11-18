@@ -50,7 +50,7 @@ struct LogMoodIntent: AppIntent {
     }
 }
 
-struct StartFocusIntent: LiveActivityIntent {
+struct StartFocusIntent: AppIntent {
     static var title: LocalizedStringResource = "Start focus"
     static var description = IntentDescription("Start the block that's on now, or the next one. Try it from an NFC tag on your desk, or when a Focus turns on.")
     static var openAppWhenRun = true
@@ -120,6 +120,11 @@ struct StoppedScrollingIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         Friction.ended(by: signal.source)
+        if signal == .charger {
+            let d = LocalStore.defaults
+            let times = (d.array(forKey: LocalStore.Key.chargingTimes) as? [Double] ?? []) + [Date().timeIntervalSince1970]
+            d.set(Array(times.suffix(40)), forKey: LocalStore.Key.chargingTimes)
+        }
         return .result()
     }
 }
@@ -160,7 +165,7 @@ enum Friction {
     static let graceMinutes = 10
 
     static var inGrace: Bool {
-        Date().timeIntervalSince1970 < SharedConfig.defaults.double(forKey: SharedConfig.Key.frictionGraceUntil)
+        Date().timeIntervalSince1970 < LocalStore.defaults.double(forKey: LocalStore.Key.frictionGraceUntil)
     }
 
     static func opened(_ app: String) -> Bool {
@@ -168,8 +173,8 @@ enum Friction {
         let wasOpen = log.open != nil
         let measures = update { $0.opened(app, at: Date(), paused: pause, calendar: .current); return $0.measuresClosing }
         if pause {
-            let key = SharedConfig.Key.frictionPrefix + SharedConfig.dayKey()
-            SharedConfig.defaults.set(SharedConfig.defaults.integer(forKey: key) + 1, forKey: key)
+            let key = LocalStore.Key.frictionPrefix + LocalStore.dayKey()
+            LocalStore.defaults.set(LocalStore.defaults.integer(forKey: key) + 1, forKey: key)
         } else if measures && !wasOpen {
             scheduleNextCheckIn()
         }
@@ -177,9 +182,9 @@ enum Friction {
     }
 
     static func grant(minutes: Int = graceMinutes) {
-        SharedConfig.defaults.set(Date().addingTimeInterval(Double(minutes) * 60).timeIntervalSince1970,
-                                  forKey: SharedConfig.Key.frictionGraceUntil)
-        SharedConfig.defaults.set(0, forKey: SharedConfig.Key.scrollCheckInIndex)
+        LocalStore.defaults.set(Date().addingTimeInterval(Double(minutes) * 60).timeIntervalSince1970,
+                                  forKey: LocalStore.Key.frictionGraceUntil)
+        LocalStore.defaults.set(0, forKey: LocalStore.Key.scrollCheckInIndex)
         scheduleNextCheckIn()
     }
 
@@ -197,12 +202,12 @@ enum Friction {
 
     static func scheduleNextCheckIn() {
         let steps = checkInMinutes
-        let i = SharedConfig.defaults.integer(forKey: SharedConfig.Key.scrollCheckInIndex)
+        let i = LocalStore.defaults.integer(forKey: LocalStore.Key.scrollCheckInIndex)
         guard i < steps.count else { return }
         let wait = i == 0 ? steps[0] : steps[i] - steps[i - 1]
         NotificationService.scheduleScrollCheckIn(after: wait, total: steps[i], last: i == steps.count - 1)
         update { $0.checkInSent(at: Date().addingTimeInterval(Double(wait) * 60)) }
-        SharedConfig.defaults.set(i + 1, forKey: SharedConfig.Key.scrollCheckInIndex)
+        LocalStore.defaults.set(i + 1, forKey: LocalStore.Key.scrollCheckInIndex)
     }
 
     static func answered(stillScrolling: Bool) {
@@ -219,21 +224,21 @@ enum Friction {
     }
 
     static func pausesToday() -> Int {
-        SharedConfig.defaults.integer(forKey: SharedConfig.Key.frictionPrefix + SharedConfig.dayKey())
+        LocalStore.defaults.integer(forKey: LocalStore.Key.frictionPrefix + LocalStore.dayKey())
     }
 
     static var checkInMinutes: [Int] {
-        SharedConfig.defaults.array(forKey: SharedConfig.Key.scrollCheckIns) as? [Int] ?? NudgeLevel.standard.scrollCheckIns
+        LocalStore.defaults.array(forKey: LocalStore.Key.scrollCheckIns) as? [Int] ?? NudgeLevel.standard.scrollCheckIns
     }
 
     static var log: ScrollLog {
         get {
-            guard let d = SharedConfig.defaults.data(forKey: SharedConfig.Key.scrollLog),
+            guard let d = LocalStore.defaults.data(forKey: LocalStore.Key.scrollLog),
                   let l = try? JSONDecoder().decode(ScrollLog.self, from: d) else { return ScrollLog() }
             return l
         }
         set {
-            if let d = try? JSONEncoder().encode(newValue) { SharedConfig.defaults.set(d, forKey: SharedConfig.Key.scrollLog) }
+            if let d = try? JSONEncoder().encode(newValue) { LocalStore.defaults.set(d, forKey: LocalStore.Key.scrollLog) }
         }
     }
 }

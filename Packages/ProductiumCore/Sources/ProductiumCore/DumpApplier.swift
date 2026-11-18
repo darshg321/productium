@@ -5,6 +5,9 @@ public enum Ref {
     public static func activity(_ id: UUID) -> String { "a" + short(id.uuidString) }
     public static func event(_ id: String) -> String { "e" + short(id) }
     public static func dayChange(_ id: UUID) -> String { "d" + short(id.uuidString) }
+    public static func situation(_ id: UUID) -> String { "s" + short(id.uuidString) }
+    public static func alarm(_ id: UUID) -> String { "r" + short(id.uuidString) }
+    public static func reminder(_ id: UUID) -> String { "n" + short(id.uuidString) }
 
     static func short(_ s: String) -> String {
         if UUID(uuidString: s) != nil { return String(s.lowercased().filter(\.isHexDigit).prefix(6)) }
@@ -97,7 +100,7 @@ public enum DumpApplier {
             rep.problems.append("Changing \(spec.name)s isn't allowed from here"); return
         }
         let a = DumpFields.read(op)
-        let h = Handlers(now: now, cal: cal)
+        let h = Handlers(now: now, cal: cal, writer: writer)
         switch (kind, spec.name) {
         case (.split, "activity"): h.splitActivity(a, &s, &rep)
         case (.split, _): rep.problems.append("Only an activity can be split")
@@ -109,6 +112,14 @@ public enum DumpApplier {
         case (.upsert, "mood"): h.mood(a, &s, &rep)
         case (.upsert, "screen_time"): h.screenTime(a, &s, &rep)
         case (.upsert, "routine"): h.routine(a, &s, &rep)
+        case (.upsert, "reminder"): h.upsertReminder(a, &s, &rep)
+        case (.delete, "reminder"): h.deleteReminder(a, &s, &rep)
+        case (.upsert, "alarm"): h.upsertAlarm(a, &s, &rep)
+        case (.delete, "alarm"): h.deleteAlarm(a, &s, &rep)
+        case (.upsert, "situation"): h.upsertSituation(a, &s, &rep)
+        case (.upsert, "day_rule"): h.dayRule(a, &s, &rep)
+        case (.upsert, "gap"): h.gap(a, &s, &rep)
+        case (.delete, "situation"): h.deleteSituation(a, &s, &rep)
         case (.delete, "task"): h.deleteTask(a, &s, &rep)
         case (.delete, "activity"): h.deleteActivity(a, &s, &rep)
         case (.delete, "event"): h.deleteEvent(a, &s, &rep)
@@ -121,6 +132,7 @@ public enum DumpApplier {
     struct Handlers {
         let now: Date
         let cal: Calendar
+        var writer: Writer = .box
         var tz: TimeZone { cal.timeZone }
 
         func tod(_ v: String?) -> TimeOfDay? { DumpApplier.timeOfDay(v) }
@@ -206,6 +218,7 @@ public enum DumpApplier {
             } else {
                 if a.done == true { item.isDone = true; item.doneAt = now }
                 s.items.append(item)
+                taskAlarms(item, a, &s, &rep)
                 rep.changes.append(parent.map { "Added step to \($0.title): \(item.title)" } ?? "Added \(item.title)")
             }
         }
@@ -224,6 +237,7 @@ public enum DumpApplier {
             if let t = a.topics { s.items[i].topics = t; changed = true }
             if let n = a.notes { s.items[i].notes = n.isEmpty ? nil : n; changed = true }
             if case .some(let c)? = colour(a.color) { s.items[i].color = c; changed = true }
+            if a.alarm != nil || a.blockAlarm != nil { taskAlarms(s.items[i], a, &s, &rep) }
             if changed { rep.changes.append("Changed \(s.items[i].title)") }
             switch a.done {
             case true?:
@@ -251,6 +265,7 @@ public enum DumpApplier {
             let id = s.items[i].id
             rep.changes.append("Removed \(s.items[i].title)")
             s.items.removeAll { $0.id == id || $0.parentId == id }
+            s.alarmRules.removeAll { $0.itemId == id }
         }
 
         func upsertActivity(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
@@ -478,6 +493,174 @@ public enum DumpApplier {
             }
         }
 
+        func plannerInput(_ s: DumpState) -> PlannerInput {
+            PlannerInput(now: now, calendar: cal, items: s.items, commitments: s.commitments, events: s.calendarEvents + s.oneOffs,
+                         preferences: s.prefs, routines: s.routines, exceptions: s.exceptions, horizonDays: 14, policy: s.policy,
+                         beliefs: s.beliefs, situations: s.situations, dayRules: s.dayRules)
+        }
+
+        /// A task's own alarms (`alarm`: before it's due, `blockAlarm`: before each study block) are rules tied to the task.
+        func taskAlarms(_ item: WorkItem, _ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
+            func set(_ kind: AlarmRule.Kind, _ minutes: Int?) {
+                guard let minutes else { return }
+                s.alarmRules.removeAll { $0.kind == kind && $0.itemId == item.id }
+                if minutes < 0 { rep.changes.append("Removed the \(kind == .beforeDue ? "due" : "block") alarm for \(item.title)"); return }
+                guard s.alarmRules.filter({ $0.itemId != nil }).count < 40 else { rep.problems.append("That's a lot of task alarms already"); return }
+                let m = min(minutes, 7 * 24 * 60)
+                s.alarmRules.append(AlarmRule(kind: kind, itemId: item.id, minutes: m, source: writer, createdAt: now))
+                rep.changes.append(kind == .beforeDue
+                    ? "Alarm \(m == 0 ? "when" : "\(minutesLabel(m)) before") \(item.title) is due"
+                    : "Alarm \(minutesLabel(m)) before each \(item.title) block")
+            }
+            set(.beforeDue, a.alarm)
+            set(.beforeBlocks, a.blockAlarm)
+        }
+
+        func upsertAlarm(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
+            var old: AlarmRule?
+            if let r = ref(a) { old = s.alarmRules.first { Ref.matches(r, prefix: "r", full: $0.id.uuidString) } }
+            let kindWord = (a.kind ?? "").lowercased().filter(\.isLetter)
+            let kind: AlarmRule.Kind? = ["clock": .clock, "time": .clock, "beforedue": .beforeDue, "due": .beforeDue,
+                                         "beforeblocks": .beforeBlocks, "block": .beforeBlocks, "blocks": .beforeBlocks,
+                                         "shift": .shift, "move": .shift, "off": .suppress, "suppress": .suppress, "remove": .suppress][kindWord] ?? old?.kind
+            guard let kind else { rep.problems.append("An alarm needs a kind: clock, before_due, before_blocks, shift or off"); return }
+            let itemId = a.task.flatMap { r in s.items.first { Ref.matches(r, prefix: "t", full: $0.id.uuidString) }?.id } ?? old?.itemId
+            let target: PlannedAlarm.Kind? = a.alarmKind.flatMap { w in
+                ["wake": PlannedAlarm.Kind.wake, "bed": .bedtime, "bedtime": .bedtime, "leave": .leave, "leaveby": .leave,
+                 "missedstart": .missedStart, "start": .missedStart, "missed": .missedStart][w.lowercased().filter(\.isLetter)]
+            } ?? old?.target
+            var r = old ?? AlarmRule(kind: kind, source: writer, createdAt: now)
+            r.kind = kind
+            r.label = String((a.label ?? a.title ?? r.label).prefix(60))
+            if let t = tod(a.time ?? a.start) { r.time = t }
+            r.itemId = itemId
+            r.target = target
+            if let m = a.minutes { r.minutes = max(-240, min(7 * 24 * 60, m)) }
+            if let e = a.enabled { r.enabled = e }
+            if let ex = a.expires { r.expires = ex.isEmpty ? nil : AIMapper.parseDate(ex, timeZone: tz).map { cal.startOfDay(for: $0) } }
+            if let raw = a.scope {
+                guard let rule = SituationText.rule(raw, tz: tz, commitments: s.commitments, items: s.items) else {
+                    rep.problems.append("Couldn't read which days that alarm is for"); return
+                }
+                r.when = rule
+            }
+            switch kind {
+            case .clock where r.time == nil: rep.problems.append("A clock alarm needs a time (HH:mm)"); return
+            case .beforeDue where r.itemId == nil: rep.problems.append("That alarm needs the task it's for"); return
+            case .shift where r.target == nil || r.minutes == 0, .suppress where r.target == nil:
+                rep.problems.append("Moving or removing one of Productium's alarms needs which one (wake, bedtime, leave or missedStart)\(kind == .shift ? " and how many minutes" : "")"); return
+            default: break
+            }
+            if kind == .suppress || kind == .shift, r.target == .wake, !s.prefs.wakeAlarms || !s.alarmsAllowed {
+                rep.problems.append("The morning alarm is off, so there's nothing to \(kind == .shift ? "move" : "remove")"); return
+            }
+            if kind == .shift { r.minutes = max(-120, min(120, r.minutes)) }
+            r.source = old?.source ?? writer
+            if old == nil, s.alarmRules.count >= 40 { rep.problems.append("That's a lot of alarm rules already"); return }
+            s.alarmRules.removeAll { $0.id == r.id }
+            s.alarmRules.append(r)
+            if !s.alarmsAllowed {
+                let note = "iOS has to allow alarms before this one can ring: it will ask, or turn them on in Settings."
+                if !rep.problems.contains(note) { rep.problems.append(note) }
+            }
+            rep.changes.append((old == nil ? "Alarm: " : "Alarm updated: ") + r.summary(items: s.items, calendar: cal) + (r.enabled ? "" : " (off)"))
+        }
+
+        func upsertReminder(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
+            var i: Int?
+            if let r = ref(a) { i = s.policy.intentions.firstIndex { Ref.matches(r, prefix: "n", full: $0.id.uuidString) } }
+            let home = (a.trigger ?? "").lowercased().contains("home")
+            let time = tod(a.time ?? a.start)
+            guard i != nil || !(a.text ?? a.title ?? "").isEmpty else { rep.problems.append("A reminder needs text"); return }
+            guard i != nil || home || time != nil else { rep.problems.append("A reminder needs a time (HH:mm) or “when I get home”"); return }
+            var r = i.map { s.policy.intentions[$0] } ?? IntentionNudge(trigger: home ? IntentionNudge.Trigger.arriveHome : IntentionNudge.Trigger.time, text: "", byStudent: true)
+            if let t = a.text ?? a.title, !t.isEmpty { r.text = String(t.prefix(140)) }
+            if a.trigger != nil { r.trigger = home ? IntentionNudge.Trigger.arriveHome : IntentionNudge.Trigger.time }
+            if let t = time { r.time = t }
+            if let w = a.weekdays { r.weekdays = w.filter { (1...7).contains($0) }.sorted() }
+            if let t = a.task { r.itemId = s.items.first { Ref.matches(t, prefix: "t", full: $0.id.uuidString) }?.id }
+            if let i { s.policy.intentions[i] = r } else {
+                guard s.policy.intentions.count < 30 else { rep.problems.append("That's a lot of reminders already"); return }
+                s.policy.intentions.append(r)
+            }
+            rep.changes.append("Reminder: \(r.text)" + (r.trigger == IntentionNudge.Trigger.arriveHome ? " when you get home" : r.time.map { " at \($0.label)" } ?? ""))
+        }
+
+        func deleteReminder(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
+            guard let r = ref(a) else { missing("reminder", a, &rep); return }
+            let before = s.policy.intentions.count
+            s.policy.intentions.removeAll { Ref.matches(r, prefix: "n", full: $0.id.uuidString) }
+            if s.policy.intentions.count < before { rep.changes.append("Removed that reminder") } else { missing("reminder", a, &rep) }
+        }
+
+        func deleteAlarm(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
+            guard let r = ref(a) else { missing("alarm", a, &rep); return }
+            let before = s.alarmRules.count
+            s.alarmRules.removeAll { Ref.matches(r, prefix: "r", full: $0.id.uuidString) }
+            if s.alarmRules.count < before { rep.changes.append("Removed that alarm") } else { missing("alarm", a, &rep) }
+        }
+
+        func upsertSituation(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
+            guard let scope = SituationText.rule(a.scope, tz: tz, commitments: s.commitments, items: s.items) else {
+                rep.problems.append("A situation needs a scope (which days) as a day rule"); return
+            }
+            var effects: [Effect] = []
+            for raw in a.effects ?? [] {
+                if let e = SituationText.effect(raw, tz: tz, commitments: s.commitments, items: s.items) { effects.append(e) }
+                else { rep.problems.append("Couldn't read the effect \(raw.prefix(60))") }
+            }
+            guard !effects.isEmpty else { rep.problems.append("A situation needs at least one effect"); return }
+            var old: Situation?
+            if let r = ref(a) { old = s.situations.first { Ref.matches(r, prefix: "s", full: $0.id.uuidString) } }
+            let expires = a.expires.flatMap { AIMapper.parseDate($0, timeZone: tz) }.map { cal.startOfDay(for: $0) }
+            let sit = Situation(id: old?.id ?? UUID(), said: a.said ?? a.note ?? a.title ?? "", scope: scope, effects: effects,
+                                expires: expires, source: writer, createdAt: now)
+            var base = s
+            base.situations.removeAll { $0.id == old?.id }
+            let input = plannerInput(base)
+            switch SituationRules.admit(sit, into: input, writer: writer, calendarEventIds: Set(s.calendarEvents.map(\.id))) {
+            case .failure(let why): rep.problems.append(why.reason); return
+            case .success: break
+            }
+            s.situations = base.situations + [sit]
+            rep.changes.append((old == nil ? "Added: " : "Updated: ") + (sit.said.isEmpty ? scope.text(cal) : sit.said) + " (" + scope.text(cal) + ")")
+            let diffs = Preview.diff(input, adding: sit)
+            rep.changes += Preview.receipt(diffs, calendar: cal, limit: 5)
+        }
+
+        func deleteSituation(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
+            guard let r = ref(a) else { missing("situation", a, &rep); return }
+            let before = s.situations.count
+            s.situations.removeAll { Ref.matches(r, prefix: "s", full: $0.id.uuidString) }
+            if s.situations.count < before { rep.changes.append("Removed that situation") } else { missing("situation", a, &rep) }
+        }
+
+        func dayRule(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
+            guard let name = a.name?.trimmingCharacters(in: .whitespaces).lowercased(), !name.isEmpty else {
+                rep.problems.append("A day rule needs a name"); return
+            }
+            if (a.kind ?? "").lowercased().hasPrefix("seq") {
+                guard let rule = SituationText.rule(a.rule, tz: tz, commitments: s.commitments, items: s.items), let anchor = a.anchor.flatMap({ AIMapper.parseDate($0, timeZone: tz) }) else {
+                    rep.problems.append("A sequence needs a rule and an anchor date"); return
+                }
+                s.dayRules.sequences.removeAll { $0.name == name }
+                s.dayRules.sequences.append(DaySequence(name: name, rule: rule, anchor: cal.startOfDay(for: anchor)))
+                rep.changes.append("Counting “\(name)” days from \(DateFormatter.local("EEE d MMM", cal).string(from: anchor))")
+            } else {
+                let days = (a.dates ?? []).compactMap { AIMapper.parseDate($0, timeZone: tz) }
+                guard !days.isEmpty else { rep.problems.append("A label needs dates"); return }
+                if a.remove == true { s.dayRules.unlabel(name, days, calendar: cal) } else { s.dayRules.label(name, days, calendar: cal) }
+                rep.changes.append("\(name): \(a.remove == true ? "removed" : "added") \(days.count) day\(days.count == 1 ? "" : "s")")
+            }
+        }
+
+        func gap(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
+            guard let wanted = a.wanted, !wanted.isEmpty else { return }
+            s.gapNotes.append(GapNote(at: now, said: a.said ?? a.note ?? "", wanted: wanted))
+            s.gapNotes = Array(s.gapNotes.suffix(100))
+            rep.problems.append("I can't do that yet, and I've noted it: \(wanted)")
+        }
+
         func deleteDayChange(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
             let before = s.exceptions.count
             if let r = ref(a) {
@@ -514,10 +697,13 @@ public enum DumpApplier {
         func screenTime(_ a: DumpFields, _ s: inout DumpState, _ rep: inout DumpReport) {
             let rawApps = (a.apps ?? []).filter { !$0.name.isEmpty }
             ScrollingApps.register(rawApps.map { ($0.name, $0.category) }, into: &s.scrollingApps)
-            let apps = rawApps.map { AppUsage(name: $0.name, minutes: max(0, $0.minutes), distracting: false) }
+            let apps = rawApps.map { AppUsage(name: $0.name, minutes: max(0, $0.minutes), distracting: false,
+                                                       pickups: $0.pickups.map { max(0, $0) }, notifications: $0.notifications.map { max(0, $0) }) }
             let period = (a.period ?? "day").lowercased()
             var entry = ScreenDay(day: .distantPast, distractingMinutes: 0, totalMinutes: a.screenMinutes.map { max(0, $0) },
-                                  apps: apps.isEmpty ? nil : apps, source: "screenshot", partial: a.partial == true ? true : nil)
+                                  apps: apps.isEmpty ? nil : apps, source: "screenshot", partial: a.partial == true ? true : nil,
+                                  pickups: a.pickups.map { max(0, $0) }, firstPickup: ScreenReceipt.parseClock(a.firstPickup),
+                                  notifications: a.notifications.map { max(0, $0) })
             entry = entry.recomputed(s.scrollingApps)
             if apps.isEmpty { rep.problems.append("That screenshot shows no apps, so I can't tell how much of it was scrolling") }
 
@@ -532,11 +718,8 @@ public enum DumpApplier {
                 return
             }
 
-            let label = a.dateLabelShown?.lowercased() ?? ""
-            let today = cal.startOfDay(for: now)
-            var d = day(a.date)
-            if label.contains("today") { d = today }
-            else if label.contains("yesterday") { d = cal.date(byAdding: .day, value: -1, to: today) ?? today }
+            let d = ScreenDates.resolve(label: a.dateLabelShown, date: a.date.flatMap { AIMapper.parseDate($0, timeZone: tz) },
+                                        now: now, calendar: cal)
             entry.day = d
             if let existing = s.screen.first(where: { cal.isDate($0.day, inSameDayAs: d) }), existing.source == "screenshot" {
                 entry = existing.merged(with: entry, s.scrollingApps)

@@ -304,10 +304,6 @@ public enum Schemas {
         "rationale": str,
     ], required: ["steps", "rationale"])
 
-    public static let weeklyReview: JSONValue = obj([
-        "headline": str, "wins": arr(str), "suggestions": arr(str),
-    ], required: ["headline", "wins", "suggestions"])
-
     public static let cards: JSONValue = obj(["cards": arr(obj(["front": str, "back": str], required: ["front", "back"]))],
                                              required: ["cards"])
 
@@ -320,8 +316,7 @@ public enum Schemas {
 public enum Prompts {
     static let persona = """
     You are the assistant in Productium, a calm planner for high-school students. Warm, brief, concrete, never \
-    shaming. Sleep is never traded for test prep. No diagnoses; if someone seems in distress, suggest a trusted \
-    adult or a helpline.
+    shaming. Sleep is never traded for test prep.
     """
 
     static func iso(_ d: Date, _ tz: TimeZone) -> String {
@@ -345,19 +340,8 @@ public enum Prompts {
             + (aboutMe.isEmpty ? "" : "\n" + aboutMe.promptText)
     }
 
-    public static func weeklyReview() -> String {
-        persona + """
-
-        Write the student's weekly review from the data. Headline under 10 words. wins: 1-2 short sentences on what \
-        went well. suggestions: at most 2 small, specific, research-backed tweaks (sleep regularity, spacing, \
-        self-testing, shorter blocks, planning less if follow-through is low, phone out of the room). Be \
-        self-compassionate about misses. You can't change settings: the app learns them, and any change to how it behaves is a suggestion the student approves.
-        """
-    }
-
     public static func flashcards() -> String {
-        persona + """
-
+        """
         Make flashcards for a high-school student. Front: a recall question (not yes/no or multiple choice). \
         Back: exact answer, 25 words max. Mix definitions, "why" questions and an application problem.
         """
@@ -368,8 +352,7 @@ public enum Prompts {
     }
 
     public static func reads() -> String {
-        persona + """
-
+        """
         Write short reads (120-180 words) a curious high-schooler finishes in two minutes instead of scrolling. \
         Accurate, vivid, one surprising fact each, no fluff. question: one "why/how" question to think about.
         """

@@ -45,9 +45,14 @@ public struct NudgeSettings: Codable, Hashable, Sendable {
     public var scrollCheckIns: Bool
     public var arrivingHome: Bool
     public var deadlines: Bool
+    /// A stand-up-and-walk reminder after about 90 minutes of study, and a morning-light one on free days (v1.1 H6).
+    public var movement: Bool
+    public var daylight: Bool
 
     public init(level: NudgeLevel = .standard, alarms: Bool = false, scrollCheckIns: Bool = true,
-                arrivingHome: Bool = true, deadlines: Bool = true) {
+                arrivingHome: Bool = true, deadlines: Bool = true, movement: Bool = true, daylight: Bool = true) {
+        self.movement = movement
+        self.daylight = daylight
         self.level = level
         self.alarms = alarms
         self.scrollCheckIns = scrollCheckIns
@@ -64,6 +69,8 @@ public struct NudgeSettings: Codable, Hashable, Sendable {
         scrollCheckIns = v(.scrollCheckIns, d.scrollCheckIns)
         arrivingHome = v(.arrivingHome, d.arrivingHome)
         deadlines = v(.deadlines, d.deadlines)
+        movement = v(.movement, d.movement)
+        daylight = v(.daylight, d.daylight)
     }
 }
 
@@ -98,6 +105,7 @@ extension Plan {
 
 public enum NudgeKind: String, Codable, Sendable {
     case leadUp, start, followUp, end, windDown, bedtime, stillUp, leaveSoon, leaveNow, deadline, checkIn, morning, marker, intention
+    case movement, daylight
 }
 
 public struct PlannedNudge: Hashable, Sendable {
@@ -127,8 +135,8 @@ public struct PlannedNudge: Hashable, Sendable {
     }
 }
 
-public struct PlannedAlarm: Hashable, Sendable {
-    public enum Kind: String, Sendable { case bedtime, leave, missedStart }
+public struct PlannedAlarm: Codable, Hashable, Sendable {
+    public enum Kind: String, Codable, Sendable { case wake, bedtime, leave, missedStart }
     public var key: String
     public var kind: Kind
     public var at: Date
@@ -157,11 +165,16 @@ public struct NudgeInput {
     public var limit: Int
     public var timeLabel: ((Date) -> String)?
     public var policy: BehaviourPolicy
+    /// Alarms the student or the insight pass added, moved or removed (`AlarmRules`).
+    public var alarmRules: [AlarmRule]
+    public var dayRules: DayRuleBook
 
     public init(now: Date, calendar: Calendar, plan: Plan, items: [WorkItem], settings: NudgeSettings,
                 startedBlockId: UUID? = nil, answeredBlockIds: Set<UUID> = [], snoozedBlockIds: Set<UUID> = [],
                 markerPrompts: [(Date, String)] = [], limit: Int = 52, timeLabel: ((Date) -> String)? = nil,
-                policy: BehaviourPolicy = BehaviourPolicy()) {
+                policy: BehaviourPolicy = BehaviourPolicy(), alarmRules: [AlarmRule] = [], dayRules: DayRuleBook = DayRuleBook()) {
+        self.alarmRules = alarmRules
+        self.dayRules = dayRules
         self.policy = policy
         self.now = now
         self.calendar = calendar
@@ -291,6 +304,18 @@ public enum NudgePlanner {
             }
         }
 
+        if input.settings.movement && level != .gentle { movementBreaks(study, add: add) }
+        if input.settings.daylight && level != .gentle {
+            for w in plan.wakePlans where w.wake > now && w.wake < end {
+                let day = input.calendar.startOfDay(for: w.day)
+                guard w.firstCommitment == nil, plan.blocks.allSatisfy({ !($0.kind == .commitment && input.calendar.isDate($0.start, inSameDayAs: day)) }) else { continue }
+                add(PlannedNudge(id: "plan.daylight.\(Int(day.timeIntervalSince1970))", kind: .daylight, at: w.wake.addingTimeInterval(45 * 60),
+                                 title: "Get some morning light",
+                                 body: "Ten minutes outside in the first couple of hours helps your body clock, and tonight's sleep.",
+                                 deeplink: "productium://today"))
+            }
+        }
+
         for (i, s) in input.markerPrompts.prefix(4).enumerated() {
             add(PlannedNudge(id: "plan.marker.\(i)", kind: .marker, at: s.0, title: s.1 + "?",
                       body: "Tap Yes when it happens. A few of these and Productium learns your routine.", marker: s.1))
@@ -306,7 +331,26 @@ public enum NudgePlanner {
                                  itemId: intent.itemId, deeplink: "productium://now"))
             }
         }
-        return Array(dedupe(out).sorted { $0.at < $1.at }.prefix(input.limit))
+        let kept = out.filter { !plan.isMuted($0.kind, at: $0.at, calendar: input.calendar) }
+        return Array(dedupe(kept).sorted { $0.at < $1.at }.prefix(input.limit))
+    }
+
+    /// After about 90 minutes of study with only short breaks between, ask for a three-minute walk at the next break.
+    static func movementBreaks(_ study: [PlannedBlock], add: (PlannedNudge) -> Void) {
+        var run = 0
+        var last: PlannedBlock?
+        var asked = false
+        for b in study {
+            if let l = last, b.start.timeIntervalSince(l.end) > 25 * 60 { run = 0; asked = false }
+            run += b.minutes
+            last = b
+            if run >= 85 && !asked {
+                asked = true
+                add(PlannedNudge(id: "plan.move.\(b.id)", kind: .movement, at: b.end, title: "Stand up for three minutes",
+                                 body: "You've worked about \(minutesLabel(run)). A short walk or stretch comes back as better focus.",
+                                 blockId: b.id))
+            }
+        }
     }
 
     static func dedupe(_ xs: [PlannedNudge]) -> [PlannedNudge] {
@@ -338,6 +382,8 @@ public enum NudgePlanner {
         case .stillUp: return 11
         case .marker: return 12
         case .intention: return 6
+        case .movement: return 9
+        case .daylight: return 10
         }
     }
 
@@ -346,11 +392,11 @@ public enum NudgePlanner {
         let now = input.now, end = now.addingTimeInterval(horizon)
         var out: [PlannedAlarm] = []
         if let s = input.plan.blocks.first(where: { $0.kind == .sleep && $0.start > now && $0.start < end }) {
-            out.append(PlannedAlarm(key: "bed.\(s.id)", kind: .bedtime, at: s.start, title: "Bedtime"))
+            out.append(PlannedAlarm(key: "bed.\(AlarmPlanner.dayKey(s.end, input.calendar))", kind: .bedtime, at: s.start, title: "Bedtime"))
         }
         for w in input.plan.wakePlans {
             if let leave = w.leaveBy, leave > now, leave < end {
-                out.append(PlannedAlarm(key: "leave.\(Int(leave.timeIntervalSince1970))", kind: .leave, at: leave, title: "Time to leave"))
+                out.append(PlannedAlarm(key: "leave.\(AlarmPlanner.dayKey(leave, input.calendar))", kind: .leave, at: leave, title: "Time to leave"))
             }
         }
         for b in input.plan.blocks where b.isStudy && b.minutes >= 25 && b.id != input.startedBlockId
@@ -359,7 +405,11 @@ public enum NudgePlanner {
             guard at > now, at < end else { continue }
             out.append(PlannedAlarm(key: "miss.\(b.id)", kind: .missedStart, at: at, title: "Start \(b.title)", blockId: b.id))
         }
-        return Array(out.sorted { $0.at < $1.at }.prefix(max))
+        let kept = out.filter { a in
+            let kind: NudgeKind = a.kind == .bedtime ? .bedtime : a.kind == .leave ? .leaveNow : .start
+            return !input.plan.isMuted(kind, at: a.at, calendar: input.calendar)
+        }
+        return Array(kept.sorted { $0.at < $1.at }.prefix(max))
     }
 
     static func clock(_ d: Date, _ cal: Calendar) -> String {

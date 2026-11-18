@@ -155,14 +155,14 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(s.policy, BehaviourPolicy())
         XCTAssertEqual(r.changes, [])
         XCTAssertEqual(r.problems.count, 2)
-        XCTAssertTrue(r.problems[0].contains("only the weekly reflection can suggest it"), r.problems[0])
+        XCTAssertTrue(r.problems[0].contains("Productium only adjusts it from how your weeks go"), r.problems[0])
         run(&s, [.set("planner.maxBlockMinutes", "25")], writer: .reflection)
         XCTAssertEqual(s.policy.maxBlockMinutes, 45, "55 → 25 asked, at most -10 per change")
         run(&s, [.set("planner.capacityMultiplier", "3")], writer: .reflection)
         XCTAssertEqual(s.policy.capacityMultiplier, 1.1, accuracy: 0.001)
         let forbidden = run(&s, [.set("sleepNeedMinutes", "450")], writer: .reflection)
         XCTAssertEqual(forbidden.problems.count, 1, "reflection never touches sleep need")
-        XCTAssertFalse(Prompts.dump().contains("planner.maxBlockMinutes"))
+        XCTAssertFalse(Prompts.dump().contains("planner.capacityMultiplier"))
         s.policy.maxBlockMinutes = 25
         let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 6), estimateMinutes: 240)
         let plan = Planner.plan(PlannerInput(now: Fx.mon(6), calendar: cal, items: [essay], commitments: s.commitments,

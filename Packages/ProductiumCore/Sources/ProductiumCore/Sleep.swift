@@ -18,7 +18,9 @@ public struct SleepNight: Hashable, Sendable {
     public var bedtime: Date
     public var wake: Date
     public var source: SleepSource
-    public var minutes: Int { max(0, Int(wake.timeIntervalSince(bedtime) / 60)) }
+    /// Time awake in the night (steps or phone use between bed and wake), taken off the total.
+    public var awakeMinutes: Int = 0
+    public var minutes: Int { max(0, Int(wake.timeIntervalSince(bedtime) / 60) - awakeMinutes) }
 }
 
 public enum SleepEstimator {
@@ -38,7 +40,28 @@ public enum SleepEstimator {
 
     public static func night(morningOf day: Date, health: HealthDay?, markers: [TimelineEvent], motion: [MotionSpan] = [],
                              phoneUse: [Date] = [], plannedWake: Date?, sleepNeedMinutes: Int,
-                             calendar cal: Calendar) -> SleepNight? {
+                             calendar cal: Calendar, firstPickup: Date? = nil, charging: Date? = nil,
+                             awakeBursts: [Date] = []) -> SleepNight? {
+        var n = nightBase(morningOf: day, health: health, markers: markers, motion: motion, phoneUse: phoneUse, plannedWake: plannedWake,
+                          sleepNeedMinutes: sleepNeedMinutes, calendar: cal, firstPickup: firstPickup, charging: charging)
+        // Steps or phone use in the middle of the night mean you were up: the gaps come off, one 10 minute block per burst.
+        if var night = n, night.source == .motion || night.source == .plan || night.source == .checkIns {
+            var blocks = 0
+            var last: Date?
+            for t in (awakeBursts.isEmpty ? phoneUse : awakeBursts).sorted() where t > night.bedtime.addingTimeInterval(20 * 60) && t < night.wake.addingTimeInterval(-20 * 60) {
+                if let l = last, t.timeIntervalSince(l) < 15 * 60 { continue }
+                blocks += 1
+                last = t
+            }
+            night.awakeMinutes = min(blocks * 10, 120)
+            n = night
+        }
+        return n
+    }
+
+    static func nightBase(morningOf day: Date, health: HealthDay?, markers: [TimelineEvent], motion: [MotionSpan],
+                          phoneUse: [Date], plannedWake: Date?, sleepNeedMinutes: Int, calendar cal: Calendar,
+                          firstPickup: Date?, charging: Date?) -> SleepNight? {
         let dayStart = cal.startOfDay(for: day)
         if let h = health, let wake = h.wake, let mins = h.sleepMinutes, h.sleepSource == nil || h.sleepSource == .health {
             return SleepNight(day: dayStart, bedtime: h.bedtime ?? wake.addingTimeInterval(-Double(mins) * 60), wake: wake, source: .health)
@@ -59,22 +82,33 @@ public enum SleepEstimator {
         if let s = still {
             let lastUse = phoneUse.filter { $0 <= s.start.addingTimeInterval(30 * 60) && $0 > s.start.addingTimeInterval(-3 * 3600) }.max()
             let firstUse = phoneUse.filter { $0 >= s.end.addingTimeInterval(-30 * 60) && $0 < s.end.addingTimeInterval(3 * 3600) }.min()
-            let bed = max(s.start, lastUse ?? s.start)
-            let wake = min(s.end, firstUse ?? s.end)
+            // The phone going on the charger is another sign the night began (v1.1 H4).
+            let plug = charging.flatMap { $0 > s.start.addingTimeInterval(-3 * 3600) && $0 < s.start.addingTimeInterval(3600) ? $0 : nil }
+            let bed = max(s.start, lastUse ?? plug ?? s.start)
+            // The first pickup of the day is never before you woke, so it can only pull the wake time earlier.
+            let pickup = firstPickup.flatMap { $0 > bed ? $0 : nil }
+            let wake = min(s.end, firstUse ?? s.end, pickup ?? s.end)
             if wake > bed { return SleepNight(day: dayStart, bedtime: bed, wake: wake, source: .motion) }
+        }
+        if let p = firstPickup, p > dayStart.addingTimeInterval(3 * 3600), p < dayStart.addingTimeInterval(12 * 3600) {
+            let bed = charging.flatMap { $0 < p.addingTimeInterval(-4 * 3600) && $0 > p.addingTimeInterval(-14 * 3600) ? $0 : nil }
+                ?? p.addingTimeInterval(-Double(sleepNeedMinutes) * 60)
+            return SleepNight(day: dayStart, bedtime: bed, wake: p, source: .motion)
         }
         guard let w = plannedWake else { return nil }
         return SleepNight(day: dayStart, bedtime: w.addingTimeInterval(-Double(sleepNeedMinutes) * 60), wake: w, source: .plan)
     }
 
     public static func fill(_ health: [HealthDay], days: [Date], markers: [TimelineEvent], motion: [MotionSpan],
-                            phoneUse: [Date], sleepNeedMinutes: Int, calendar cal: Calendar) -> [HealthDay] {
+                            phoneUse: [Date], sleepNeedMinutes: Int, calendar cal: Calendar,
+                            firstPickups: [Date: Date] = [:], charging: [Date: Date] = [:]) -> [HealthDay] {
         var byDay = Dictionary(health.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
         for d in days.map({ cal.startOfDay(for: $0) }) {
             var h = byDay[d] ?? HealthDay(day: d)
             if h.sleepMinutes != nil && (h.sleepSource == nil || h.sleepSource == .health) { continue }
             guard let n = night(morningOf: d, health: nil, markers: markers, motion: motion, phoneUse: phoneUse,
-                                plannedWake: nil, sleepNeedMinutes: sleepNeedMinutes, calendar: cal), n.source != .plan else {
+                                plannedWake: nil, sleepNeedMinutes: sleepNeedMinutes, calendar: cal,
+                                firstPickup: firstPickups[d], charging: charging[d]), n.source != .plan else {
                 if h.sleepSource != nil && h.sleepSource != .health {
                     h.sleepMinutes = nil; h.bedtime = nil; h.wake = nil; h.sleepSource = nil
                     byDay[d] = h

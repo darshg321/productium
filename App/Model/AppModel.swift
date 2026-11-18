@@ -28,12 +28,14 @@ final class AppModel {
 
     init() {
         state = Persistence.load()
+        state.screen = state.screen.recomputed(state.scrollingApps)
+        state.screenAverages = state.screenAverages.recomputed(state.scrollingApps)
         callLog = CallLogStore.load()
         aboutMe = AboutMeStore.load()
     }
 
     // The Inbox draft survives tab changes, backgrounding and relaunch: text in state, images as files.
-    static var draftsURL: URL { SharedConfig.containerURL.appendingPathComponent("drafts", isDirectory: true) }
+    static var draftsURL: URL { LocalStore.containerURL.appendingPathComponent("drafts", isDirectory: true) }
     @ObservationIgnored private var draftImageCache: [String: (UIImage, AIImage)] = [:]
 
     var draftText: String {
@@ -120,9 +122,9 @@ final class AppModel {
     func foreground() {
         Friction.ended(by: .productium)
         state.appOpens.append(Date())
-        if let link = SharedConfig.defaults.string(forKey: SharedConfig.Key.pendingDeepLink) {
+        if let link = LocalStore.defaults.string(forKey: LocalStore.Key.pendingDeepLink) {
             deepLink = link
-            SharedConfig.defaults.removeObject(forKey: SharedConfig.Key.pendingDeepLink)
+            LocalStore.defaults.removeObject(forKey: LocalStore.Key.pendingDeepLink)
         }
         if Date().timeIntervalSince(lastRefresh) > 5 * 60 { Task { await refresh() } } else { replan() }
     }
@@ -144,8 +146,7 @@ final class AppModel {
         replan()
         if full {
             serverOnline = await ClaudeClient.shared.ping()
-            await weeklyReviewIfDue()
-            await reflectIfDue()
+            await insightPass()
             await refreshServerUsage()
             await refreshSubscription()
         }
@@ -162,14 +163,21 @@ final class AppModel {
         } else if let cur = state.plan.current(at: now), cur.isStudy, !state.outcomes.contains(where: { $0.blockId == cur.id }) {
             locked = [cur]
         }
-        let input = PlannerInput(now: now, calendar: cal, items: state.items, commitments: state.commitments,
-                                 events: shownEvents + state.oneOffs, preferences: state.prefs, learned: state.learned,
-                                 health: state.health, moods: state.moods, locked: locked, routines: state.routines,
-                                 exceptions: state.exceptions, horizonDays: 14, policy: state.policy, beliefs: state.beliefs)
+        state.dayRules.syncNoSchool(exceptions: state.exceptions, commitments: state.commitments, calendar: cal)
+        let input = plannerInput(now: now, locked: locked)
         PlanHistory.record(previous: state.plan, into: &state.planHistory, now: now, calendar: cal)
+        PlanHistory.recordBedtimes(plan: state.plan, into: &state.plannedBedtimes, now: now, calendar: cal)
         state.plan = Planner.merge(previous: state.plan, new: Planner.plan(input), now: now, calendar: cal)
         save()
         applyPlanEffects()
+    }
+
+    func plannerInput(now: Date, locked: [PlannedBlock] = []) -> PlannerInput {
+        PlannerInput(now: now, calendar: cal, items: state.items, commitments: state.commitments,
+                     events: shownEvents + state.oneOffs, preferences: state.prefs, learned: state.learned,
+                     health: state.health, moods: state.moods, locked: locked, routines: state.routines,
+                     exceptions: state.exceptions, horizonDays: 14, policy: state.policy, beliefs: state.beliefs,
+                     situations: state.situations, dayRules: state.dayRules)
     }
 
     private func applyPlanEffects() {
@@ -180,23 +188,18 @@ final class AppModel {
         if state.integrations.notifications { scheduleGapQuestion(now: now) }
         if state.integrations.notifications {
             NotificationService.schedule(NudgePlanner.plan(nudges))
-            NotificationService.scheduleHousekeeping(freeTier: Signature.isFreeTier, expiry: signatureExpiry)
+            NotificationService.scheduleHousekeeping(expiry: signatureExpiry)
         }
         let n = state.prefs.nudges
-        SharedConfig.defaults.set(n.scrollCheckIns && state.integrations.notifications ? n.level.scrollCheckIns : [],
-                                  forKey: SharedConfig.Key.scrollCheckIns)
-        Task { await AlarmService.scheduleNudges(NudgePlanner.alarms(nudges)) }
-        if state.integrations.screenTime {
-            let st = ScreenTimeService.shared
-            st.configureDaily(limitMinutes: state.taper.dailyLimit, unlocksPerDay: state.taper.unlocksPerDay)
-            st.configureSchedules(plan: plan, prefs: state.prefs, shieldFocus: true, shieldWindDown: true)
-        }
-        WidgetService.publish(plan: plan, outcomes: state.outcomes)
-        if state.integrations.liveActivities {
-            LiveActivityService.update(current: plan.current(at: now), next: plan.next(after: now))
-        }
-        if state.integrations.alarms { Task { await AlarmService.schedule(plan.wakePlans) } }
+        LocalStore.defaults.set(n.scrollCheckIns && state.integrations.notifications ? n.level.scrollCheckIns : [],
+                                  forKey: LocalStore.Key.scrollCheckIns)
+        syncAlarms(nudges)
         if state.integrations.calendarExport { CalendarService.shared.export(plan: plan) }
+    }
+
+    /// Both alarm toggles feed one wanted list; an off toggle means its alarms are cancelled, not left behind.
+    func syncAlarms(_ input: NudgeInput? = nil) {
+        AlarmService.sync(AlarmPlanner.desired(input ?? nudgeInput(), wake: state.integrations.alarms && state.prefs.wakeAlarms))
     }
 
     func nudgeInput(now: Date = Date()) -> NudgeInput {
@@ -205,7 +208,7 @@ final class AppModel {
         return NudgeInput(now: now, calendar: cal, plan: state.plan, items: state.items, settings: state.prefs.nudges,
                           startedBlockId: state.focus?.blockId, answeredBlockIds: answered, snoozedBlockIds: snoozed,
                           markerPrompts: markerPrompts(), timeLabel: { $0.formatted(date: .omitted, time: .shortened) },
-                          policy: state.policy)
+                          policy: state.policy, alarmRules: state.alarmRules, dayRules: state.dayRules)
     }
 
     var currentBlock: PlannedBlock? { state.plan.current(at: Date()) }
@@ -248,9 +251,7 @@ final class AppModel {
         state.focus = FocusSession(blockId: b.id, itemId: b.itemId, title: b.title, startedAt: Date(), plannedEnd: end)
         state.snoozed[b.id] = nil
         NotificationService.cancel(blockId: b.id)
-        AlarmService.cancelNudge(blockId: b.id)
-        if state.integrations.screenTime { ScreenTimeService.shared.focusNow(true, title: b.title, ends: end) }
-        LiveActivityService.update(current: PlannedBlock(id: b.id, kind: b.kind, start: Date(), end: end, title: b.title), next: nil)
+        syncAlarms()
         save()
     }
 
@@ -287,7 +288,7 @@ final class AppModel {
         state.snoozed[blockId] = Date().addingTimeInterval(Double(minutes) * 60)
         Avoidance.record(.snoozed, itemId: b.itemId, in: &state.items, at: Date(), blockId: blockId)
         NotificationService.snooze(blockId: blockId, title: b.title, minutes: minutes)
-        AlarmService.cancelNudge(blockId: blockId)
+        syncAlarms()
         save()
     }
 
@@ -304,8 +305,27 @@ final class AppModel {
         guard let f = state.focus else { return }
         let elapsed = max(1, Int(Date().timeIntervalSince(f.startedAt) / 60))
         state.focus = nil
-        if state.integrations.screenTime { ScreenTimeService.shared.focusNow(false) }
+        let item = f.itemId.flatMap { id in state.items.first { $0.id == id } }
+        func percent(_ done: Int) -> Int? { item.flatMap { $0.estimateMinutes > 0 ? min(100, done * 100 / $0.estimateMinutes) : nil } }
+        let totalBefore = state.outcomes.filter { $0.status != .skipped && $0.kind != nil }.reduce(0) { $0 + $1.actualMinutes }
+        let before = percent(item?.completedMinutes ?? 0)
         logOutcome(blockId: f.blockId, status: status, actualMinutes: elapsed)
+        let after = percent(state.items.first { $0.id == f.itemId }?.completedMinutes ?? 0)
+        celebrate(.focusEnded(status: status, minutes: elapsed, title: item?.title, percentBefore: before, percentAfter: after,
+                              freeAfterMinutes: nil, totalFocusMinutesBefore: totalBefore))
+        let today = state.plan.blocks(on: Date(), calendar: cal).filter(\.isStudy)
+        if status != .skipped, !today.isEmpty,
+           today.allSatisfy({ b in state.outcomes.contains { $0.blockId == b.id && $0.status != .skipped } }) {
+            celebrate(.planFinished(freeMinutesLeft: nil))
+        }
+    }
+
+    /// A moment for something the student did toward their goals (never for opening the app). `Rewards.respond`
+    /// decides whether there is one, how big, and keeps the budget. Shown by `RootView`, and Off means nothing.
+    func celebrate(_ event: RewardEvent) {
+        guard let m = Rewards.respond(to: event, log: &state.rewards, settings: state.rewardSettings, now: Date(), calendar: cal) else { return }
+        rewardMoment = m
+        save()
     }
 
     func add(_ item: WorkItem) {
@@ -345,6 +365,9 @@ final class AppModel {
         state.items[i].isDone = true
         state.items[i].doneAt = Date()
         let it = state.items[i]
+        let stepsLeft = it.parentId.map { p in state.items.filter { $0.parentId == p && !$0.isDone }.count } ?? 0
+        let daysEarly = max(0, cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: cal.startOfDay(for: it.due)).day ?? 0)
+        celebrate(.itemDone(title: it.title, isStep: it.parentId != nil, stepsLeft: stepsLeft, daysEarly: daysEarly))
         if it.completedMinutes >= 10 {
             state.learned.recordCompletion(kind: it.kind, estimated: it.estimateMinutes, actual: it.completedMinutes)
         }
@@ -368,6 +391,8 @@ final class AppModel {
 
     // Places that learn themselves: ask to save a place you've just said you're at, or keep returning to.
     var placeOffer: PlaceOffer?
+    /// The celebration being shown now (cleared by `RootView` after a few seconds).
+    var rewardMoment: RewardMoment?
 
     func recordVisit(_ v: PlaceVisit) {
         guard let i = state.visits.firstIndex(where: { $0.arrival == v.arrival }) else {
@@ -487,6 +512,7 @@ final class AppModel {
 
     func logMood(_ mood: Int, energy: Int?, note: String?) {
         state.moods.append(MoodEntry(mood: mood, energy: energy, note: note))
+        if state.integrations.health { HealthService.shared.logStateOfMind(mood) }
         replan()
     }
 
@@ -502,6 +528,12 @@ final class AppModel {
         var byDay = Dictionary(state.health.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
         for d in days { byDay[cal.startOfDay(for: d.day)] = d }
         state.health = byDay.values.sorted { $0.day < $1.day }
+        // Moods logged elsewhere (Apple Watch, the Health app) come in once, unless one is already there within 10 minutes.
+        for (at, mood) in await HealthService.shared.stateOfMind(back: 14)
+        where !state.moods.contains(where: { abs($0.at.timeIntervalSince(at)) < 600 }) {
+            state.moods.append(MoodEntry(at: at, mood: mood, note: "From Health"))
+        }
+        state.moods.sort { $0.at < $1.at }
         let mids = HealthService.freeDayMidpoints(Array(state.health.suffix(28)), prefs: state.prefs, cal: cal)
         if let c = LearnedModel.chronotype(fromFreeDaySleepMidpointsHours: mids) { state.learned.inferredChronotype = c }
     }
@@ -549,7 +581,7 @@ final class AppModel {
             + state.markers.filter { $0.source != .geofence && $0.source != .inferred }.map(\.at)
     }
 
-    /// Changes the state the box and proposals work on, about-me included.
+    /// Changes the state the box and the insight pass work on, about-me included.
     @discardableResult
     func editDumpState<T>(_ change: (inout DumpState) -> T) -> T {
         var ds = state.dumpState
@@ -573,8 +605,23 @@ final class AppModel {
     func estimateSleep() {
         let today = cal.startOfDay(for: Date())
         let days = (0..<14).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
+        // First Pickup from Screen Time screenshots: you woke at or before it.
+        var pickups: [Date: Date] = [:]
+        for d in state.screen {
+            if let m = d.firstPickup, d.source == "screenshot" {
+                pickups[cal.startOfDay(for: d.day)] = cal.date(byAdding: .minute, value: m, to: cal.startOfDay(for: d.day))
+            }
+        }
+        // The last time the charger went in between 6 pm the evening before and 3 am.
+        let plugs = (LocalStore.defaults.array(forKey: LocalStore.Key.chargingTimes) as? [Double] ?? []).map { Date(timeIntervalSince1970: $0) }
+        var charging: [Date: Date] = [:]
+        for d in days.map({ cal.startOfDay(for: $0) }) {
+            let from = d.addingTimeInterval(-6 * 3600), to = d.addingTimeInterval(3 * 3600)
+            if let t = plugs.filter({ $0 >= from && $0 <= to }).max() { charging[d] = t }
+        }
         state.health = SleepEstimator.fill(state.health, days: days, markers: state.markers, motion: state.motion,
-                                           phoneUse: phoneUse, sleepNeedMinutes: state.prefs.sleepNeedMinutes, calendar: cal)
+                                           phoneUse: phoneUse, sleepNeedMinutes: state.prefs.sleepNeedMinutes, calendar: cal,
+                                           firstPickups: pickups, charging: charging)
     }
 
     private func syncCalendar() {
@@ -600,12 +647,6 @@ final class AppModel {
         if !measured.isEmpty {
             state.screen = state.screen.merging(measured: measured, calendar: cal).map { $0.recomputed(state.scrollingApps) }
         }
-        guard state.integrations.screenTime else { return }
-        var byDay = Dictionary(state.screen.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
-        for d in ScreenTimeService.shared.usageDays(back: 21) where d.distractingMinutes > 0 || byDay[d.day] == nil {
-            byDay[cal.startOfDay(for: d.day)] = d
-        }
-        state.screen = byDay.values.sorted { $0.day < $1.day }
     }
 
     /// Pairs complete a routine sample as soon as the end marker exists; learned marker ids stop a pair counting twice.
@@ -620,66 +661,107 @@ final class AppModel {
         }
     }
 
-    func reflectIfDue(asked question: String? = nil) async {
+    /// The weekly note and the quiet insight pass (v1.1 D.2): one Sonnet call. The note is shown; the changes are
+    /// applied at once and only listed in What Productium Thinks → Changes. `force` is pull-to-refresh.
+    func insightPass(force: Bool = false, asked question: String? = nil) async {
         let now = Date()
-        state.proposals.expire(now: now)
-        let since = now.addingTimeInterval(-14 * 86400)
-        let deferrals = Reflection.deferrals(items: state.items, since: since)
+        guard !busy.contains("review") else { return }
+        let deferrals = InsightPass.deferrals(items: state.items, since: now.addingTimeInterval(-14 * 86400))
         let days = dayRecords(back: 14)
-        let weeklyDue = state.reflectionAt.map { now.timeIntervalSince($0) > 6.5 * 86400 } ?? (state.outcomes.count >= 5)
-        guard let trigger = Reflection.trigger(now: now, lastRun: state.reflectionAt, deferrals: deferrals, days: days,
-                                               weeklyDue: weeklyDue, asked: question != nil,
-                                               paused: state.proposals.isPaused(now: now), budgetAllows: aiAllowed(.reflection),
-                                               calendar: cal) else { return }
-        busy.insert("reflection")
-        defer { busy.remove("reflection") }
+        let weeklyDue: Bool
+        if let at = state.reviewAt {
+            weeklyDue = now.timeIntervalSince(at) > (force ? 600 : 6.5 * 86400)
+        } else {
+            weeklyDue = force || state.outcomes.count >= 5
+        }
+        guard let trigger = InsightPass.trigger(now: now, lastRun: state.insightAt, deferrals: deferrals, days: days,
+                                                weeklyDue: weeklyDue, asked: question != nil, budgetAllows: aiAllowed(.review),
+                                                calendar: cal) else { return }
+        busy.insert("review")
+        defer { busy.remove("review") }
         let convos = state.archive.conversations.suffix(5).compactMap(\.title) + state.conversation.turns.suffix(5).map { String($0.text.prefix(120)) }
-        let user = Reflection.request(now: now, aboutMe: aboutMe, beliefs: state.beliefs, routines: state.routines, deferrals: deferrals,
-                                      days: days, policy: state.policy, feedback: state.proposals.feedback, conversations: convos,
-                                      items: state.items, trigger: trigger, question: question, calendar: cal)
+        let input = InsightInput(now: now, calendar: cal, trigger: trigger, question: question, aboutMe: aboutMe,
+                                 beliefs: state.beliefs, routines: state.routines, deferrals: deferrals, days: days,
+                                 summary: Insights.summarize(dayTotals(last: 7), learned: state.learned), policy: state.policy,
+                                 feedback: state.changes.feedback, changes: state.changes.changeSummary(now: now),
+                                 conversations: convos, items: state.items, plan: state.plan, moods: state.moods,
+                                 taper: state.taper, learned: state.learned, commitments: state.commitments,
+                                 situations: state.situations, dayRules: state.dayRules, exceptions: state.exceptions,
+                                 metrics: MetricsExport.summary(metricSeries(), now: now, calendar: cal))
         guard let out = try? await ClaudeClient.shared.structured(
-            feature: .reflection, system: Reflection.system(), user: user, schema: Reflection.schema, as: Reflection.Output.self,
-            maxTokens: 1500, accept: { !$0.note.isEmpty }) else { return }
-        state.reflectionAt = now
-        let run = ReflectionRun(at: now, note: out.note, model: AIModel.opus)
-        let drafts = Reflection.drafts(out, runId: run.id, items: state.items, now: now, model: AIModel.opus, calendar: cal)
-        var ds = state.dumpState
-        ds.aboutMe = aboutMe
-        state.proposals.submit(run, drafts, state: ds, now: now)
-        if drafts.isEmpty { toast = out.note }
-        save()
-    }
-
-    func approveProposal(_ id: UUID) {
-        let now = Date()
-        guard editDumpState({ state.proposals.approve(id, in: &$0, now: now, calendar: cal) }) else { return }
+            feature: .review, system: InsightPass.system(), user: InsightPass.request(input), schema: InsightPass.schema,
+            as: InsightPass.Output.self, maxTokens: 1500, accept: { !$0.headline.isEmpty }) else { return }
+        state.insightAt = now
+        state.review = out.review
+        state.reviewAt = now
+        let model = AIFeature.review.route.model
+        let run = InsightRun(at: now, note: out.headline, model: model)
+        var drafts = InsightPass.drafts(out, runId: run.id, items: state.items, now: now, model: model, calendar: cal,
+                                        commitments: state.commitments)
+        // F6: with four weeks of data, celebrations that made no difference to the next day's focus are turned down.
+        let impact = RewardImpact.evaluate(log: state.rewards, outcomes: state.outcomes, now: now, calendar: cal)
+        if let level = RewardImpact.turnDown(impact, settings: state.rewardSettings), let i = impact {
+            drafts.append(LoggedChange(runId: run.id, change: .celebrations(to: level, from: state.rewardSettings.level),
+                                       reason: "Focus the day after a celebration was \(Int(i.withMoments.rounded())) min, and \(Int(i.without.rounded())) min after none, over \(i.daysWith + i.daysWithout) days",
+                                       evidence: [], model: "code", at: now))
+        }
+        let base = plannerInput(now: now)
+        let calendarIds = Set(state.events.map(\.id))
+        editDumpState {
+            state.changes.apply(run, drafts, to: &$0, now: now, admitSituation: { sit in
+                if case .failure(let why) = SituationRules.admit(sit, into: base, writer: .reflection, calendarEventIds: calendarIds) {
+                    return why.reason
+                }
+                return nil
+            })
+        }
         replan()
     }
 
-    func approveRun(_ runId: UUID) {
-        for p in state.proposals.pending where p.runId == runId { approveProposal(p.id) }
-    }
-
-    func rejectProposal(_ id: UUID) { state.proposals.reject(id, now: Date()); save() }
-
-    func rejectRun(_ runId: UUID) {
-        for p in state.proposals.pending where p.runId == runId { state.proposals.reject(p.id, now: Date()) }
-        save()
-    }
-
-    func neverChange(_ id: UUID) { state.proposals.neverChange(id, now: Date()); save() }
-
-    func revertProposal(_ id: UUID) {
-        let now = Date()
-        guard editDumpState({ state.proposals.revert(id, in: &$0, now: now) }) else { return }
+    func setAlarmRule(_ id: UUID, enabled: Bool) {
+        guard let i = state.alarmRules.firstIndex(where: { $0.id == id }) else { return }
+        state.alarmRules[i].enabled = enabled
         replan()
+    }
+
+    func removeAlarmRule(_ id: UUID) {
+        state.alarmRules.removeAll { $0.id == id }
+        replan()
+    }
+
+    func removeReminder(_ id: UUID) {
+        state.policy.intentions.removeAll { $0.id == id }
+        replan()
+    }
+
+    func removeSituation(_ id: UUID) {
+        state.situations.removeAll { $0.id == id }
+        replan()
+    }
+
+    func revertChange(_ id: UUID) {
+        let now = Date()
+        guard editDumpState({ state.changes.revert(id, in: &$0, now: now) }) else { return }
+        replan()
+    }
+
+    func neverChange(_ id: UUID) {
+        let now = Date()
+        editDumpState { state.changes.neverChange(id, in: &$0, now: now) }
+        replan()
+    }
+
+    func unpin(_ target: String) {
+        state.changes.unpin(target)
+        save()
     }
 
     var dueGap: MysteryGap?
 
     func gapInput(now: Date = Date()) -> GapInput {
         GapInput(now: now, day: dayInputs(cal.startOfDay(for: now)), scrolling: Friction.log.sessions, phoneUse: phoneUse,
-                        plan: state.plan, focusing: state.focus != nil, log: state.gaps)
+                 plan: state.plan, focusing: state.focus != nil, log: state.gaps,
+                 explained: state.visits.map { v in DateInterval(start: v.arrival, end: max(v.arrival, v.departure ?? now)) })
     }
 
     private func scheduleGapQuestion(now: Date) {
@@ -727,7 +809,8 @@ final class AppModel {
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
                          screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,
                          exceptions: state.exceptions, motion: state.motion, scrollSessions: Friction.log.sessions,
-                         scrollingApps: state.scrollingApps, progress: state.progress)
+                         scrollingApps: state.scrollingApps, progress: state.progress,
+                         situations: state.situations, dayRules: state.dayRules)
     }
 
     func setScrolling(_ app: String, _ on: Bool) {
@@ -735,6 +818,25 @@ final class AppModel {
         state.screen = state.screen.map { $0.recomputed(state.scrollingApps) }
         state.screenAverages = state.screenAverages.map { $0.recomputed(state.scrollingApps) }
         replan()
+    }
+
+    /// Every Life Metric as a daily series (Part G). Built on demand; it's a few hundred points.
+    func metricSeries(days n: Int = 120) -> [MetricID: MetricSeries] {
+        let today = cal.startOfDay(for: Date())
+        let days = (0..<n).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
+        var planned: [Date: Int] = [:]
+        for d in days {
+            let m = PlanHistory.plannedMinutes(on: d, history: state.planHistory, plan: state.plan, outcomes: state.outcomes, calendar: cal)
+            if m > 0 { planned[d] = m }
+        }
+        let x = MetricsInput(days: days, screen: ScreenSeries.daily(screen: state.screen, averages: state.screenAverages, days: days, calendar: cal),
+                             screenDays: state.screen, health: state.health, moods: state.moods, items: state.items,
+                             outcomes: state.outcomes, progress: state.progress, markers: state.markers, planned: planned,
+                             sleepNeed: state.prefs.sleepNeedMinutes,
+                             away: PlaceTime.awayMinutes(visits: state.visits, home: state.places.first { $0.id == "home" },
+                                                         now: Date(), calendar: cal),
+                             plannedBed: state.plannedBedtimes)
+        return MetricsBuilder.series(x, calendar: cal)
     }
 
     func dayTotals(last n: Int, includeToday: Bool = false) -> [DayTotals] {
@@ -843,25 +945,6 @@ final class AppModel {
         save()
     }
 
-    func weeklyReviewIfDue(force: Bool = false) async {
-        guard aiAllowed(.review) else { return }
-        if let at = state.reviewAt, Date().timeIntervalSince(at) < (force ? 600 : 6.5 * 86400) { return }
-        guard force || state.outcomes.count >= 5 else { return }
-        busy.insert("review")
-        defer { busy.remove("review") }
-        let summary = Insights.summarize(dayTotals(last: 7), learned: state.learned)
-        let ctx = Prompts.context(now: Date(), items: state.items, plan: state.plan, summary: summary, moods: state.moods,
-                                  taper: state.taper, learned: state.learned, calendar: cal, aboutMe: aboutMe,
-                                  beliefs: state.beliefs.summary(routines: state.routines),
-                                  changes: state.proposals.changeSummary(now: Date()))
-        guard let r = try? await ClaudeClient.shared.structured(feature: .review, system: Prompts.weeklyReview(), user: ctx,
-                                                               schema: Schemas.weeklyReview, as: WeeklyReview.self,
-                                                               maxTokens: 500, accept: { !$0.headline.isEmpty }) else { return }
-        state.review = r
-        state.reviewAt = Date()
-        save()
-    }
-
     var undoTurnId: UUID?
     @ObservationIgnored private var undoAboutMe: AboutMe?
 
@@ -876,7 +959,7 @@ final class AppModel {
         let context = Prompts.dumpContext(DumpContextInput(now: now, calendar: cal, state: state.dumpState,
                                                            calendarEvents: shownEvents, todaySegments: segments(on: today),
                                                            plan: state.plan, warnings: activeWarnings, aboutMe: aboutMe,
-                                                           changes: state.proposals.changeSummary(now: now)))
+                                                           changes: state.changes.changeSummary(now: now)))
         let convo = state.conversation
         let content = ConversationPolicy.userContent(for: convo, text: text, images: images, fullContext: context)
         let req = convo.request(system: Prompts.dump(), tool: ConversationPolicy.tool(schema: Schemas.dump),
@@ -889,7 +972,10 @@ final class AppModel {
             let before = Set(state.items.map(\.id))
             let itemsBefore = state.items
             let turnId = UUID()
+            let alarmsBefore = state.alarmRules.count
             let report = editDumpState { DumpApplier.apply(result, to: &$0, now: now, calendar: cal, writer: .box, turnId: turnId) }
+            // The student just asked for an alarm: make sure iOS has been asked to allow it.
+            if state.alarmRules.count > alarmsBefore { Task { _ = await AlarmService.requestAuthorization() } }
             Avoidance.recordDueMoves(before: itemsBefore, after: &state.items, at: now, reason: text)
             estimateSleep()
             var reply = result.reply
@@ -996,6 +1082,7 @@ final class AppModel {
             ("tasks.csv", Data(Exporter.itemsCSV(state.items).utf8)),
             ("study-sessions.csv", Data(Exporter.outcomesCSV(state.outcomes).utf8)),
             ("moods.csv", Data(Exporter.moodsCSV(state.moods).utf8)),
+            ("metrics.csv", Data(MetricsExport.csv(metricSeries(days: 365), calendar: cal).utf8)),
             ("check-ins.csv", Data(Exporter.markersCSV(state.markers).utf8)),
             ("plan.ics", Data(Exporter.ics(state.plan).utf8)),
         ]
@@ -1031,7 +1118,6 @@ final class AppModel {
     }
 
     func deleteEverything() {
-        ScreenTimeService.shared.disable()
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         clearCallLog()
         aboutMe = .empty
@@ -1049,13 +1135,5 @@ enum Signature {
               let open = text.range(of: "<date>", range: key.upperBound..<text.endIndex),
               let close = text.range(of: "</date>", range: open.upperBound..<text.endIndex) else { return nil }
         return ISO8601DateFormatter().date(from: String(text[open.upperBound..<close.lowerBound]))
-    }
-
-    static var isFreeTier: Bool {
-        #if FREE_TIER
-        return true
-        #else
-        return false
-        #endif
     }
 }

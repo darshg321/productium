@@ -7,15 +7,10 @@ struct ReviewView: View {
 
     var body: some View {
         NavigationStack {
-            let this = model.dayTotals(last: 7, includeToday: true)
-            let prev = Array(model.dayTotals(last: 14, includeToday: true).prefix(7))
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     note
-                    SectionTitle("Highlights")
-                    sleepCard(this, prev)
-                    workCard(this)
-                    screenCard(this)
+                    MetricsSection()
                     SectionTitle("Your Week")
                     Card {
                         CardHeader(title: "As It Went", symbol: "calendar", color: .secondary, detail: "Today so far and the 6 days before")
@@ -26,7 +21,7 @@ struct ReviewView: View {
                 .padding(.bottom, 32)
             }
             .background(Theme.background)
-            .refreshable { await model.weeklyReviewIfDue(force: true) }
+            .refreshable { await model.insightPass(force: true) }
             .navigationTitle("Review")
             .usageMeter()
         }
@@ -37,8 +32,6 @@ struct ReviewView: View {
         let today = cal.startOfDay(for: Date())
         return (0...6).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
     }
-
-    private func avg(_ xs: [Int]) -> Int? { xs.isEmpty ? nil : xs.reduce(0, +) / xs.count }
 
     @ViewBuilder private var note: some View {
         Card {
@@ -53,92 +46,6 @@ struct ReviewView: View {
                 HStack(spacing: 10) { ProgressView(); Text("Claude is reading your week…").foregroundStyle(.secondary) }
             } else {
                 Text("Your first weekly note arrives after a few days of use. Pull down to ask for one now.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var sleepSource: String? {
-        let week = model.state.health.filter { $0.sleepMinutes != nil && $0.day > Date().addingTimeInterval(-8 * 86400) }
-        let sources = Set(week.map { $0.sleepSource ?? .health })
-        guard !sources.isEmpty else { return nil }
-        return sources.count == 1 ? sources.first!.label.prefix(1).uppercased() + sources.first!.label.dropFirst() : "From Health and your check-ins"
-    }
-
-    private func sleepCard(_ this: [DayTotals], _ prev: [DayTotals]) -> some View {
-        let s = avg(this.compactMap(\.sleep)), before = avg(prev.compactMap(\.sleep))
-        return Card {
-            CardHeader(title: "Sleep", symbol: "bed.double.fill", color: Theme.sleep, detail: "Average")
-            if let s {
-                DurationValue(minutes: s)
-                if let src = sleepSource {
-                    Text(src).font(.subheadline).foregroundStyle(.secondary)
-                }
-                if model.healthStatus == .noSleepSource {
-                    Text("Nothing on your phone records sleep, so these are estimates. For measured sleep, turn on Sleep Schedule in the Health app or wear a Watch.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                if let b = before {
-                    let d = s - b
-                    Text(abs(d) < 10 ? "About the same as the week before." : "\(durationLabel(abs(d))) \(d > 0 ? "more" : "less") than the week before.")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-                Chart {
-                    ForEach(this, id: \.day) { t in
-                        BarMark(x: .value("Day", t.day, unit: .day), y: .value("Hours", Double(t.sleep ?? 0) / 60))
-                            .foregroundStyle(Theme.sleep.gradient)
-                            .cornerRadius(3)
-                    }
-                    RuleMark(y: .value("Need", Double(model.state.prefs.sleepNeedMinutes) / 60))
-                        .foregroundStyle(.secondary)
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                }
-                .chartXAxis { AxisMarks(values: .stride(by: .day)) { _ in AxisValueLabel(format: .dateTime.weekday(.narrow)) } }
-                .chartYAxis { AxisMarks(position: .trailing) }
-                .frame(height: 110)
-            } else {
-                Text(model.healthStatus.emptyMessage ?? "No sleep recorded yet. Tell the Inbox when you woke up.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func workCard(_ this: [DayTotals]) -> some View {
-        let planned = this.reduce(0) { $0 + $1.plannedStudy }, done = this.reduce(0) { $0 + $1.doneStudy }
-        return Card {
-            CardHeader(title: "Work", symbol: "pencil.line", color: Theme.focus, detail: "This week")
-            if planned > 0 {
-                BigValue(value: "\(Int(Double(done) / Double(planned) * 100))", unit: "% of planned")
-                Text("\(durationLabel(done)) of focused work in total.").font(.subheadline).foregroundStyle(.secondary)
-                Chart {
-                    ForEach(this, id: \.day) { t in
-                        BarMark(x: .value("Day", t.day, unit: .day), y: .value("Minutes", t.doneStudy))
-                            .foregroundStyle(Theme.focus.gradient)
-                            .cornerRadius(3)
-                    }
-                }
-                .chartXAxis { AxisMarks(values: .stride(by: .day)) { _ in AxisValueLabel(format: .dateTime.weekday(.narrow)) } }
-                .chartYAxis(.hidden)
-                .frame(height: 90)
-            } else {
-                Text("Nothing planned yet this week.").font(.subheadline).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func screenCard(_ this: [DayTotals]) -> some View {
-        let sc = avg(this.compactMap(\.screen))
-        let limit = model.state.taper.targetMinutes
-        return Card {
-            CardHeader(title: "Screen Time", symbol: "hourglass", color: Theme.screen, detail: "Daily average")
-            if let sc {
-                DurationValue(minutes: sc)
-                if let l = limit {
-                    Text(sc <= l ? "Under your \(durationLabel(l)) goal." : "\(durationLabel(sc - l)) over your \(durationLabel(l)) goal.")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Not tracked yet. Drop a Screen Time screenshot in the Inbox on Today.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
         }
@@ -159,18 +66,20 @@ struct WeekAsLived: View {
                 }
             }
             HStack(spacing: 12) {
-                legend("Sleep", Theme.sleep)
-                legend("Study", Theme.focus)
-                legend("Free", Theme.free)
-                legend("Fixed", Theme.fixed)
+                legend("Sleep", "moon.fill", Theme.sleep)
+                legend("Study", "pencil.line", Theme.focus)
+                legend("Free", "sun.max", Theme.free)
+                legend("Fixed", "building.2", Theme.fixed)
+                legend("Scrolling", "hourglass", Theme.screen)
             }
             .padding(.top, 4)
         }
     }
 
-    private func legend(_ t: String, _ c: Color) -> some View {
+    private func legend(_ t: String, _ symbol: String, _ c: Color) -> some View {
         HStack(spacing: 4) {
-            Circle().fill(c).frame(width: 8, height: 8)
+            RoundedRectangle(cornerRadius: 2).fill(c).frame(width: 10, height: 10)
+                .overlay { Image(systemName: symbol).font(.system(size: 7, weight: .bold)).foregroundStyle(.black.opacity(0.7)) }
             Text(t).font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -182,14 +91,33 @@ struct SegmentStrip: View {
         GeometryReader { g in
             HStack(spacing: 0) {
                 ForEach(segments, id: \.start) { s in
-                    Rectangle().fill(Theme.color(for: s.category).opacity(s.inferred ? 0.55 : 1))
+                    Rectangle().fill(Theme.color(for: s.category))
+                        .overlay { if s.inferred { Hatch().opacity(0.45) } }
+                        .overlay(alignment: .trailing) { Rectangle().fill(Color(.systemBackground)).frame(width: 1) }
                         .frame(width: g.size.width * CGFloat(s.minutes) / 1440)
                 }
                 Spacer(minLength: 0)
             }
             .clipShape(Capsule())
         }
-        .frame(height: 10)
+        .frame(height: 14)
         .accessibilityHidden(true)
+    }
+}
+
+/// Diagonal stripes for time that is inferred rather than observed. A pattern, so it survives grayscale.
+struct Hatch: View {
+    var body: some View {
+        Canvas { ctx, size in
+            var x: CGFloat = -size.height
+            while x < size.width {
+                var p = Path()
+                p.move(to: CGPoint(x: x, y: size.height))
+                p.addLine(to: CGPoint(x: x + size.height, y: 0))
+                ctx.stroke(p, with: .color(.black), lineWidth: 1)
+                x += 5
+            }
+        }
+        .allowsHitTesting(false)
     }
 }

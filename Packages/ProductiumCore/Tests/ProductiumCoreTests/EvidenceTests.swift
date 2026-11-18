@@ -238,3 +238,45 @@ final class BeliefTests: XCTestCase {
         XCTAssertEqual(Beliefs.routines(Routine.defaults).first?.group, "routines")
     }
 }
+
+/// v1.1 H4: first pickup, charging and night activity feed the sleep estimate.
+final class SleepSignalTests: XCTestCase {
+    let cal = Fx.cal
+    var still: [MotionSpan] {
+        MotionTimeline.spans([MotionSample(at: Fx.mon(0, -90), kind: .stationary, confidence: 2),
+                              MotionSample(at: Fx.mon(7, 40), kind: .walking, confidence: 2)], until: Fx.mon(9))
+    }
+
+    func testFirstPickupPullsTheWakeEarlierButNeverLater() {
+        let a = SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], motion: still, plannedWake: nil,
+                                     sleepNeedMinutes: 540, calendar: cal, firstPickup: Fx.mon(6, 45))
+        XCTAssertEqual(a?.wake, Fx.mon(6, 45))
+        let b = SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], motion: still, plannedWake: nil,
+                                     sleepNeedMinutes: 540, calendar: cal, firstPickup: Fx.mon(9))
+        XCTAssertEqual(b?.wake, Fx.mon(7, 40), "a later pickup says nothing about waking")
+    }
+
+    func testFirstPickupAloneMakesAnEstimateAndChargingStartsTheNight() {
+        let a = SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], motion: [], plannedWake: nil,
+                                     sleepNeedMinutes: 540, calendar: cal, firstPickup: Fx.mon(7), charging: Fx.mon(22, plusDays: -1))
+        XCTAssertEqual(a?.source, .motion)
+        XCTAssertEqual(a?.bedtime, Fx.mon(22, plusDays: -1))
+        XCTAssertEqual(a?.minutes, 540)
+        let none = SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], motion: [], plannedWake: nil,
+                                        sleepNeedMinutes: 540, calendar: cal, firstPickup: Fx.mon(14))
+        XCTAssertNil(none, "an afternoon pickup isn't a wake")
+        let plug = SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], motion: still, plannedWake: nil,
+                                        sleepNeedMinutes: 540, calendar: cal, charging: Fx.mon(0, -100))
+        XCTAssertEqual(plug?.bedtime, Fx.mon(0, -90), "stillness started after the plug-in")
+    }
+
+    func testNightActivityTakesTimeOffTheNight() {
+        let burstsAtTwo = [Fx.mon(2, 0), Fx.mon(2, 5), Fx.mon(4, 30)]
+        let n = SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], motion: still, phoneUse: burstsAtTwo, plannedWake: nil,
+                                     sleepNeedMinutes: 540, calendar: cal)
+        let plain = SleepEstimator.night(morningOf: Fx.mon(0), health: nil, markers: [], motion: still, plannedWake: nil,
+                                         sleepNeedMinutes: 540, calendar: cal)
+        XCTAssertEqual(n?.awakeMinutes, 20, "two bursts (2:00 and 2:05 are one)")
+        XCTAssertEqual((plain?.minutes ?? 0) - (n?.minutes ?? 0), 20 + 0)
+    }
+}

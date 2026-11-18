@@ -237,12 +237,17 @@ public struct DayInputs: Sendable {
     public var scrollSessions: [ScrollSession]
     public var scrollingApps: [String: Bool]
     public var progress: [ProgressEntry]
+    public var situations: [Situation]
+    public var dayRules: DayRuleBook
 
     public init(day: Date, events: [TimelineEvent], commitments: [Commitment], fixedEvents: [FixedEvent] = [],
                 routines: [Routine], outcomes: [BlockOutcome], itemsById: [UUID: WorkItem] = [:],
                 health: HealthDay?, nextHealth: HealthDay? = nil, screen: ScreenDay?, prefs: Preferences,
                 exceptions: [DayException] = [], motion: [MotionSpan] = [], scrollSessions: [ScrollSession] = [],
-                scrollingApps: [String: Bool] = [:], progress: [ProgressEntry] = []) {
+                scrollingApps: [String: Bool] = [:], progress: [ProgressEntry] = [],
+                situations: [Situation] = [], dayRules: DayRuleBook = DayRuleBook()) {
+        self.situations = situations
+        self.dayRules = dayRules
         self.progress = progress
         self.scrollSessions = scrollSessions
         self.scrollingApps = scrollingApps
@@ -278,7 +283,10 @@ public enum TimelineBuilder {
         }
         func at(_ t: TimeOfDay) -> Date { cal.date(bySettingHour: t.hour, minute: t.minute, second: 0, of: dayStart) ?? dayStart }
 
-        let occ = Commitment.occurrences(d.commitments, on: dayStart, exceptions: d.exceptions, calendar: cal)
+        let resolver = SituationResolver(situations: d.situations, book: d.dayRules, calendar: cal)
+        let over = resolver.day(dayStart)
+        let occ = Commitment.occurrences(resolver.commitments(d.commitments, on: dayStart), on: dayStart,
+                                         exceptions: d.exceptions, calendar: cal)
         let todays = occ.map(\.commitment)
         let weekday = cal.component(.weekday, from: dayStart)
         for o in occ {
@@ -290,6 +298,8 @@ public enum TimelineBuilder {
         for e in d.fixedEvents where cal.isDate(e.start, inSameDayAs: dayStart) {
             paint(e.start, e.end, TimeCategory.from(e.kind), e.title, observed: false)
         }
+        // Busy time from situations ("grandma visiting 10-6") shows like any other fixed event.
+        for b in over.busy { paint(at(b.start), at(b.end), .free, b.title, observed: false) }
         let checkedIn = Set(d.events.filter { cal.isDate($0.at, inSameDayAs: dayStart) }.map(\.activity))
         for r in d.routines where r.enabled && !checkedIn.contains(r.id) {
             let anchored = occ.filter { r.anchorKind == nil || $0.commitment.kind == r.anchorKind }
@@ -334,6 +344,20 @@ public enum TimelineBuilder {
             guard j > i else { continue }
             for m in i..<j where cat[m] == nil || cat[m] == .routine || cat[m] == .commute {
                 cat[m] = .screen; label[m] = sess.app; inferred[m] = sess.isEstimated || sess.isOpen
+            }
+        }
+
+        // Screenshot minutes have no timestamps. Whatever the timed sessions don't cover is placed in free time
+        // (evening first, then the afternoon) and marked inferred, so Your Week shows it. Real study or check-ins
+        // painted after this still win. (v1.1 C9)
+        if let scr = d.screen?.distractingMinutes, scr > 0 {
+            var need = scr - cat.reduce(0) { $0 + ($1 == .screen ? 1 : 0) }
+            let upto = now.map { cal.isDate($0, inSameDayAs: dayStart) ? idx($0) : total } ?? total
+            let evening = 19 * 60, afternoon = 15 * 60
+            let order = Array(evening..<min(total, 23 * 60)) + Array((afternoon..<evening).reversed())
+            for m in order where need > 0 && m < upto && cat[m] == nil {
+                cat[m] = .screen; label[m] = "Scrolling"; inferred[m] = true
+                need -= 1
             }
         }
 

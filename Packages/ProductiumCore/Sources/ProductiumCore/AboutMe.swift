@@ -146,7 +146,7 @@ public enum AboutMeRefusal: Error, Hashable, Sendable, CustomStringConvertible {
     public var description: String {
         switch self {
         case .empty: return "an empty line"
-        case .notAllowed(let s): return "only the weekly reflection may write \(s.rawValue) lines"
+        case .notAllowed(let s): return "only the weekly insight pass may write \(s.rawValue) lines"
         case .studentLine: return "that line is yours, so it wasn't changed"
         }
     }

@@ -92,3 +92,30 @@ public enum PlaceSuggester {
                           reason: "You've been here on \(best.days.count) different days. What's it called?")
     }
 }
+
+public enum PlaceTime {
+    /// Minutes per day spent at saved or visited places away from home (school, practice, friends'). A visit still
+    /// open counts up to `now`.
+    public static func awayMinutes(visits: [PlaceVisit], home: SavedPlace?, now: Date, calendar cal: Calendar) -> [Date: Int] {
+        var out: [Date: Double] = [:]
+        for v in visits {
+            if let h = home, distance(v.latitude, v.longitude, h.latitude, h.longitude) < max(100, h.radius) { continue }
+            let end = min(v.departure ?? now, now)
+            var day = cal.startOfDay(for: v.arrival)
+            while day < end {
+                guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
+                let s = max(v.arrival, day), e = min(end, next)
+                if e > s { out[day, default: 0] += e.timeIntervalSince(s) / 60 }
+                day = next
+            }
+        }
+        return out.mapValues { Int($0.rounded()) }
+    }
+
+    static func distance(_ lat1: Double, _ lon1: Double, _ lat2: Double, _ lon2: Double) -> Double {
+        let r = 6_371_000.0, p = Double.pi / 180
+        let a = sin((lat2 - lat1) * p / 2) * sin((lat2 - lat1) * p / 2)
+            + cos(lat1 * p) * cos(lat2 * p) * sin((lon2 - lon1) * p / 2) * sin((lon2 - lon1) * p / 2)
+        return 2 * r * asin(min(1, a.squareRoot()))
+    }
+}

@@ -9,7 +9,7 @@ struct RestorePreview: Identifiable {
 }
 
 enum Persistence {
-    static var url: URL { SharedConfig.containerURL.appendingPathComponent("state.json") }
+    static var url: URL { LocalStore.containerURL.appendingPathComponent("state.json") }
 
     static func load() -> AppState {
         guard let data = try? Data(contentsOf: url) else { return AppState() }
@@ -43,7 +43,7 @@ enum AboutMeStore {
 }
 
 enum CallLogStore {
-    static var url: URL { SharedConfig.containerURL.appendingPathComponent("ai-calls.json") }
+    static var url: URL { LocalStore.containerURL.appendingPathComponent("ai-calls.json") }
 
     static func load() -> AICallLog {
         guard let data = try? Data(contentsOf: url) else { return AICallLog() }

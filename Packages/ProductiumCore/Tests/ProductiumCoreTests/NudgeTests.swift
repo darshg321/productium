@@ -289,3 +289,37 @@ final class TaskBoardTests: XCTestCase {
         XCTAssertEqual(l.map(\.of), [2, 2, 2, 1])
     }
 }
+
+/// v1.1 H6: movement and morning-light reminders.
+final class SensorNudgeTests: XCTestCase {
+    let cal = Fx.cal
+
+    func testMovementBreakAfterAboutNinetyMinutesOfStudy() {
+        let blocks = [PlannedBlock(kind: .work, start: Fx.mon(16), end: Fx.mon(16, 50), title: "Essay"),
+                      PlannedBlock(kind: .breakTime, start: Fx.mon(16, 50), end: Fx.mon(17), title: "Break"),
+                      PlannedBlock(kind: .work, start: Fx.mon(17), end: Fx.mon(17, 45), title: "Essay"),
+                      PlannedBlock(kind: .work, start: Fx.mon(20), end: Fx.mon(20, 40), title: "Math")]
+        var plan = Plan.empty
+        plan.blocks = blocks
+        let n = NudgePlanner.plan(NudgeInput(now: Fx.mon(15), calendar: cal, plan: plan, items: [], settings: NudgeSettings()))
+        let moves = n.filter { $0.kind == .movement }
+        XCTAssertEqual(moves.map(\.at), [Fx.mon(17, 45)], "95 minutes in; the lone 40 minute block later doesn't qualify")
+        var off = NudgeSettings(); off.movement = false
+        XCTAssertTrue(NudgePlanner.plan(NudgeInput(now: Fx.mon(15), calendar: cal, plan: plan, items: [], settings: off)).filter { $0.kind == .movement }.isEmpty)
+        XCTAssertTrue(NudgePlanner.plan(NudgeInput(now: Fx.mon(15), calendar: cal, plan: plan, items: [], settings: NudgeSettings(level: .gentle)))
+            .filter { $0.kind == .movement }.isEmpty)
+    }
+
+    func testMorningLightOnlyOnDaysWithNothingFixed() {
+        var plan = Plan.empty
+        plan.wakePlans = [WakePlan(day: Fx.mon(0, plusDays: 5), wake: Fx.mon(9, plusDays: 5), leaveBy: nil, firstCommitment: nil, reason: "free day"),
+                          WakePlan(day: Fx.mon(0, plusDays: 1), wake: Fx.mon(7, plusDays: 1), leaveBy: Fx.mon(8, plusDays: 1),
+                                   firstCommitment: Fx.mon(8, 30, plusDays: 1), reason: "school")]
+        let n = NudgePlanner.plan(NudgeInput(now: Fx.mon(20), calendar: cal, plan: plan, items: [], settings: NudgeSettings(),
+                                             limit: 100)).filter { $0.kind == .daylight }
+        XCTAssertEqual(n.count, 0, "inside the 24 h horizon neither day is a free day yet")
+        let later = NudgePlanner.plan(NudgeInput(now: Fx.mon(20, plusDays: 4), calendar: cal, plan: plan, items: [], settings: NudgeSettings()))
+            .filter { $0.kind == .daylight }
+        XCTAssertEqual(later.map(\.at), [Fx.mon(9, 45, plusDays: 5)])
+    }
+}

@@ -159,12 +159,15 @@ public struct ActivityPeriod: Codable, Hashable, Sendable {
     public var start: TimeOfDay
     public var end: TimeOfDay
     @SortedSet public var weekdays: Set<Int>
+    /// Extra condition besides `weekdays` ("only on B days"). Evaluated where the day's activities are resolved.
+    public var when: DayRule?
 
-    public init(title: String, start: TimeOfDay, end: TimeOfDay, weekdays: Set<Int> = []) {
+    public init(title: String, start: TimeOfDay, end: TimeOfDay, weekdays: Set<Int> = [], when: DayRule? = nil) {
         self.title = title
         self.start = start
         self.end = end
         self.weekdays = weekdays
+        self.when = when
     }
 
     /// An empty weekday set means every day the activity runs.
@@ -183,10 +186,14 @@ public struct Commitment: Codable, Identifiable, Hashable, Sendable {
     public var validUntil: Date?
     public var color: String?
     public var periods: [ActivityPeriod]?
+    /// Extra condition besides `weekdays` (A/B days, odd weeks, exam-week). v1.1 A2.
+    public var when: DayRule?
 
     public init(id: UUID = UUID(), title: String, kind: CommitmentKind, weekdays: Set<Int>,
                 start: TimeOfDay, end: TimeOfDay, bufferMinutes: Int = 10,
-                validFrom: Date? = nil, validUntil: Date? = nil, color: String? = nil, periods: [ActivityPeriod]? = nil) {
+                validFrom: Date? = nil, validUntil: Date? = nil, color: String? = nil, periods: [ActivityPeriod]? = nil,
+                when: DayRule? = nil) {
+        self.when = when
         self.periods = periods
         self.id = id
         self.title = title
@@ -247,12 +254,15 @@ public struct Preferences: Codable, Hashable, Sendable {
     public var autoWake: Bool
     public var nudges: NudgeSettings
     public var colors: [String: String]
+    /// The student's (or the box's) choice to have the morning alarm at all; it also needs the Wake-Up Alarms permission.
+    public var wakeAlarms: Bool
 
     public init(sleepNeedMinutes: Int = 540, sleepFloorMinutes: Int = 420,
                 schoolDayWake: TimeOfDay = TimeOfDay(6, 45), freeDayWake: TimeOfDay = TimeOfDay(8, 30),
                 windDownMinutes: Int = 30, allowSleepTradeoffs: Bool = true,
                 schoolDays: Set<Int> = [2, 3, 4, 5, 6], interests: [String] = [], autoWake: Bool = true,
-                nudges: NudgeSettings = NudgeSettings(), colors: [String: String] = [:]) {
+                nudges: NudgeSettings = NudgeSettings(), colors: [String: String] = [:], wakeAlarms: Bool = true) {
+        self.wakeAlarms = wakeAlarms
         self.sleepNeedMinutes = sleepNeedMinutes
         self.sleepFloorMinutes = sleepFloorMinutes
         self.schoolDayWake = schoolDayWake
@@ -281,11 +291,12 @@ public struct Preferences: Codable, Hashable, Sendable {
         autoWake = v(.autoWake, d.autoWake)
         nudges = v(.nudges, d.nudges)
         colors = v(.colors, d.colors)
+        wakeAlarms = v(.wakeAlarms, d.wakeAlarms)
     }
 
     enum CodingKeys: String, CodingKey {
         case sleepNeedMinutes, sleepFloorMinutes, schoolDayWake, freeDayWake, windDownMinutes, allowSleepTradeoffs
-        case schoolDays, interests, autoWake, nudges, colors
+        case schoolDays, interests, autoWake, nudges, colors, wakeAlarms
     }
 }
 
@@ -298,9 +309,15 @@ public struct HealthDay: Codable, Hashable, Sendable {
     public var daylightMinutes: Int?
     public var restingHeartRate: Double?
     public var sleepSource: SleepSource?
+    /// Apple's exercise minutes (rings), and the minutes of logged workouts. v1.1 H3.
+    public var exerciseMinutes: Int?
+    public var workoutMinutes: Int?
 
     public init(day: Date, steps: Int? = nil, sleepMinutes: Int? = nil, bedtime: Date? = nil,
-                wake: Date? = nil, daylightMinutes: Int? = nil, restingHeartRate: Double? = nil, sleepSource: SleepSource? = nil) {
+                wake: Date? = nil, daylightMinutes: Int? = nil, restingHeartRate: Double? = nil, sleepSource: SleepSource? = nil,
+                exerciseMinutes: Int? = nil, workoutMinutes: Int? = nil) {
+        self.exerciseMinutes = exerciseMinutes
+        self.workoutMinutes = workoutMinutes
         self.sleepSource = sleepSource
         self.day = day
         self.steps = steps
@@ -332,10 +349,15 @@ public struct AppUsage: Codable, Hashable, Sendable {
     public var name: String
     public var minutes: Int
     public var distracting: Bool
-    public init(name: String, minutes: Int, distracting: Bool) {
+    /// From a Screen Time screenshot's per-app Pickups / Notifications, when shown.
+    public var pickups: Int?
+    public var notifications: Int?
+    public init(name: String, minutes: Int, distracting: Bool, pickups: Int? = nil, notifications: Int? = nil) {
         self.name = name
         self.minutes = minutes
         self.distracting = distracting
+        self.pickups = pickups
+        self.notifications = notifications
     }
 }
 
@@ -347,10 +369,19 @@ public struct ScreenDay: Codable, Hashable, Sendable {
     public var apps: [AppUsage]?
     public var source: String?
     public var partial: Bool?
+    /// From a Screen Time screenshot (day view, or the daily average for a week view). v1.1 H1.
+    public var pickups: Int?
+    /// Minutes after midnight of the first pickup shown ("First Pickup 6:42 AM" = 402).
+    public var firstPickup: Int?
+    public var notifications: Int?
 
     public init(day: Date, distractingMinutes: Int, unlockRequests: Int = 0, totalMinutes: Int? = nil,
-                apps: [AppUsage]? = nil, source: String? = nil, partial: Bool? = nil) {
+                apps: [AppUsage]? = nil, source: String? = nil, partial: Bool? = nil,
+                pickups: Int? = nil, firstPickup: Int? = nil, notifications: Int? = nil) {
         self.partial = partial
+        self.pickups = pickups
+        self.firstPickup = firstPickup
+        self.notifications = notifications
         self.day = day
         self.distractingMinutes = distractingMinutes
         self.unlockRequests = unlockRequests
@@ -419,9 +450,13 @@ public struct Plan: Codable, Hashable, Sendable {
     public var sleepTradeoffMinutes: Int
     public var loadFactor: Double
     public var wakePlans: [WakePlan]
+    /// Days a situation muted reminders on (v1.1 A.2). Nil in plans made before situations.
+    public var mutes: [NudgeMute]?
 
     public init(generatedAt: Date, blocks: [PlannedBlock], warnings: [PlanWarning],
-                shortfalls: [UUID: Int], sleepTradeoffMinutes: Int, loadFactor: Double, wakePlans: [WakePlan] = []) {
+                shortfalls: [UUID: Int], sleepTradeoffMinutes: Int, loadFactor: Double, wakePlans: [WakePlan] = [],
+                mutes: [NudgeMute]? = nil) {
+        self.mutes = mutes
         self.generatedAt = generatedAt
         self.blocks = blocks
         self.warnings = warnings
@@ -433,6 +468,11 @@ public struct Plan: Codable, Hashable, Sendable {
 
     public static let empty = Plan(generatedAt: .distantPast, blocks: [], warnings: [], shortfalls: [:],
                                    sleepTradeoffMinutes: 0, loadFactor: 1)
+
+    /// Whether a situation muted this kind of reminder on that day.
+    public func isMuted(_ kind: NudgeKind, at d: Date, calendar: Calendar) -> Bool {
+        (mutes ?? []).contains { calendar.isDate($0.day, inSameDayAs: d) && ($0.kind == nil || $0.kind == kind) }
+    }
 
     public func blocks(on day: Date, calendar: Calendar) -> [PlannedBlock] {
         blocks.filter { calendar.isDate($0.start, inSameDayAs: day) }

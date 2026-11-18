@@ -43,11 +43,22 @@ final class ExportTests: XCTestCase {
         s.focus = FocusSession(blockId: UUID(), itemId: nil, title: "Essay", startedAt: now, plannedEnd: now.addingTimeInterval(2400))
         s.gaps = GapLog(asked: [AskedGap(start: now, end: now.addingTimeInterval(3000), askedAt: now, answer: "gym", activity: "exercise")])
         s.appOpens = [now]
-        s.reflectionAt = now
-        s.proposals.submit(ReflectionRun(at: now, note: "n", model: "opus"),
-                           [BehaviourProposal(runId: UUID(), change: .knob(key: "planner.maxBlockMinutes", to: 45), from: "", to: "",
-                                              reason: "r", evidence: ["e"], model: "opus", at: now)], state: s.dumpState, now: now)
+        s.insightAt = now
+        s.rewardSettings = RewardSettings(level: .subtle, surpriseRate: 0.1)
+        var rlog = RewardLog()
+        Rewards.respond(to: .planFinished(freeMinutesLeft: 40), log: &rlog, settings: s.rewardSettings, now: now, calendar: Fx.cal)
+        s.rewards = rlog
+        var ds = s.dumpState
+        s.changes.apply(InsightRun(at: now, note: "n", model: "sonnet"),
+                        [LoggedChange(runId: UUID(), change: .knob(key: "planner.maxBlockMinutes", to: 45),
+                                      reason: "r", evidence: ["e"], model: "sonnet", at: now)], to: &ds, now: now)
+        s.dumpState = ds
+        s.changes.pinned = ["planner.freeTimeMultiplier"]
         s.dismissed = ["a warning"]
+        s.situations = [Situation(said: "B days", scope: .nthOf(sequence: "school", mod: 2, eq: 1),
+                                  effects: [.setInput(path: "wake", value: 450), .note("n")], expires: now, createdAt: now)]
+        s.dayRules.sequences = [DaySequence(name: "school", rule: .weekdays([2, 3, 4, 5, 6]), anchor: now)]
+        s.dayRules.label("exam-week", [now], calendar: Fx.cal)
         s.visits = [PlaceVisit(latitude: 43.6, longitude: -79.4, arrival: now)]
         s.declinedPlaces = ["gym"]
         s.draft = Draft(text: "half a thought", imageFiles: ["a.jpg"])

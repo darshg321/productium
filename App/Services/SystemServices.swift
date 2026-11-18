@@ -1,6 +1,4 @@
 import Foundation
-import ActivityKit
-import WidgetKit
 import BackgroundTasks
 import SwiftUI
 import AppIntents
@@ -19,148 +17,121 @@ enum AlarmService {
         return await NotificationService.requestAuthorization()
     }
 
-    static func schedule(_ wakes: [WakePlan]) async {
-        let upcoming = wakes.filter { $0.wake > Date() }.prefix(3)
-        #if canImport(AlarmKit) && ENABLE_ALARMKIT
-        if #available(iOS 26.1, *) {
-            await scheduleAlarmKit(Array(upcoming))
-            return
+    /// Hands the whole wanted list (`AlarmPlanner.desired`) to the one scheduler. Latest call wins.
+    static func sync(_ desired: [PlannedAlarm]) {
+        Task { await AlarmScheduler.shared.request(desired) }
+    }
+}
+
+/// The only code that touches alarms (v1.1 C2). Requests are serialised and coalesced: while one sync runs, newer
+/// requests replace each other and only the latest is applied next. Each sync compares the wanted list with the
+/// alarms actually on the device (`AlarmReconciler`), so duplicates and orphans from any earlier run are cancelled.
+actor AlarmScheduler {
+    static let shared = AlarmScheduler()
+
+    private var pending: [PlannedAlarm]?
+    private var running = false
+    private static let ledgerKey = "alarms.ledger"
+
+    func request(_ desired: [PlannedAlarm]) async {
+        pending = desired
+        guard !running else { return }
+        running = true
+        while let next = pending {
+            pending = nil
+            await apply(next)
         }
-        #endif
-        let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: (0..<3).map { "wake.\($0)" })
-        for (i, w) in upcoming.enumerated() {
-            let c = UNMutableNotificationContent()
-            c.title = "Good morning"
-            c.body = w.leaveBy.map { "Leave by \($0.formatted(date: .omitted, time: .shortened))." } ?? w.reason
-            c.sound = .default
-            c.interruptionLevel = .timeSensitive
-            let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: w.wake)
-            try? await center.add(UNNotificationRequest(identifier: "wake.\(i)", content: c,
-                                                        trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
-        }
+        running = false
     }
 
-    #if canImport(AlarmKit) && ENABLE_ALARMKIT
-    struct WakeMetadata: AlarmMetadata {}
+    /// What Productium believes is scheduled (for the debug list and the export).
+    func current() -> [AlarmLedgerEntry] { ledger.values.sorted { $0.at < $1.at } }
 
-    @available(iOS 26.1, *)
-    private static func scheduleAlarmKit(_ wakes: [WakePlan]) async {
-        let ids = (UserDefaults.standard.array(forKey: "alarm.ids") as? [String] ?? []).compactMap(UUID.init(uuidString:))
-        for id in ids { try? AlarmManager.shared.cancel(id: id) }
-        var newIds: [String] = []
-        for w in wakes {
-            let title = w.leaveBy.map { "Leave by \($0.formatted(date: .omitted, time: .shortened))" } ?? "Good morning"
-            let alert = AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: title),
-                                                secondaryButton: nil, secondaryButtonBehavior: nil)
-            let attrs = AlarmAttributes<WakeMetadata>(presentation: AlarmPresentation(alert: alert), metadata: WakeMetadata(),
-                                                      tintColor: .indigo)
-            let id = UUID()
-            let config = AlarmManager.AlarmConfiguration<WakeMetadata>.alarm(schedule: .fixed(w.wake), attributes: attrs,
-                                                                             stopIntent: nil, secondaryIntent: nil, sound: .default)
-            if (try? await AlarmManager.shared.schedule(id: id, configuration: config)) != nil { newIds.append(id.uuidString) }
-        }
-        UserDefaults.standard.set(newIds, forKey: "alarm.ids")
-    }
-    #endif
-
-    static func scheduleNudges(_ alarms: [PlannedAlarm]) async {
-        #if canImport(AlarmKit) && ENABLE_ALARMKIT
-        if #available(iOS 26.1, *) {
-            var saved = savedNudges
-            let wanted = Dictionary(alarms.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
-            for (key, entry) in saved {
-                if let w = wanted[key], Int(w.at.timeIntervalSince1970) == entry.at { continue }
-                try? AlarmManager.shared.cancel(id: entry.id)
-                saved[key] = nil
-            }
-            for a in alarms where saved[a.key] == nil {
-                let id = UUID()
-                if await scheduleNudge(a, id: id) { saved[a.key] = (id: id, at: Int(a.at.timeIntervalSince1970)) }
-            }
-            savedNudges = saved
-        }
-        #endif
-    }
-
-    static func cancelNudge(blockId: UUID) {
-        #if canImport(AlarmKit) && ENABLE_ALARMKIT
-        if #available(iOS 26.1, *) {
-            var saved = savedNudges
-            if let e = saved["miss.\(blockId)"] {
-                try? AlarmManager.shared.cancel(id: e.id)
-                saved["miss.\(blockId)"] = nil
-                savedNudges = saved
-            }
-        }
-        #endif
-    }
-
-    private static var savedNudges: [String: (id: UUID, at: Int)] {
+    private var ledger: [UUID: AlarmLedgerEntry] {
         get {
-            let raw = UserDefaults.standard.dictionary(forKey: SharedConfig.Key.alarmIds) as? [String: String] ?? [:]
-            return raw.compactMapValues { v in
-                let parts = v.split(separator: "|")
-                guard parts.count == 2, let id = UUID(uuidString: String(parts[0])), let at = Int(parts[1]) else { return nil }
-                return (id: id, at: at)
-            }
+            guard let data = UserDefaults.standard.data(forKey: Self.ledgerKey),
+                  let raw = try? JSONDecoder().decode([String: AlarmLedgerEntry].self, from: data) else { return [:] }
+            return Dictionary(uniqueKeysWithValues: raw.compactMap { k, v in UUID(uuidString: k).map { ($0, v) } })
         }
         set {
-            UserDefaults.standard.set(newValue.mapValues { "\($0.id.uuidString)|\($0.at)" }, forKey: SharedConfig.Key.alarmIds)
+            let raw = Dictionary(uniqueKeysWithValues: newValue.map { ($0.key.uuidString, $0.value) })
+            UserDefaults.standard.set(try? JSONEncoder().encode(raw), forKey: Self.ledgerKey)
         }
+    }
+
+    private func apply(_ desired: [PlannedAlarm]) async {
+        let now = Date()
+        #if canImport(AlarmKit) && ENABLE_ALARMKIT
+        if #available(iOS 26.1, *) {
+            await applyAlarmKit(desired, now: now)
+            return
+        }
+        #endif
+        await applyNotifications(desired, now: now)
     }
 
     #if canImport(AlarmKit) && ENABLE_ALARMKIT
-    struct NudgeMetadata: AlarmMetadata {}
+    struct Metadata: AlarmMetadata {}
 
     @available(iOS 26.1, *)
-    private static func scheduleNudge(_ a: PlannedAlarm, id: UUID) async -> Bool {
-        let start = AlarmButton(text: "Start", textColor: .white, systemImageName: "play.fill")
-        let alert = a.kind == .missedStart
-            ? AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: a.title), secondaryButton: start,
-                                      secondaryButtonBehavior: .custom)
-            : AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: a.title), secondaryButton: nil,
-                                      secondaryButtonBehavior: nil)
-        let tint: Color = a.kind == .bedtime ? .indigo : a.kind == .leave ? .green : .blue
-        let attrs = AlarmAttributes<NudgeMetadata>(presentation: AlarmPresentation(alert: alert), metadata: NudgeMetadata(), tintColor: tint)
-        let secondary: (any LiveActivityIntent)? = a.kind == .missedStart ? StartFocusIntent() : nil
-        let config = AlarmManager.AlarmConfiguration<NudgeMetadata>.alarm(
-            schedule: .fixed(a.at), attributes: attrs, stopIntent: nil, secondaryIntent: secondary, sound: .default)
-        return (try? await AlarmManager.shared.schedule(id: id, configuration: config)) != nil
+    private func applyAlarmKit(_ desired: [PlannedAlarm], now: Date) async {
+        let manager = AlarmManager.shared
+        guard let onDevice = try? manager.alarms else { return }
+        let device = onDevice.map { DeviceAlarm(id: $0.id, alerting: $0.state == .alerting) }
+        let diff = AlarmReconciler.diff(desired: desired, device: device, ledger: ledger, now: now)
+        guard !diff.isEmpty || diff.ledger != ledger else { return }
+        var book = diff.ledger
+        for id in diff.cancel { try? manager.cancel(id: id) }
+        ledger = book
+        for a in diff.add {
+            let id = UUID()
+            if (try? await manager.schedule(id: id, configuration: configuration(a))) != nil {
+                book[id] = AlarmLedgerEntry(a)
+                ledger = book
+            }
+        }
+    }
+
+    @available(iOS 26.1, *)
+    private func configuration(_ a: PlannedAlarm) -> AlarmManager.AlarmConfiguration<Metadata> {
+        let title = LocalizedStringResource(stringLiteral: a.title)
+        let alert: AlarmPresentation.Alert
+        if a.kind == .missedStart {
+            let start = AlarmButton(text: "Start", textColor: .white, systemImageName: "play.fill")
+            alert = AlarmPresentation.Alert(title: title, secondaryButton: start, secondaryButtonBehavior: .custom)
+        } else {
+            alert = AlarmPresentation.Alert(title: title, secondaryButton: nil, secondaryButtonBehavior: nil)
+        }
+        let tint: Color
+        switch a.kind {
+        case .wake, .bedtime: tint = .indigo
+        case .leave: tint = .green
+        case .missedStart: tint = .blue
+        }
+        let attrs = AlarmAttributes<Metadata>(presentation: AlarmPresentation(alert: alert), metadata: Metadata(), tintColor: tint)
+        let secondary: (any AppIntent)? = a.kind == .missedStart ? StartFocusIntent() : nil
+        return .alarm(schedule: .fixed(a.at), attributes: attrs, stopIntent: nil, secondaryIntent: secondary, sound: .default)
     }
     #endif
-}
 
-enum LiveActivityService {
-    static func update(current: PlannedBlock?, next: PlannedBlock?) {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        let existing = Activity<BlockActivityAttributes>.activities
-        guard let b = current, b.isStudy || b.kind == .breakTime else {
-            Task { for a in existing { await a.end(nil, dismissalPolicy: .immediate) } }
-            return
+    /// Before iOS 26.1 there is no AlarmKit: wake alarms become notifications (ids `alarm.<key>`). The other alarm
+    /// kinds already have a notification from `NudgePlanner.plan`, so they are not duplicated here.
+    private func applyNotifications(_ desired: [PlannedAlarm], now: Date) async {
+        let center = UNUserNotificationCenter.current()
+        let wakes = desired.filter { $0.kind == .wake && $0.at > now }
+        let wanted = Set(wakes.map { "alarm.\($0.key)" })
+        let pending = await center.pendingNotificationRequests().map(\.identifier)
+        let stale = pending.filter { ($0.hasPrefix("alarm.") || $0.hasPrefix("wake.")) && !wanted.contains($0) }
+        center.removePendingNotificationRequests(withIdentifiers: stale)
+        for w in wakes {
+            let c = UNMutableNotificationContent()
+            c.title = "Good morning"
+            c.body = w.title
+            c.sound = .default
+            let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: w.at)
+            try? await center.add(UNNotificationRequest(identifier: "alarm.\(w.key)", content: c,
+                                                        trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
         }
-        let state = BlockActivityAttributes.ContentState(title: b.title, start: b.start, end: b.end, kind: b.kind.rawValue,
-                                                         nextTitle: next?.title)
-        let content = ActivityContent(state: state, staleDate: b.end)
-        if let a = existing.first {
-            Task { await a.update(content) }
-        } else {
-            _ = try? Activity.request(attributes: BlockActivityAttributes(startedFromApp: true), content: content)
-        }
-    }
-}
-
-enum WidgetService {
-    static func publish(plan: Plan, outcomes: [BlockOutcome]) {
-        let cal = Calendar.current
-        let now = Date()
-        let items = plan.blocks.filter { $0.end > now && $0.start < now.addingTimeInterval(18 * 3600) && $0.kind != .sleep }
-            .prefix(30).map { WidgetSnapshot.Item(title: $0.title, start: $0.start, end: $0.end, kind: $0.kind.rawValue, symbol: Theme.symbol(for: $0.kind)) }
-        let today = plan.blocks(on: now, calendar: cal).filter(\.isStudy)
-        let done = outcomes.filter { cal.isDate($0.plannedStart, inSameDayAs: now) && $0.status != .skipped }.reduce(0) { $0 + $1.actualMinutes }
-        WidgetSnapshot(generatedAt: now, items: Array(items), studyMinutesToday: today.reduce(0) { $0 + $1.minutes },
-                       doneMinutesToday: done).save()
-        WidgetCenter.shared.reloadAllTimelines()
     }
 }
 

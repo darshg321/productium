@@ -78,7 +78,8 @@ final class UsageTests: XCTestCase {
     func testBoxPromptStaysSmall() throws {
         let schema = try JSONEncoder().encode(Schemas.dump)
         let tokens = (Prompts.dump().count + schema.count) / 7 * 2
-        XCTAssertLessThan(tokens, 2600, "box system prompt + schema is ~\(tokens) tokens")
+        // 2600 before situations (v1.1 A5): the day-rule and effect grammar plus the situation, day_rule, gap and alarm entities cost about 1000.
+        XCTAssertLessThan(tokens, 3900, "box system prompt + schema is ~\(tokens) tokens")
     }
 }
 
@@ -106,18 +107,18 @@ final class CallLogTests: XCTestCase {
 }
 
 final class RoutingTests: XCTestCase {
-    func testOnlyReflectionRunsOnOpus() {
-        for f in AIFeature.allCases where f != .reflection {
-            XCTAssertEqual(f.route, AIRoute(model: "sonnet", effort: "low"), "\(f)")
-        }
-        XCTAssertEqual(AIFeature.reflection.route, AIRoute(model: "opus", effort: "medium"))
-        XCTAssertEqual(AIFeature.reflection.title, "Opus · reflection")
+    func testEverythingRunsOnSonnetAndOldReflectionRecordsStillLoad() throws {
+        for f in AIFeature.allCases { XCTAssertEqual(f.route, AIRoute(model: "sonnet", effort: "low"), "\(f)") }
+        let old = #"{"at":"2026-11-10T12:00:00Z","feature":"reflection","model":"opus","tokens":{"input":1,"output":2,"cacheRead":0,"cacheWrite":0}}"#
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        let r = try dec.decode(UsageRecord.self, from: Data(old.utf8))
+        XCTAssertEqual(r.feature, .review, "v1.0's reflection is part of the weekly note now")
     }
 
     func testEffortIsSentAsOutputConfig() throws {
         let req = AIRequest(model: "opus", system: "s", messages: [AIMessage(role: "user", content: "hi")], schema: nil, maxTokens: 100,
-                            effort: AIFeature.reflection.route.effort)
+                            effort: AIFeature.review.route.effort)
         let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(req)) as! [String: Any]
-        XCTAssertEqual((json["output_config"] as? [String: Any])?["effort"] as? String, "medium")
+        XCTAssertEqual((json["output_config"] as? [String: Any])?["effort"] as? String, "low")
     }
 }

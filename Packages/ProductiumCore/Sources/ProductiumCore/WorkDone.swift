@@ -16,6 +16,17 @@ public enum PlanHistory {
         }
     }
 
+    /// The bedtime the plan had for each night, keyed by the morning's day, so "in bed on time" has something to
+    /// compare with once the plan has moved on. Only nights that have ended are kept.
+    public static func recordBedtimes(plan: Plan, into bed: inout [String: Date], now: Date, calendar cal: Calendar) {
+        for b in plan.blocks where b.kind == .sleep && b.end <= now {
+            bed[CapacityLearner.dayKey(cal.startOfDay(for: b.end), cal)] = b.start
+        }
+        if bed.count > keepDays {
+            for key in bed.keys.sorted().dropLast(keepDays) { bed.removeValue(forKey: key) }
+        }
+    }
+
     /// Past days read the snapshot; today and later read the live plan; with neither, what the outcomes planned.
     public static func plannedMinutes(on day: Date, history: [String: [PlannedBlock]], plan: Plan, outcomes: [BlockOutcome],
                                       calendar cal: Calendar) -> Int {

@@ -21,9 +21,9 @@ struct TodayView: View {
                         DumpBox()
                         if let g = model.dueGap { GapQuestionCard(gap: g) }
                         if let o = model.placeOffer { PlaceOfferCard(offer: o) }
-                        if !model.state.proposals.pending.isEmpty { ProposalsCard() }
                         NowCard(now: now, showGap: $showGap)
                         Attention(now: now)
+                        if Calendar.current.component(.hour, from: now) >= 16 { MoodCard() }
                         SectionTitle("Rest of Today")
                         DayNumbers(blocks: rest, now: now, bed: bed)
                         ScheduleCard(blocks: rest, from: now, bed: bed)
@@ -279,54 +279,6 @@ struct PlaceOfferCard: View {
     }
 }
 
-struct ProposalsCard: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let pending = model.state.proposals.pending
-        let runId = pending.first?.runId
-        let note = model.state.proposals.runs.first { $0.id == runId }?.note
-        Card {
-            CardHeader(title: "Productium suggests \(pending.count) change\(pending.count == 1 ? "" : "s")",
-                       symbol: "sparkles", color: .purple)
-            if let note { Text(note).font(.subheadline).fixedSize(horizontal: false, vertical: true) }
-            ForEach(pending) { p in ProposalRow(proposal: p) }
-            if let runId, pending.count > 1 {
-                HStack {
-                    Button("Approve All") { model.approveRun(runId) }
-                    Spacer()
-                    Button("Reject All", role: .destructive) { model.rejectRun(runId) }
-                }
-                .buttonStyle(.borderless)
-                .font(.subheadline)
-            }
-        }
-    }
-}
-
-struct ProposalRow: View {
-    @Environment(AppModel.self) private var model
-    let proposal: BehaviourProposal
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider()
-            Text(proposal.title).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-            Text(proposal.reason).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if proposal.status == .pending {
-                HStack(spacing: 16) {
-                    Button("Approve") { model.approveProposal(proposal.id) }
-                    Button("Reject") { model.rejectProposal(proposal.id) }.foregroundStyle(.secondary)
-                    Spacer()
-                    Menu { Button("Never Change This") { model.neverChange(proposal.id) } } label: { Image(systemName: "ellipsis") }
-                }
-                .buttonStyle(.borderless)
-                .font(.subheadline)
-            }
-        }
-    }
-}
-
 struct GapQuestionCard: View {
     @Environment(AppModel.self) private var model
     let gap: MysteryGap
@@ -557,5 +509,31 @@ struct BlockRow: View {
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// One tap for how today felt (v1.1 G5). Shown from late afternoon; the answer feeds the Mood tile.
+struct MoodCard: View {
+    @Environment(AppModel.self) private var model
+    private let faces = [(1, "😞", "Rough"), (2, "😕", "Low"), (3, "😐", "Okay"), (4, "🙂", "Good"), (5, "😄", "Great")]
+
+    var body: some View {
+        Card {
+            if let m = model.todayMood {
+                CardHeader(title: "Today Felt", symbol: "face.smiling", color: .teal)
+                Text(faces.first { $0.0 == m.mood }.map { "\($0.1) \($0.2)" } ?? "Logged").font(.subheadline)
+            } else {
+                CardHeader(title: "How Was Today?", symbol: "face.smiling", color: .teal)
+                HStack {
+                    ForEach(faces, id: \.0) { f in
+                        Button { model.logMood(f.0, energy: nil, note: nil) } label: {
+                            VStack(spacing: 2) { Text(f.1).font(.title2); Text(f.2).font(.caption2) }.frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel(f.2)
+                    }
+                }
+            }
+        }
     }
 }

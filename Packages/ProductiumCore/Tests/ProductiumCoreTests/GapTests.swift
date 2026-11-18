@@ -67,3 +67,16 @@ final class GapTests: XCTestCase {
         XCTAssertEqual(GapAnswer.repeated(tue, calendar: cal).first?.count, 3)
     }
 }
+
+final class GapExplainedTests: XCTestCase {
+    let cal = Fx.cal
+    func testAVisitOrWorkoutExplainsAGapSoNothingIsAsked() {
+        let day = DayInputs(day: Fx.mon(0), events: [], commitments: [Fx.school], routines: Routine.defaults, outcomes: [],
+                            health: nil, screen: nil, prefs: Preferences())
+        let plain = GapInput(now: Fx.mon(16, 10), day: day, phoneUse: [Fx.mon(16)])
+        XCTAssertNotNil(GapDetector.due(plain, calendar: cal))
+        let walk = GapInput(now: Fx.mon(16, 10), day: day, phoneUse: [Fx.mon(16)],
+                            explained: [DateInterval(start: Fx.mon(15, 15), end: Fx.mon(16, 30))])
+        XCTAssertNil(GapDetector.due(walk, calendar: cal))
+    }
+}

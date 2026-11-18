@@ -50,9 +50,12 @@ public struct GapInput: Sendable {
     public var plan: Plan
     public var focusing: Bool
     public var log: GapLog
+    /// Stretches something else explains: a place visit away from home, a logged workout, a walk (v1.1 H5).
+    public var explained: [DateInterval]
 
     public init(now: Date, day: DayInputs, scrolling: [ScrollSession] = [], phoneUse: [Date] = [], plan: Plan = .empty,
-                focusing: Bool = false, log: GapLog = GapLog()) {
+                focusing: Bool = false, log: GapLog = GapLog(), explained: [DateInterval] = []) {
+        self.explained = explained
         self.now = now
         self.day = day
         self.scrolling = scrolling
@@ -76,6 +79,7 @@ public enum GapDetector {
         var open = segs.filter { $0.category == .free && $0.inferred && $0.label == "Free" }.map { ($0.start, $0.end) }
         var known = input.scrolling.map { ($0.openedAt, $0.endedAt ?? now) }
         known += input.plan.blocks.filter(\.isStudy).map { ($0.start, $0.end) }
+        known += input.explained.map { ($0.start, $0.end) }
         for (ks, ke) in known {
             open = open.flatMap { (s, e) -> [(Date, Date)] in
                 guard ks < e, ke > s else { return [(s, e)] }

@@ -1,5 +1,4 @@
 import SwiftUI
-import FamilyControls
 import ProductiumCore
 
 struct OnboardingView: View {
@@ -10,8 +9,6 @@ struct OnboardingView: View {
     @State private var serverState: ServerState = .untested
     @State private var permissionsDone = false
     @State private var workingPermissions = false
-    @State private var showPicker = false
-    @State private var selection = FamilyActivitySelection()
     @State private var showGuide = false
 
     enum ServerState { case untested, testing, ok, badKey, failed }
@@ -21,7 +18,7 @@ struct OnboardingView: View {
     }
 
     private var pages: [Page] {
-        Page.allCases.filter { $0 != .keepAlive || Signature.isFreeTier }
+        Page.allCases
     }
 
     var body: some View {
@@ -58,8 +55,6 @@ struct OnboardingView: View {
             .padding(20)
         }
         .background(Theme.background)
-        .familyActivityPicker(isPresented: $showPicker, selection: $selection)
-        .onChange(of: selection) { _, s in ScreenTimeService.shared.selection = s }
         .sheet(isPresented: $showGuide) { ShortcutsGuideView(inSheet: true) }
     }
 
@@ -199,8 +194,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 18) {
             IconTile(symbol: "hourglass", color: Theme.screen, size: 56)
             Text("Less Scrolling").font(.largeTitle.weight(.bold))
-            #if FREE_TIER
-            Text("This build can't block apps (that needs a paid Apple developer account), so two small habits do the job.")
+            Text("Two small habits do the job of blocking apps.")
                 .lineSpacing(3)
             Text("A pause before the apps you lose time in").font(.headline)
             VStack(alignment: .leading, spacing: 8) {
@@ -221,23 +215,6 @@ struct OnboardingView: View {
             Text("One screenshot a week").font(.headline).padding(.top, 8)
             Text("On Sundays, go to Settings → Screen Time → See All App & Website Activity → Week, take a screenshot, and drop it in the box. Claude reads it, and the weekly goal adjusts from there. You'll get a reminder.")
                 .lineSpacing(3)
-            #else
-            Text("Pick the apps and sites you lose time in. For the first week Productium only measures. After that the daily limit drops about 10% a week, and those apps pause during focus blocks and before bed.")
-                .lineSpacing(3)
-            if model.state.integrations.screenTime {
-                Button("Choose Apps and Sites") { selection = ScreenTimeService.shared.selection; showPicker = true }
-                    .buttonStyle(.bordered)
-            } else {
-                Button("Allow Screen Time") {
-                    Task {
-                        model.state.integrations.screenTime = await ScreenTimeService.shared.requestAuthorization()
-                        if model.state.integrations.screenTime { showPicker = true }
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-            }
-            #endif
         }
     }
 

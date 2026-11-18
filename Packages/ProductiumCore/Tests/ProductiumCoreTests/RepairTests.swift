@@ -165,7 +165,7 @@ final class RepairTests: XCTestCase {
         XCTAssertEqual(steps?.steps.first?.kind, "essay")
         XCTAssertEqual(steps?.rationale, "Small steps.")
         let review = response(#"{"headline":"Good week","wins":"Slept well","changes":{"focusBlockMinutes":"30","windDownMinutes":"more"}}"#)
-            .decoded(WeeklyReview.self, schema: Schemas.weeklyReview)
+            .decoded(InsightPass.Output.self, schema: InsightPass.schema)
         XCTAssertEqual(review?.wins, ["Slept well"])
         XCTAssertEqual(review?.suggestions, [])
         XCTAssertNil(response("I can't make cards for that.").decoded(CardBatch.self, schema: Schemas.cards), "no JSON: ask again")
@@ -183,7 +183,7 @@ final class RepairTests: XCTestCase {
         }
     }
 
-    static let schemas: [JSONValue] = [Schemas.dump, Schemas.decomposition, Schemas.weeklyReview, Schemas.cards, Schemas.reads]
+    static let schemas: [JSONValue] = [Schemas.dump, Schemas.decomposition, InsightPass.schema, Schemas.cards, Schemas.reads]
 
     func decodes(_ v: JSONValue, _ schema: JSONValue) -> Bool {
         let fitted = StructuredRepair.coerce(v, to: schema)
@@ -192,7 +192,7 @@ final class RepairTests: XCTestCase {
             return ops.allSatisfy { (try? $0.decode(DumpOp.self)) != nil }
         }
         if schema == Schemas.decomposition { return (try? fitted.decode(Decomposition.self)) != nil }
-        if schema == Schemas.weeklyReview { return (try? fitted.decode(WeeklyReview.self)) != nil }
+        if schema == InsightPass.schema { return (try? fitted.decode(InsightPass.Output.self)) != nil }
         if schema == Schemas.cards { return (try? fitted.decode(CardBatch.self)) != nil }
         return (try? fitted.decode(ReadBatch.self)) != nil
     }

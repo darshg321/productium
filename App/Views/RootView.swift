@@ -1,10 +1,12 @@
 import SwiftUI
+import AudioToolbox
 import ProductiumCore
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var tab = 0
     @State private var showGap = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -37,7 +39,27 @@ struct RootView: View {
                     }
             }
         }
+        .overlay(alignment: .top) {
+            if let m = model.rewardMoment, m.intensity >= .medium {
+                RewardBanner(moment: m)
+                    .overlay(alignment: .top) {
+                        if m.intensity == .big && !reduceMotion { ConfettiView().frame(height: 420).offset(y: -40) }
+                    }
+                    .padding(.top, 8)
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                    .onTapGesture { model.rewardMoment = nil }
+                    .task(id: m.at) {
+                        try? await Task.sleep(nanoseconds: (m.intensity == .big ? 5 : 3) * 1_000_000_000)
+                        withAnimation { model.rewardMoment = nil }
+                    }
+            }
+        }
+        .sensoryFeedback(.success, trigger: model.rewardMoment) { _, new in new != nil && new!.intensity >= .small }
+        .onChange(of: model.rewardMoment) { _, new in
+            if new != nil, model.state.rewardSettings.sound { AudioServicesPlaySystemSound(1057) }
+        }
         .animation(.spring(duration: 0.35), value: model.toast)
+        .animation(.spring(duration: 0.35), value: model.rewardMoment)
         .sheet(isPresented: $showGap) { GapView() }
         .fullScreenCover(isPresented: Binding(get: { model.state.focus != nil }, set: { _ in })) { FocusView() }
         .onChange(of: model.deepLink) { _, link in open(link) }

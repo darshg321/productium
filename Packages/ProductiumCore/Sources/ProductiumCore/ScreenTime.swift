@@ -65,11 +65,28 @@ extension ScreenDay {
         out.apps = byApp.isEmpty ? nil : byApp.values.sorted { $0.minutes > $1.minutes }
         out.totalMinutes = [totalMinutes, other.totalMinutes].compactMap { $0 }.max()
         out.partial = (partial ?? false) && (other.partial ?? false) ? true : nil
+        out.pickups = [pickups, other.pickups].compactMap { $0 }.max()
+        out.notifications = [notifications, other.notifications].compactMap { $0 }.max()
+        out.firstPickup = [firstPickup, other.firstPickup].compactMap { $0 }.min()
         return out.recomputed(list)
     }
 }
 
 public enum ScreenReceipt {
+    static func clock(_ minutes: Int) -> String { String(format: "%d:%02d", minutes / 60, minutes % 60) }
+
+    /// "6:42 AM", "06:42", "18:05" → minutes after midnight. Nil if it isn't a time.
+    public static func parseClock(_ raw: String?) -> Int? {
+        guard var t = raw?.trimmingCharacters(in: .whitespaces).lowercased(), !t.isEmpty else { return nil }
+        var pm: Bool?
+        if t.hasSuffix("pm") { pm = true; t = String(t.dropLast(2)) } else if t.hasSuffix("am") { pm = false; t = String(t.dropLast(2)) }
+        let parts = t.trimmingCharacters(in: .whitespaces).split(separator: ":").map { Int($0) }
+        guard parts.count >= 1, parts.count <= 2, var h = parts[0], let m = parts.count == 2 ? parts[1] : 0 else { return nil }
+        if let pm { guard (1...12).contains(h) else { return nil }; h = h % 12 + (pm ? 12 : 0) }
+        guard (0..<24).contains(h), (0..<60).contains(m) else { return nil }
+        return h * 60 + m
+    }
+
     public static func hm(_ m: Int) -> String {
         m >= 60 ? (m % 60 == 0 ? "\(m / 60) h" : "\(m / 60) h \(m % 60)") : "\(m) min"
     }
@@ -81,6 +98,137 @@ public enum ScreenReceipt {
         s += " scrolling \(hm(d.distractingMinutes))"
         if !scrolling.isEmpty { s += " (" + scrolling.map { "\($0.name) \(hm($0.minutes))" }.joined(separator: ", ") + ")" }
         if d.partial == true { s += ", list cut off" }
+        var extras: [String] = []
+        if let p = d.pickups { extras.append("\(p) pickups") }
+        if let f = d.firstPickup { extras.append("first at \(clock(f))") }
+        if let n = d.notifications { extras.append("\(n) notifications") }
+        if !extras.isEmpty { s += "; " + extras.joined(separator: ", ") }
         return s
     }
+}
+
+/// Which day a Screen Time screenshot shows. The label on screen ("Today", "Yesterday", "Monday", "Mon 16 Nov")
+/// beats the model's `date`, and a screenshot can never show a day after today.
+public enum ScreenDates {
+    static let weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+    static let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
+    public static func resolve(label: String?, date: Date?, now: Date, calendar cal: Calendar) -> Date {
+        let today = cal.startOfDay(for: now)
+        if let l = label?.lowercased(), let d = fromLabel(l, today: today, cal) { return d }
+        if let date {
+            let d = cal.startOfDay(for: date)
+            // A future date is a year slip ("16 Nov" read as next year) or a wrong guess: fall back a year, then to today.
+            if d <= today { return d }
+            if let back = cal.date(byAdding: .year, value: -1, to: d), back <= today,
+               today.timeIntervalSince(back) < 60 * 86400 { return back }
+        }
+        return today
+    }
+
+    static func fromLabel(_ l: String, today: Date, _ cal: Calendar) -> Date? {
+        if l.contains("today") { return today }
+        if l.contains("yesterday") { return cal.date(byAdding: .day, value: -1, to: today) }
+        let words = l.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        let dayNumber = words.compactMap { Int($0) }.first { (1...31).contains($0) }
+        let month = words.lazy.compactMap { w in months.firstIndex { w.hasPrefix($0) } }.first
+        if let dayNumber, let month {
+            let y = cal.component(.year, from: today)
+            for year in [y, y - 1] {
+                if let d = cal.date(from: DateComponents(year: year, month: month + 1, day: dayNumber)), d <= today { return d }
+            }
+        }
+        if let wd = words.lazy.compactMap({ w in w.count >= 3 ? weekdays.firstIndex { $0.hasPrefix(w) } : nil }).first {
+            // Most recent such day, today included ("Monday" on a Monday is today's screen).
+            let todayWd = cal.component(.weekday, from: today) - 1
+            let back = (todayWd - wd + 7) % 7
+            return cal.date(byAdding: .day, value: -back, to: today)
+        }
+        return nil
+    }
+}
+
+/// Where a day's scrolling number came from, best first.
+public enum ScreenSource: String, Codable, Sendable {
+    case screenshot, shortcuts, average
+
+    public init(_ d: ScreenDay) {
+        switch d.source {
+        case "shortcuts": self = .shortcuts
+        case "screenshot-average": self = .average
+        default: self = .screenshot
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .screenshot: return "from Screen Time"
+        case .shortcuts: return "estimated from Shortcuts"
+        case .average: return "daily average from Screen Time"
+        }
+    }
+}
+
+public struct ScreenPoint: Hashable, Sendable {
+    public var day: Date
+    public var scrolling: Int
+    public var total: Int?
+    public var source: ScreenSource
+}
+
+/// One read model for every place that shows screen time (Review Highlights, Your Week, Metrics), so a screenshot
+/// shows up wherever screen time is shown. Day screenshots win; Shortcuts estimates fill other days; a week-view
+/// (daily average) screenshot covers the 7 days up to the day it was sent, but only days with nothing better.
+public enum ScreenSeries {
+    public static let averageCovers = 7
+
+    public static func daily(screen: [ScreenDay], averages: [ScreenDay], days: [Date], calendar cal: Calendar) -> [ScreenPoint?] {
+        let byDay = Dictionary(screen.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { a, b in
+            ScreenSource(a) == .screenshot ? a : b
+        })
+        let avgs = averages.sorted { $0.day > $1.day }
+        return days.map { raw in
+            let d = cal.startOfDay(for: raw)
+            if let s = byDay[d] {
+                return ScreenPoint(day: d, scrolling: s.distractingMinutes, total: s.totalMinutes, source: ScreenSource(s))
+            }
+            let a = avgs.first { a in
+                let start = cal.startOfDay(for: a.day)
+                let from = cal.date(byAdding: .day, value: -(averageCovers - 1), to: start) ?? start
+                return d >= from && d <= start
+            }
+            return a.map { ScreenPoint(day: d, scrolling: $0.distractingMinutes, total: $0.totalMinutes, source: .average) }
+        }
+    }
+
+    public struct Summary: Hashable, Sendable {
+        /// Average scrolling a day over the days that have a number.
+        public var scrolling: Int
+        /// Average total screen time a day, where screenshots gave a total.
+        public var total: Int?
+        public var daysCovered: Int
+        public var sources: Set<ScreenSource>
+
+        /// "1h 10m of scrolling a day (3h 22m total), daily average from Screen Time".
+        public var line: String {
+            var s = "\(minutesLabel(scrolling)) of scrolling a day"
+            if let total { s += " (\(minutesLabel(total)) total)" }
+            if sources.count == 1, let only = sources.first { s += ", \(only.label)" }
+            return s
+        }
+    }
+
+    public static func summary(_ points: [ScreenPoint?]) -> Summary? {
+        let xs = points.compactMap { $0 }
+        guard !xs.isEmpty else { return nil }
+        let totals = xs.compactMap(\.total)
+        return Summary(scrolling: xs.reduce(0) { $0 + $1.scrolling } / xs.count,
+                       total: totals.isEmpty ? nil : totals.reduce(0, +) / totals.count,
+                       daysCovered: xs.count, sources: Set(xs.map(\.source)))
+    }
+}
+
+extension Array where Element == ScreenDay {
+    /// Scrolling minutes always follow the apps × your list; run on load so old saved numbers are corrected.
+    public func recomputed(_ list: [String: Bool]) -> [ScreenDay] { map { $0.recomputed(list) } }
 }
