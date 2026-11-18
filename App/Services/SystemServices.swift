@@ -109,7 +109,7 @@ actor AlarmScheduler {
         case .missedStart: tint = .blue
         }
         let attrs = AlarmAttributes<Metadata>(presentation: AlarmPresentation(alert: alert), metadata: Metadata(), tintColor: tint)
-        let secondary: (any AppIntent)? = a.kind == .missedStart ? StartFocusIntent() : nil
+        let secondary: (any LiveActivityIntent)? = a.kind == .missedStart ? StartFocusIntent() : nil
         return .alarm(schedule: .fixed(a.at), attributes: attrs, stopIntent: nil, secondaryIntent: secondary, sound: .default)
     }
     #endif

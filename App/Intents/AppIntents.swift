@@ -50,7 +50,7 @@ struct LogMoodIntent: AppIntent {
     }
 }
 
-struct StartFocusIntent: AppIntent {
+struct StartFocusIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Start focus"
     static var description = IntentDescription("Start the block that's on now, or the next one. Try it from an NFC tag on your desk, or when a Focus turns on.")
     static var openAppWhenRun = true
