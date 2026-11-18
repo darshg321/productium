@@ -852,7 +852,7 @@ struct InstallSettings: View {
             Section {
                 LabeledContent("Version", value: "\(UpdateChecker.installed) (\(UpdateChecker.build))")
                 if let v = updates.available, let url = updates.latest.flatMap({ URL(string: $0.url) }) {
-                    Link(destination: url) { Label("\(v) is available", systemImage: "arrow.down.circle.fill") }
+                    Link(destination: url) { Label("\(v.description) is available", systemImage: "arrow.down.circle.fill") }
                 } else if updates.latest != nil {
                     Label("You're up to date", systemImage: "checkmark.circle").foregroundStyle(.secondary)
                 }

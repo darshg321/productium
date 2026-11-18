@@ -51,6 +51,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIRequiresFullScreen: true
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers: [app.productium.refresh]
         NSHealthShareUsageDescription: Productium reads sleep, wake time, steps and daylight to plan around how rested you are and when you wake up.
