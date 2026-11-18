@@ -27,9 +27,10 @@ final class AppModel {
     @ObservationIgnored private var lastRefresh: Date = .distantPast
 
     init() {
-        state = Persistence.load()
-        state.screen = state.screen.recomputed(state.scrollingApps)
-        state.screenAverages = state.screenAverages.recomputed(state.scrollingApps)
+        var loaded = Persistence.load()
+        loaded.screen = loaded.screen.recomputed(loaded.scrollingApps)
+        loaded.screenAverages = loaded.screenAverages.recomputed(loaded.scrollingApps)
+        state = loaded
         callLog = CallLogStore.load()
         aboutMe = AboutMeStore.load()
     }
