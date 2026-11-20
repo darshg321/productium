@@ -78,9 +78,8 @@ public enum Palette {
     }
 
     public static func paint(_ blocks: [PlannedBlock], items: [WorkItem],
-                             events: [FixedEvent], colors: [String: String]) -> [PlannedBlock] {
+                             colors: [String: String]) -> [PlannedBlock] {
         let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let evs = Dictionary(events.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         return blocks.map { b in
             var out = b
             switch b.kind {
@@ -90,7 +89,7 @@ public enum Palette {
             case .commitment:
                 out.color = colors["activity"]
             case .event:
-                out.color = b.sourceId.flatMap { evs[$0]?.color } ?? colors["event"]
+                out.color = colors["event"]
             default:
                 out.color = key(for: b.kind).flatMap { colors[$0] }
             }

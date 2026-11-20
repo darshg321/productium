@@ -179,7 +179,7 @@ final class AlarmRuleTests: XCTestCase {
     }
 
     func state() -> DumpState {
-        var s = DumpState(items: [essay], oneOffs: [], markers: [], routines: Routine.defaults,
+        var s = DumpState(items: [essay], markers: [], routines: Routine.defaults,
                           moods: [], screen: [], prefs: Preferences())
         s.alarmsAllowed = true
         return s

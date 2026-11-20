@@ -5,7 +5,7 @@ final class EvidenceTests: XCTestCase {
     let cal = Fx.cal
 
     func state(items: [WorkItem] = []) -> DumpState {
-        DumpState(items: items, oneOffs: [], markers: [],
+        DumpState(items: items, markers: [],
                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 

@@ -4,7 +4,6 @@ public struct PlannerInput: Sendable {
     public var now: Date
     public var calendar: Calendar
     public var items: [WorkItem]
-    public var events: [FixedEvent]
     public var preferences: Preferences
     public var learned: LearnedModel
     public var health: [HealthDay]
@@ -23,7 +22,7 @@ public struct PlannerInput: Sendable {
     public var categories: CategoryTree
 
     public init(now: Date, calendar: Calendar = .current, items: [WorkItem],
-                events: [FixedEvent] = [], preferences: Preferences = Preferences(),
+                preferences: Preferences = Preferences(),
                 learned: LearnedModel = LearnedModel(), health: [HealthDay] = [], moods: [MoodEntry] = [],
                 locked: [PlannedBlock] = [], routines: [Routine] = Routine.defaults,
                 horizonDays: Int = 14, policy: BehaviourPolicy = BehaviourPolicy(),
@@ -38,7 +37,6 @@ public struct PlannerInput: Sendable {
         self.now = now
         self.calendar = calendar
         self.items = items
-        self.events = events
         self.preferences = preferences
         self.learned = learned
         self.health = health
@@ -60,7 +58,7 @@ public enum Planner {
         let demands = ctx.buildDemands()
         ctx.allocate(demands)
         var plan = ctx.finish()
-        plan.blocks = Palette.paint(plan.blocks, items: input.items, events: input.events,
+        plan.blocks = Palette.paint(plan.blocks, items: input.items,
                                     colors: input.preferences.colors)
         return plan
     }
@@ -185,7 +183,7 @@ public enum Planner {
                 FixedEvent(id: $0.id, title: $0.title, start: $0.start, end: $0.end,
                            kind: input.categories.isUnder($0.category, CategoryTree.school) ? .school : .other)
             }
-            var base = WakePlanner.plan(for: day, events: input.events + fromEntries,
+            var base = WakePlanner.plan(for: day, events: fromEntries,
                                         routines: routines(on: day), prefs: prefs, calendar: cal,
                                         isSchoolDay: timetableInEntries ? isSchoolDay(day) : nil)
             if let w = limits(day).wake {
@@ -248,12 +246,6 @@ public enum Planner {
                         busy.append(Interval(start: s, end: e))
                         fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: s, end: e, title: r.name))
                     }
-                }
-                for ev in input.events where ev.end > day && ev.start < tomorrow {
-                    busy.append(Interval(start: ev.start, end: ev.end))
-                    fixed.append(PlannedBlock(id: stableId("e", ev.id, day), kind: .event,
-                                              start: max(ev.start, day), end: min(ev.end, tomorrow), title: ev.title,
-                                              sourceId: ev.id))
                 }
                 for de in fixedEntries(on: day) {
                     busy.append(Interval(start: de.start, end: de.end))

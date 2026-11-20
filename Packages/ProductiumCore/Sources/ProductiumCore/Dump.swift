@@ -4,7 +4,6 @@ import Foundation
 
 public struct DumpState: Sendable {
     public var items: [WorkItem]
-    public var oneOffs: [FixedEvent]
     public var markers: [TimelineEvent]
     public var routines: [Routine]
     public var moods: [MoodEntry]
@@ -23,10 +22,8 @@ public struct DumpState: Sendable {
     /// Read-only here: whether the device has allowed alarms (the box can't grant that).
     public var alarmsAllowed = false
     public var rewardSettings = RewardSettings()
-    /// Read-only: imported calendar events .
-    public var calendarEvents: [FixedEvent] = []
 
-    public init(items: [WorkItem], oneOffs: [FixedEvent],
+    public init(items: [WorkItem],
                 markers: [TimelineEvent], routines: [Routine], moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences,
                 policy: BehaviourPolicy = BehaviourPolicy(), progress: [ProgressEntry] = [], aboutMe: AboutMe = .empty,
                 beliefs: Beliefs = Beliefs(), scrollingApps: [String: Bool] = [:], screenAverages: [ScreenDay] = []) {
@@ -36,7 +33,6 @@ public struct DumpState: Sendable {
         self.progress = progress
         self.aboutMe = aboutMe
         self.items = items
-        self.oneOffs = oneOffs
         self.markers = markers
         self.routines = routines
         self.moods = moods

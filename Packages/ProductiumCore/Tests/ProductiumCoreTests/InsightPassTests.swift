@@ -49,7 +49,7 @@ final class InsightPassTests: XCTestCase {
         XCTAssertEqual(out.review.suggestions.count, 2, "the note keeps at most 2 suggestions")
         let run = InsightRun(at: Fx.mon(9), note: out.headline, model: "sonnet")
         let drafts = InsightPass.drafts(out, runId: run.id, items: [essay], now: Fx.mon(9), model: "sonnet", calendar: cal)
-        var s = DumpState(items: [essay], oneOffs: [], markers: [], routines: Routine.defaults,
+        var s = DumpState(items: [essay], markers: [], routines: Routine.defaults,
                           moods: [], screen: [], prefs: Preferences())
         var log = ChangeLog()
         let problems = log.apply(run, drafts, to: &s, now: Fx.mon(9))
@@ -122,7 +122,7 @@ final class InsightAlarmTests: XCTestCase {
     func changes(_ cs: [InsightPass.Output.Change], items: [WorkItem] = []) -> (ChangeLog, DumpState, [String]) {
         let out = InsightPass.Output(headline: "h", wins: [], suggestions: [], changes: cs, about_me: nil)
         let drafts = InsightPass.drafts(out, runId: UUID(), items: items, now: Fx.mon(9), model: "sonnet", calendar: cal)
-        var s = DumpState(items: items, oneOffs: [], markers: [], routines: Routine.defaults,
+        var s = DumpState(items: items, markers: [], routines: Routine.defaults,
                           moods: [], screen: [], prefs: Preferences())
         var log = ChangeLog()
         let problems = log.apply(InsightRun(at: Fx.mon(9), note: "", model: "sonnet"), drafts, to: &s, now: Fx.mon(9))

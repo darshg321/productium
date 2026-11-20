@@ -5,7 +5,7 @@ final class ScreenTimeTests: XCTestCase {
     let cal = Fx.cal
 
     func state() -> DumpState {
-        DumpState(items: [], oneOffs: [], markers: [],
+        DumpState(items: [], markers: [],
                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 
@@ -114,7 +114,7 @@ final class ScreenSeriesTests: XCTestCase {
 
 enum ShotFx {
     static func state() -> DumpState {
-        DumpState(items: [], oneOffs: [], markers: [],
+        DumpState(items: [], markers: [],
                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 

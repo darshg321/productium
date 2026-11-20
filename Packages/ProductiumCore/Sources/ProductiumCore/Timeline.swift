@@ -226,7 +226,6 @@ public struct DayInputs: Sendable {
     /// Your timetable and everything else timed (v1.2): the days' fixed time comes from here.
     public var entries: [Entry]
     public var categories: CategoryTree
-    public var fixedEvents: [FixedEvent]
     public var routines: [Routine]
     public var outcomes: [BlockOutcome]
     public var itemsById: [UUID: WorkItem]
@@ -241,7 +240,6 @@ public struct DayInputs: Sendable {
     public var dayRules: DayRuleBook
 
     public init(day: Date, events: [TimelineEvent], entries: [Entry] = [], categories: CategoryTree = CategoryTree(),
-                fixedEvents: [FixedEvent] = [],
                 routines: [Routine], outcomes: [BlockOutcome], itemsById: [UUID: WorkItem] = [:],
                 health: HealthDay?, nextHealth: HealthDay? = nil, screen: ScreenDay?, prefs: Preferences,
                 motion: [MotionSpan] = [], scrollSessions: [ScrollSession] = [],
@@ -256,7 +254,6 @@ public struct DayInputs: Sendable {
         self.events = events
         self.entries = entries
         self.categories = categories
-        self.fixedEvents = fixedEvents
         self.routines = routines
         self.outcomes = outcomes
         self.itemsById = itemsById
@@ -290,9 +287,6 @@ public enum TimelineBuilder {
                          category: d.categories.legacy($0.category), assumed: $0.assumed) }
             .sorted { $0.start < $1.start }
         for o in occ { paint(o.start, o.end, o.category, o.title, observed: !o.assumed) }
-        for e in d.fixedEvents where cal.isDate(e.start, inSameDayAs: dayStart) {
-            paint(e.start, e.end, TimeCategory.from(e.kind), e.title, observed: false)
-        }
         let checkedIn = Set(d.events.filter { cal.isDate($0.at, inSameDayAs: dayStart) }.map(\.activity))
         for r in d.routines where r.enabled && !checkedIn.contains(r.id) {
             let anchored = occ.filter { r.anchorKind == nil || $0.kind == r.anchorKind }
@@ -322,7 +316,7 @@ public enum TimelineBuilder {
             paint(max(bed, dayStart), wake, .sleep, "Sleep", observed: h.sleepSource != .motion && h.sleepSource != .plan)
         } else {
             let fromEntries = occ.map { FixedEvent(id: "entry", title: $0.title, start: $0.start, end: $0.end, kind: $0.kind) }
-            let w = WakePlanner.plan(for: dayStart, events: d.fixedEvents + fromEntries, routines: d.routines,
+            let w = WakePlanner.plan(for: dayStart, events: fromEntries, routines: d.routines,
                                      prefs: d.prefs, calendar: cal,
                                      isSchoolDay: Days.isSchoolDay(dayStart, entries: d.entries, tree: d.categories, prefs: d.prefs,
                                                                    book: d.dayRules, calendar: cal)).wake

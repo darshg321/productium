@@ -202,7 +202,7 @@ final class AppModel {
 
     func plannerInput(now: Date, locked: [PlannedBlock] = []) -> PlannerInput {
         PlannerInput(now: now, calendar: cal, items: state.items,
-                     events: shownEvents + state.oneOffs, preferences: state.prefs, learned: state.learned,
+                     preferences: state.prefs, learned: state.learned,
                      health: state.health, moods: state.moods, locked: locked, routines: state.routines,
                      horizonDays: 14, policy: state.policy, beliefs: state.beliefs,
                      dayRules: state.dayRules,
@@ -593,11 +593,6 @@ final class AppModel {
         }
     }
 
-    /// Calendar events that are one of your activities (CS club) are shown once, as the activity.
-    var shownEvents: [FixedEvent] {
-        EventMatch.withoutActivityTwins(state.events, commitments: legacyCommitments, calendar: cal)
-    }
-
     func isSchoolDay(_ d: Date) -> Bool {
         Days.isSchoolDay(d, entries: state.entries, tree: state.categories, prefs: state.prefs, book: state.dayRules, calendar: cal)
     }
@@ -666,8 +661,12 @@ final class AppModel {
 
     private func syncCalendar() {
         guard state.integrations.calendarImport, CalendarService.shared.authorized else { return }
-        state.events = CalendarService.shared.events(days: 14)
-        log(.sensor, "calendar_read", ["events": "\(state.events.count)"])
+        let events = CalendarService.shared.events(days: 14)
+        let start = cal.startOfDay(for: Date())
+        CalendarEntries.merge(events, into: &state.entries,
+                              window: DateInterval(start: start, end: start.addingTimeInterval(14 * 86400)),
+                              book: state.dayRules, now: Date(), calendar: cal)
+        log(.sensor, "calendar_read", ["events": "\(events.count)"])
         for cand in CalendarService.shared.deadlineCandidates(days: 30) {
             if let i = state.items.firstIndex(where: { $0.externalId == cand.externalId }) {
                 state.items[i].due = cand.due
@@ -830,7 +829,7 @@ final class AppModel {
     func dayInputs(_ day: Date) -> DayInputs {
         let next = cal.date(byAdding: .day, value: 1, to: day) ?? day
         return DayInputs(day: day, events: state.markers, entries: state.entries, categories: state.categories,
-                         fixedEvents: shownEvents + state.oneOffs, routines: state.routines, outcomes: state.outcomes, itemsById: itemsById,
+                         routines: state.routines, outcomes: state.outcomes, itemsById: itemsById,
                          health: state.health.first { cal.isDate($0.day, inSameDayAs: day) },
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
                          screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,

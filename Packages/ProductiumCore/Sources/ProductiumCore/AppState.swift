@@ -99,8 +99,6 @@ public struct AppState: Codable, Sendable {
     public var screen: [ScreenDay] = []
     public var screenAverages: [ScreenDay] = []
     public var scrollingApps: [String: Bool] = [:]
-    public var events: [FixedEvent] = []
-    public var oneOffs: [FixedEvent] = []
     /// Named day sequences (A/B rotations) and labels ("exam-week", "no-school").
     public var dayRules = DayRuleBook()
     /// Things the student said that the app couldn't act on (v1.2's backlog).
@@ -141,7 +139,7 @@ public struct AppState: Codable, Sendable {
 
     public var dumpState: DumpState {
         get {
-            var ds = DumpState(items: items, oneOffs: oneOffs, markers: markers,
+            var ds = DumpState(items: items, markers: markers,
                       routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy,
                       progress: progress, beliefs: beliefs, scrollingApps: scrollingApps, screenAverages: screenAverages)
             ds.dayRules = dayRules
@@ -150,12 +148,10 @@ public struct AppState: Codable, Sendable {
             ds.metricTiles = metricTiles
             ds.alarmsAllowed = integrations.alarms
             ds.rewardSettings = rewardSettings
-            ds.calendarEvents = events
             return ds
         }
         set {
             items = newValue.items
-            oneOffs = newValue.oneOffs
             markers = newValue.markers
             routines = newValue.routines
             moods = newValue.moods
@@ -204,8 +200,6 @@ public struct AppState: Codable, Sendable {
         screen = v(.screen, d.screen)
         screenAverages = v(.screenAverages, d.screenAverages)
         scrollingApps = v(.scrollingApps, d.scrollingApps)
-        events = v(.events, d.events)
-        oneOffs = v(.oneOffs, d.oneOffs)
         dayRules = v(.dayRules, d.dayRules)
         gapNotes = v(.gapNotes, d.gapNotes)
         alarmRules = v(.alarmRules, d.alarmRules)

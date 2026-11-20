@@ -35,15 +35,4 @@ public enum EventMatch {
         if a.title.plainKey == b.title.plainKey { return true }
         return overlap((a.start, a.end), (b.start, b.end)) >= 0.8 && similarTitles(a.title, b.title)
     }
-
-    /// Calendar events that are one of your own activities (CS club) are shown once: the activity wins.
-    public static func withoutActivityTwins(_ events: [FixedEvent], commitments: [Commitment],
-                                            calendar cal: Calendar) -> [FixedEvent] {
-        events.filter { e in
-            let day = cal.startOfDay(for: e.start)
-            return !Commitment.occurrences(commitments, on: day, calendar: cal).contains { o in
-                overlap((e.start, e.end), (o.start, o.end)) >= 0.8 && similarTitles(e.title, o.commitment.title)
-            }
-        }
-    }
 }
