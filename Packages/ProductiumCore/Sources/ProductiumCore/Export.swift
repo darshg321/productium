@@ -114,8 +114,8 @@ public struct ExportBundle: Codable, Sendable {
     public var summary: String {
         let s = state
         let prompts = s.conversation.turns.count + s.archive.conversations.reduce(0) { $0 + $1.turns.count }
-        return "\(s.items.count) tasks, \(s.entries.count) timed entries, \(s.markers.count) check-ins, "
-            + "\(s.outcomes.count) study sessions, \(prompts) prompts, \(callLog.calls.count) AI calls and all settings."
+        return "\(s.items.count) tasks, \(s.entries.count) timed entries, \(s.entries.filter { $0.taskId != nil }.count) task sessions, "
+            + "\(prompts) prompts, \(callLog.calls.count) AI calls and all settings."
     }
 }
 
@@ -167,18 +167,19 @@ public enum Exporter {
                          "\($0.importance)", "\($0.difficulty)", $0.isDone ? "1" : "0", iso($0.doneAt), $0.source.rawValue] })
     }
 
-    public static func outcomesCSV(_ o: [BlockOutcome]) -> String {
-        csv(["planned_start", "planned_min", "actual_min", "status", "kind"],
-            o.map { [iso($0.plannedStart), "\($0.plannedMinutes)", "\($0.actualMinutes)", $0.status.rawValue, $0.kind?.rawValue ?? ""] })
-    }
-
     public static func moodsCSV(_ m: [MoodEntry]) -> String {
         csv(["at", "mood", "energy", "note"], m.map { [iso($0.at), "\($0.mood)", $0.energy.map(String.init) ?? "", $0.note ?? ""] })
     }
 
-    public static func markersCSV(_ m: [TimelineEvent]) -> String {
-        csv(["at", "phrase", "activity", "category", "phase", "source"],
-            m.map { [iso($0.at), $0.phrase, $0.activity, $0.category.rawValue, $0.phase.rawValue, $0.source.rawValue] })
+    /// The whole log: one row per entry (a repeating one is a single row with its days in `repeats`).
+    public static func entriesCSV(_ entries: [Entry], tree: CategoryTree) -> String {
+        csv(["id", "title", "start", "end", "category", "source", "repeats", "task", "open", "marks", "topics"],
+            entries.sorted { $0.start < $1.start }.map {
+                [$0.id.uuidString, $0.title, iso($0.start), iso($0.end), tree.pathText($0.category), $0.source.rawValue,
+                 $0.repeats.map { _ in "yes" } ?? "", $0.taskId.map { Ref.task($0) } ?? "", $0.open ? "1" : "",
+                 $0.marks.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value.rawValue)" }.joined(separator: " "),
+                 $0.topics.joined(separator: " ")]
+            })
     }
 
     public static func ics(_ plan: Plan, includeKinds: Set<BlockKind> = [.work, .review, .windDown]) -> String {

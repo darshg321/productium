@@ -91,8 +91,8 @@ final class PlannerTests: XCTestCase {
     func testLowAdherenceLowersDailyLoad() {
         var learned = LearnedModel()
         for i in 0..<20 {
-            learned.record(outcome: BlockOutcome(blockId: UUID(), itemId: nil, kind: .assignment, plannedStart: Fx.mon(17, 0, plusDays: -i),
-                                                 plannedMinutes: 40, actualMinutes: 0, status: .skipped), calendar: cal)
+            learned.record(session: SessionResult(itemId: nil, kind: .assignment, plannedStart: Fx.mon(17, 0, plusDays: -i),
+                                                  plannedMinutes: 40, actualMinutes: 0, status: .skipped), calendar: cal)
         }
         XCTAssertLessThan(learned.loadFactor, 0.8)
         let items = (0..<6).map { WorkItem(title: "HW \($0)", kind: .assignment, due: Fx.mon(23, 0, plusDays: 6), estimateMinutes: 90) }

@@ -433,8 +433,8 @@ public enum AIMapper {
         return Commitment(title: p.title, kind: CommitmentKind(rawValue: p.kind) ?? .extracurricular, weekdays: days, start: s, end: e)
     }
 
-    public static func marker(_ p: ParsedMarker, now: Date) -> TimelineEvent {
-        TimelineEvent(at: now.addingTimeInterval(-Double(max(0, min(600, p.minutesAgo ?? 0))) * 60), phrase: p.phrase,
+    public static func marker(_ p: ParsedMarker, now: Date) -> CheckIn {
+        CheckIn(at: now.addingTimeInterval(-Double(max(0, min(600, p.minutesAgo ?? 0))) * 60), phrase: p.phrase,
                       activity: p.activity.lowercased(), category: TimeCategory(rawValue: p.category) ?? .free,
                       phase: MarkerPhase(rawValue: p.phase) ?? .point, source: .voice)
     }

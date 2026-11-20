@@ -108,9 +108,9 @@ final class RewardTests: XCTestCase {
 final class RewardImpactTests: XCTestCase {
     let cal = Fx.cal
 
-    func scenario(boost: Int) -> (RewardLog, [BlockOutcome]) {
+    func scenario(boost: Int) -> (RewardLog, [Entry]) {
         var log = RewardLog()
-        var outcomes: [BlockOutcome] = []
+        var outcomes: [Entry] = []
         for i in 0..<35 {
             let day = Fx.mon(10, plusDays: i - 35)
             if i % 2 == 0 {
@@ -118,21 +118,22 @@ final class RewardImpactTests: XCTestCase {
             }
             // The next day's focus: 30 minutes, plus `boost` after a celebrated day.
             let next = Fx.mon(10, plusDays: i - 34)
-            outcomes.append(BlockOutcome(blockId: UUID(), itemId: nil, kind: .essay, plannedStart: next, plannedMinutes: 60,
-                                         actualMinutes: 30 + (i % 2 == 0 ? boost : 0), status: .done, loggedAt: next))
+            let end = next.addingTimeInterval(Double(30 + (i % 2 == 0 ? boost : 0)) * 60)
+            outcomes.append(Entry(title: "Essay", start: next, end: end, category: CategoryTree.studying, taskId: UUID(), source: .you,
+                                  createdAt: end))
         }
         return (log, outcomes)
     }
 
     func testNoDifferenceTurnsCelebrationsDownAndItCanBeReverted() {
         let (log, outcomes) = scenario(boost: 0)
-        let r = RewardImpact.evaluate(log: log, outcomes: outcomes, now: Fx.mon(10), calendar: cal)
+        let r = RewardImpact.evaluate(log: log, entries: outcomes, now: Fx.mon(10), calendar: cal)
         XCTAssertNotNil(r)
         XCTAssertFalse(r!.works)
         XCTAssertEqual(RewardImpact.turnDown(r, settings: RewardSettings()), .subtle)
         XCTAssertNil(RewardImpact.turnDown(r, settings: RewardSettings(level: .subtle)), "never below subtle, never to off")
 
-        var s = DumpState(items: [], markers: [], routines: [], moods: [], screen: [], prefs: Preferences())
+        var s = DumpState(items: [], routines: [], moods: [], screen: [], prefs: Preferences())
         var changes = ChangeLog()
         let draft = LoggedChange(runId: UUID(), change: .celebrations(to: .subtle, from: .full), reason: "No difference in focus the next day",
                                  model: "code", at: Fx.mon(10))
@@ -144,9 +145,9 @@ final class RewardImpactTests: XCTestCase {
 
     func testRealEffectOrTooLittleDataLeavesThemAlone() {
         let (log, outcomes) = scenario(boost: 25)
-        let r = RewardImpact.evaluate(log: log, outcomes: outcomes, now: Fx.mon(10), calendar: cal)
+        let r = RewardImpact.evaluate(log: log, entries: outcomes, now: Fx.mon(10), calendar: cal)
         XCTAssertTrue(r?.works ?? false)
         XCTAssertNil(RewardImpact.turnDown(r, settings: RewardSettings()))
-        XCTAssertNil(RewardImpact.evaluate(log: log, outcomes: outcomes, now: Fx.mon(10, plusDays: -20), calendar: cal), "under four weeks of moments")
+        XCTAssertNil(RewardImpact.evaluate(log: log, entries: outcomes, now: Fx.mon(10, plusDays: -20), calendar: cal), "under four weeks of moments")
     }
 }

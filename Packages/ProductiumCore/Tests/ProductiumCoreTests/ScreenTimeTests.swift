@@ -5,8 +5,7 @@ final class ScreenTimeTests: XCTestCase {
     let cal = Fx.cal
 
     func state() -> DumpState {
-        DumpState(items: [], markers: [],
-                  routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpState(items: [],                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 
     func app(_ n: String, _ m: Int, _ c: String? = nil) -> JSONValue {
@@ -33,8 +32,8 @@ final class ScreenTimeTests: XCTestCase {
     func testPickupsBecomeMetricPoints() {
         let day = Fx.mon(0)
         let d = ScreenDay(day: day, distractingMinutes: 30, source: "screenshot", pickups: 70, firstPickup: 420, notifications: 120)
-        let x = MetricsInput(days: [day], screen: [], screenDays: [d], health: [], moods: [], items: [], outcomes: [],
-                             progress: [], markers: [], planned: [:], sleepNeed: 540)
+        let x = MetricsInput(days: [day], screen: [], screenDays: [d], health: [], moods: [], items: [],
+                             progress: [], entries: [], now: Fx.mon(22), planned: [:], sleepNeed: 540)
         let series = MetricsBuilder.series(x, calendar: cal)
         XCTAssertEqual(series[.pickups]?.points[day]?.value, 70)
         XCTAssertEqual(series[.firstPickup]?.points[day]?.value, 420)
@@ -45,7 +44,7 @@ final class ScreenTimeTests: XCTestCase {
     func testScrollingSessionsPaintExactlyAndScreenshotMinutesAreEstimated() {
         let sessions = [ScrollSession(app: "Instagram", openedAt: Fx.mon(17), endedAt: Fx.mon(17, 30), endSource: .closed),
                         ScrollSession(app: "Slack", openedAt: Fx.mon(18), endedAt: Fx.mon(18, 20), endSource: .closed)]
-        let inputs = DayInputs(day: Fx.mon(0), events: [], entries: Fx.schoolEntries, routines: [], outcomes: [], health: nil,
+        let inputs = DayInputs(day: Fx.mon(0), entries: Fx.schoolEntries, routines: [], health: nil,
                                screen: ScreenDay(day: Fx.mon(0), distractingMinutes: 60), prefs: Preferences(),
                                scrollSessions: sessions, scrollingApps: ["Instagram": true, "Slack": false])
         let segs = TimelineBuilder.segments(inputs, calendar: cal)
@@ -60,7 +59,7 @@ final class ScreenTimeTests: XCTestCase {
     }
 
     func testScreenshotMinutesWithoutSessionsAreShownInTheEvening() {
-        let inputs = DayInputs(day: Fx.mon(0), events: [], entries: Fx.schoolEntries, routines: [], outcomes: [], health: nil,
+        let inputs = DayInputs(day: Fx.mon(0), entries: Fx.schoolEntries, routines: [], health: nil,
                                screen: ScreenDay(day: Fx.mon(0), distractingMinutes: 90), prefs: Preferences())
         let segs = TimelineBuilder.segments(inputs, calendar: cal)
         let scroll = segs.filter { $0.category == .screen }
@@ -114,8 +113,7 @@ final class ScreenSeriesTests: XCTestCase {
 
 enum ShotFx {
     static func state() -> DumpState {
-        DumpState(items: [], markers: [],
-                  routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpState(items: [],                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 
     static func app(_ n: String, _ m: Int, _ c: String? = nil) -> JSONValue {

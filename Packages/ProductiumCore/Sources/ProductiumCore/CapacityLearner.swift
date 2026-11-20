@@ -38,8 +38,8 @@ public enum CapacityLearner {
         b[id] = x
     }
 
-    public static func learn(_ beliefs: Beliefs, days: [DayRecord], outcomes: [BlockOutcome] = [], markers: [TimelineEvent] = [],
-                             now: Date, calendar cal: Calendar) -> Beliefs {
+    public static func learn(_ beliefs: Beliefs, days: [DayRecord], entries: [Entry] = [], tree: CategoryTree = CategoryTree(),
+                             book: DayRuleBook = DayRuleBook(), now: Date, calendar cal: Calendar) -> Beliefs {
         var b = beliefs
         let since = cal.date(byAdding: .day, value: -window, to: cal.startOfDay(for: now)) ?? now
         let recent = days.filter { $0.day >= since && $0.day < cal.startOfDay(for: now) && ($0.planned > 0 || $0.done > 0) }
@@ -58,13 +58,16 @@ public enum CapacityLearner {
             set(&b, id, observed: med, n: free.count, bounds: 30...360,
                 evidence: "On \(free.count) days you followed the plan, you kept about \(Int(med)) min free", now: now)
         }
-        let blocks = outcomes.filter { $0.plannedStart >= since && $0.status == .done && $0.actualMinutes >= 10 }.map { Double($0.actualMinutes) }
+        let tracked = Days.expand(entries.filter { $0.source != .plan }, in: DateInterval(start: since, end: max(since, now)), now: now,
+                                  book: book, calendar: cal).filter { !$0.assumed && !$0.isPlannedSession }
+        let blocks = tracked.filter { $0.taskId != nil && $0.minutes >= 10 && !$0.running }.map { Double($0.minutes) }
         if !blocks.isEmpty {
             let med = percentile(blocks, 0.5)
             set(&b, "study.focusMinutes", observed: med, n: blocks.count, bounds: 20...60,
                 evidence: "\(blocks.count) finished blocks lasted about \(Int(med)) min", now: now)
         }
-        let meals = markers.filter { $0.at >= since && ["dinner", "meal"].contains($0.activity) }.sorted { $0.at < $1.at }
+        let meals = CheckIns.derive(entries, tree: tree, in: DateInterval(start: since, end: max(since, now)), now: now, book: book, calendar: cal)
+            .filter { ["dinner", "meal"].contains($0.activity) }
         let starts = meals.filter { $0.phase == .start && (16...22).contains(cal.component(.hour, from: $0.at)) }
         if !starts.isEmpty {
             let mins = starts.map { Double(cal.component(.hour, from: $0.at) * 60 + cal.component(.minute, from: $0.at)) }
@@ -81,15 +84,15 @@ public enum CapacityLearner {
         return b
     }
 
-    public static func records(days: [Date], planHistory: [String: [PlannedBlock]] = [:], outcomes: [BlockOutcome],
-                               progress: [ProgressEntry], markers: [TimelineEvent] = [], isSchoolDay: (Date) -> Bool, eveningFree: (Date) -> Int? = { _ in nil },
+    public static func records(days: [Date], planHistory: [String: [PlannedBlock]] = [:], dayPlans: [DayKey: [UUID: Int]] = [:],
+                               entries: [Entry], tree: CategoryTree = CategoryTree(), book: DayRuleBook = DayRuleBook(), now: Date,
+                               progress: [ProgressEntry], isSchoolDay: (Date) -> Bool, eveningFree: (Date) -> Int? = { _ in nil },
                                calendar cal: Calendar) -> [DayRecord] {
         days.map { d in
             let key = dayKey(d, cal)
             let fromHistory = planHistory[key]?.filter(\.isStudy).reduce(0) { $0 + $1.minutes }
-            let todays = outcomes.filter { cal.isDate($0.plannedStart, inSameDayAs: d) }
-            let planned = fromHistory ?? todays.reduce(0) { $0 + $1.plannedMinutes }
-            let done = WorkDone.minutes(on: d, outcomes: outcomes, progress: progress, markers: markers, calendar: cal)
+            let planned = fromHistory ?? dayPlans[key]?.values.reduce(0, +) ?? 0
+            let done = WorkDone.minutes(on: d, entries: entries, tree: tree, now: now, book: book, progress: progress, calendar: cal)
             return DayRecord(day: cal.startOfDay(for: d), isSchoolDay: isSchoolDay(d), planned: planned, done: done, eveningFree: eveningFree(d))
         }
     }

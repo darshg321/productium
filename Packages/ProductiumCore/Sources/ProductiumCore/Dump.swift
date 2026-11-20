@@ -4,7 +4,6 @@ import Foundation
 
 public struct DumpState: Sendable {
     public var items: [WorkItem]
-    public var markers: [TimelineEvent]
     public var routines: [Routine]
     public var moods: [MoodEntry]
     public var screen: [ScreenDay]
@@ -16,7 +15,6 @@ public struct DumpState: Sendable {
     public var scrollingApps: [String: Bool] = [:]
     public var screenAverages: [ScreenDay] = []
     public var dayRules = DayRuleBook()
-    public var gapNotes: [GapNote] = []
     public var alarmRules: [AlarmRule] = []
     public var metricTiles: [MetricID] = MetricID.defaultTiles
     /// Read-only here: whether the device has allowed alarms (the box can't grant that).
@@ -24,7 +22,7 @@ public struct DumpState: Sendable {
     public var rewardSettings = RewardSettings()
 
     public init(items: [WorkItem],
-                markers: [TimelineEvent], routines: [Routine], moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences,
+                routines: [Routine], moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences,
                 policy: BehaviourPolicy = BehaviourPolicy(), progress: [ProgressEntry] = [], aboutMe: AboutMe = .empty,
                 beliefs: Beliefs = Beliefs(), scrollingApps: [String: Bool] = [:], screenAverages: [ScreenDay] = []) {
         self.scrollingApps = scrollingApps
@@ -33,7 +31,6 @@ public struct DumpState: Sendable {
         self.progress = progress
         self.aboutMe = aboutMe
         self.items = items
-        self.markers = markers
         self.routines = routines
         self.moods = moods
         self.screen = screen

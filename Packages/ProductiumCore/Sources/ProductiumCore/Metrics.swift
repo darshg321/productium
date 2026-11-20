@@ -301,9 +301,12 @@ public struct MetricsInput {
     public var health: [HealthDay]
     public var moods: [MoodEntry]
     public var items: [WorkItem]
-    public var outcomes: [BlockOutcome]
     public var progress: [ProgressEntry]
-    public var markers: [TimelineEvent]
+    /// The log (v1.2): work done is tracked time on tasks and studying.
+    public var entries: [Entry]
+    public var categories: CategoryTree
+    public var now: Date
+    public var dayRules: DayRuleBook
     /// Planned study minutes per day (PlanHistory).
     public var planned: [Date: Int]
     public var sleepNeed: Int
@@ -312,8 +315,13 @@ public struct MetricsInput {
     public var plannedBed: [String: Date]
 
     public init(days: [Date], screen: [ScreenPoint?], screenDays: [ScreenDay] = [], health: [HealthDay], moods: [MoodEntry],
-                items: [WorkItem], outcomes: [BlockOutcome], progress: [ProgressEntry], markers: [TimelineEvent],
+                items: [WorkItem], progress: [ProgressEntry], entries: [Entry], categories: CategoryTree = CategoryTree(),
+                now: Date, dayRules: DayRuleBook = DayRuleBook(),
                 planned: [Date: Int], sleepNeed: Int, away: [Date: Int] = [:], plannedBed: [String: Date] = [:]) {
+        self.entries = entries
+        self.categories = categories
+        self.now = now
+        self.dayRules = dayRules
         self.away = away
         self.plannedBed = plannedBed
         self.days = days
@@ -322,9 +330,7 @@ public struct MetricsInput {
         self.health = health
         self.moods = moods
         self.items = items
-        self.outcomes = outcomes
         self.progress = progress
-        self.markers = markers
         self.planned = planned
         self.sleepNeed = sleepNeed
     }
@@ -406,14 +412,13 @@ public enum MetricsBuilder {
 
         // Focus: a day with nothing planned and nothing done has no number (a weekend off isn't a zero).
         let focusSoFar: (Date, Date) -> Double? = { day, cutoff in
-            let os = x.outcomes.filter { $0.plannedStart <= cutoff }
             let ps = x.progress.filter { $0.at <= cutoff }
-            let ms = x.markers.filter { $0.at <= cutoff }
-            return Double(WorkDone.minutes(on: day, outcomes: os, progress: ps, markers: ms, calendar: cal))
+            return Double(WorkDone.minutes(on: day, entries: x.entries, tree: x.categories, now: min(cutoff, x.now), book: x.dayRules,
+                                           progress: ps, calendar: cal))
         }
         var focus: [MetricPoint] = [], planDone: [MetricPoint] = []
         for d in days {
-            let done = WorkDone.minutes(on: d, outcomes: x.outcomes, progress: x.progress, markers: x.markers, calendar: cal)
+            let done = WorkDone.minutes(on: d, entries: x.entries, tree: x.categories, now: x.now, book: x.dayRules, progress: x.progress, calendar: cal)
             let planned = x.planned[d] ?? 0
             if done > 0 || planned > 0 { focus.append(MetricPoint(day: d, value: Double(done), source: .measured)) }
             if planned > 0 { planDone.append(MetricPoint(day: d, value: min(100, Double(done) / Double(planned) * 100), source: .measured)) }

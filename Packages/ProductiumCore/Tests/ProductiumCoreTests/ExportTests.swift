@@ -11,9 +11,6 @@ final class ExportTests: XCTestCase {
         s.items = [task]
         s.entries = Fx.timetable
         s.routines[1].samples = [14]
-        s.markers = [TimelineEvent(at: now, phrase: "left home", activity: "to_school", category: .commute, phase: .start)]
-        s.outcomes = [BlockOutcome(blockId: UUID(), itemId: task.id, kind: .essay, plannedStart: now, plannedMinutes: 40,
-                                   actualMinutes: 40, status: .done, loggedAt: now)]
         s.moods = [MoodEntry(at: now, mood: 4)]
         s.progress = [ProgressEntry(at: now, itemId: task.id, minutes: 30, from: 0, to: 30, source: .task)]
         s.health = [HealthDay(day: Fx.mon(0), steps: 4000)]
@@ -37,7 +34,6 @@ final class ExportTests: XCTestCase {
                                reply: "Hello", applied: AppliedReport(changes: ["Added Essay"])))
         s.conversation = c
         s.archive.archive(c, now: now)
-        s.focus = FocusSession(blockId: UUID(), itemId: nil, title: "Essay", startedAt: now, plannedEnd: now.addingTimeInterval(2400))
         s.gaps = GapLog(asked: [AskedGap(start: now, end: now.addingTimeInterval(3000), askedAt: now, answer: "gym", activity: "exercise")])
         s.appOpens = [now]
         s.insightAt = now
@@ -114,8 +110,9 @@ final class ExportTests: XCTestCase {
 
     func testNothingIsPrunedBeforeExport() {
         var s = Self.populated()
-        s.markers.append(TimelineEvent(at: Fx.mon(0, plusDays: -400), phrase: "old", activity: "x", category: .free, phase: .point))
+        s.entries.append(Entry(title: "old", start: Fx.mon(0, plusDays: -400), end: Fx.mon(1, plusDays: -400), category: CategoryTree.other, source: .you))
+        let before = s.entries.count
         s.prune(now: Fx.mon(12))
-        XCTAssertEqual(s.markers.count, 2)
+        XCTAssertEqual(s.entries.count, before)
     }
 }

@@ -6,7 +6,7 @@ struct FocusView: View {
     @State private var confirmStop = false
 
     var body: some View {
-        if let f = model.state.focus {
+        if let f = model.focus {
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let total = max(60, f.plannedEnd.timeIntervalSince(f.startedAt))
                 let remaining = f.plannedEnd.timeIntervalSince(ctx.date)
@@ -17,7 +17,7 @@ struct FocusView: View {
                             .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.focus)
                         Text(f.title).font(.title2.weight(.bold)).multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
-                        if let hint = model.state.plan.blocks.first(where: { $0.id == f.blockId })?.hint {
+                        if let hint = f.block?.hint {
                             Text(hint).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         }
                     }

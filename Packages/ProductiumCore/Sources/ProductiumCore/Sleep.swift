@@ -35,10 +35,10 @@ public enum SleepEstimator {
         return nil
     }
 
-    public static func isBedtime(_ m: TimelineEvent) -> Bool { normalised(activity: m.activity, phase: m.phase)?.1 == .start }
-    public static func isWake(_ m: TimelineEvent) -> Bool { normalised(activity: m.activity, phase: m.phase)?.1 == .end }
+    public static func isBedtime(_ m: CheckIn) -> Bool { normalised(activity: m.activity, phase: m.phase)?.1 == .start }
+    public static func isWake(_ m: CheckIn) -> Bool { normalised(activity: m.activity, phase: m.phase)?.1 == .end }
 
-    public static func night(morningOf day: Date, health: HealthDay?, markers: [TimelineEvent], motion: [MotionSpan] = [],
+    public static func night(morningOf day: Date, health: HealthDay?, markers: [CheckIn], motion: [MotionSpan] = [],
                              phoneUse: [Date] = [], plannedWake: Date?, sleepNeedMinutes: Int,
                              calendar cal: Calendar, firstPickup: Date? = nil, charging: Date? = nil,
                              awakeBursts: [Date] = []) -> SleepNight? {
@@ -59,7 +59,7 @@ public enum SleepEstimator {
         return n
     }
 
-    static func nightBase(morningOf day: Date, health: HealthDay?, markers: [TimelineEvent], motion: [MotionSpan],
+    static func nightBase(morningOf day: Date, health: HealthDay?, markers: [CheckIn], motion: [MotionSpan],
                           phoneUse: [Date], plannedWake: Date?, sleepNeedMinutes: Int, calendar cal: Calendar,
                           firstPickup: Date?, charging: Date?) -> SleepNight? {
         let dayStart = cal.startOfDay(for: day)
@@ -99,7 +99,7 @@ public enum SleepEstimator {
         return SleepNight(day: dayStart, bedtime: w.addingTimeInterval(-Double(sleepNeedMinutes) * 60), wake: w, source: .plan)
     }
 
-    public static func fill(_ health: [HealthDay], days: [Date], markers: [TimelineEvent], motion: [MotionSpan],
+    public static func fill(_ health: [HealthDay], days: [Date], markers: [CheckIn], motion: [MotionSpan],
                             phoneUse: [Date], sleepNeedMinutes: Int, calendar cal: Calendar,
                             firstPickups: [Date: Date] = [:], charging: [Date: Date] = [:]) -> [HealthDay] {
         var byDay = Dictionary(health.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })

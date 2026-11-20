@@ -123,10 +123,10 @@ final class MetricsTests: XCTestCase {
         let health = [HealthDay(day: day(0), steps: 9000, sleepMinutes: 500, sleepSource: .health),
                       HealthDay(day: day(1), sleepMinutes: 540, sleepSource: .plan),
                       HealthDay(day: day(2), steps: 4000, sleepMinutes: 420, sleepSource: .checkIns)]
-        let o = BlockOutcome(blockId: UUID(), itemId: nil, kind: .essay, plannedStart: Fx.mon(16), plannedMinutes: 60,
-                             actualMinutes: 45, status: .partial, loggedAt: Fx.mon(17))
+        let o = Entry(title: "Essay", start: Fx.mon(16), end: Fx.mon(16, 45), category: CategoryTree.studying, taskId: UUID(),
+                      source: .you, createdAt: Fx.mon(16, 45))
         let x = MetricsInput(days: days, screen: [nil, nil, nil], health: health, moods: [MoodEntry(at: Fx.mon(20), mood: 4)],
-                             items: [], outcomes: [o], progress: [], markers: [], planned: [day(0): 60], sleepNeed: 540)
+                             items: [], progress: [], entries: [o], now: Fx.mon(22), planned: [day(0): 60], sleepNeed: 540)
         let s = MetricsBuilder.series(x, calendar: cal)
         XCTAssertEqual(s[.sleep]!.points.count, 2, "the plan's assumed 9 h isn't a night of data")
         XCTAssertEqual(s[.sleep]!.points[day(2)]?.source, .stated)
@@ -217,8 +217,8 @@ final class SensorMetricsTests: XCTestCase {
         let health = [HealthDay(day: night, sleepMinutes: 480, bedtime: planned.addingTimeInterval(10 * 60), wake: night.addingTimeInterval(7 * 3600), sleepSource: .health),
                       HealthDay(day: day(2), sleepMinutes: 480, bedtime: bed[CapacityLearner.dayKey(day(2), cal)]!.addingTimeInterval(90 * 60),
                                 wake: day(2).addingTimeInterval(8 * 3600), sleepSource: .health)]
-        let x = MetricsInput(days: [night, day(2)], screen: [nil, nil], health: health, moods: [], items: [], outcomes: [], progress: [],
-                             markers: [], planned: [:], sleepNeed: 540, away: [night: 120], plannedBed: bed)
+        let x = MetricsInput(days: [night, day(2)], screen: [nil, nil], health: health, moods: [], items: [], progress: [], entries: [], now: Fx.mon(22, plusDays: 5),
+                             planned: [:], sleepNeed: 540, away: [night: 120], plannedBed: bed)
         let s = MetricsBuilder.series(x, calendar: cal)
         XCTAssertEqual(s[.bedOnTime]?.points[night]?.value, 100)
         XCTAssertEqual(s[.bedOnTime]?.points[day(2)]?.value, 0)
@@ -227,8 +227,8 @@ final class SensorMetricsTests: XCTestCase {
 
     func testExerciseUsesTheLargerOfRingsAndWorkouts() {
         let h = [HealthDay(day: day(0), exerciseMinutes: 20, workoutMinutes: 45), HealthDay(day: day(1))]
-        let x = MetricsInput(days: [day(0), day(1)], screen: [nil, nil], health: h, moods: [], items: [], outcomes: [], progress: [],
-                             markers: [], planned: [:], sleepNeed: 540)
+        let x = MetricsInput(days: [day(0), day(1)], screen: [nil, nil], health: h, moods: [], items: [], progress: [], entries: [], now: Fx.mon(22, plusDays: 5),
+                             planned: [:], sleepNeed: 540)
         let s = MetricsBuilder.series(x, calendar: cal)
         XCTAssertEqual(s[.exercise]?.points.count, 1)
         XCTAssertEqual(s[.exercise]?.points[day(0)]?.value, 45)

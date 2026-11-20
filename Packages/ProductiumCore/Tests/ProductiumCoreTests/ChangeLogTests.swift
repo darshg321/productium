@@ -7,7 +7,7 @@ final class ChangeLogTests: XCTestCase {
     let essay = WorkItem(title: "Waterloo AIF revision", kind: .application, due: Fx.mon(23, plusDays: 10))
 
     func state() -> DumpState {
-        DumpState(items: [essay], markers: [], routines: Routine.defaults,
+        DumpState(items: [essay], routines: Routine.defaults,
                   moods: [], screen: [], prefs: Preferences())
     }
 

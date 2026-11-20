@@ -61,7 +61,7 @@ struct RootView: View {
         .animation(.spring(duration: 0.35), value: model.toast)
         .animation(.spring(duration: 0.35), value: model.rewardMoment)
         .sheet(isPresented: $showGap) { GapView() }
-        .fullScreenCover(isPresented: Binding(get: { model.state.focus != nil }, set: { _ in })) { FocusView() }
+        .fullScreenCover(isPresented: Binding(get: { model.focus != nil }, set: { _ in })) { FocusView() }
         .onChange(of: model.deepLink) { _, link in open(link) }
         .onAppear { open(model.deepLink) }
     }

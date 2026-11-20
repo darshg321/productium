@@ -491,28 +491,23 @@ public struct Plan: Codable, Hashable, Sendable {
 
 public enum OutcomeStatus: String, Codable, Sendable { case done, partial, skipped }
 
-public struct BlockOutcome: Codable, Hashable, Identifiable, Sendable {
-    public var id: UUID
-    public var blockId: UUID
+/// How a planned session went, at the moment it ended: what `LearnedModel` learns adherence from. Not stored: the
+/// session itself is an entry with a `taskId` (the log), and what was asked is `AppState.dayPlans`.
+public struct SessionResult: Hashable, Sendable {
     public var itemId: UUID?
     public var kind: TaskKind?
     public var plannedStart: Date
     public var plannedMinutes: Int
     public var actualMinutes: Int
     public var status: OutcomeStatus
-    public var loggedAt: Date
 
-    public init(id: UUID = UUID(), blockId: UUID, itemId: UUID?, kind: TaskKind?, plannedStart: Date,
-                plannedMinutes: Int, actualMinutes: Int, status: OutcomeStatus, loggedAt: Date = Date()) {
-        self.id = id
-        self.blockId = blockId
+    public init(itemId: UUID?, kind: TaskKind?, plannedStart: Date, plannedMinutes: Int, actualMinutes: Int, status: OutcomeStatus) {
         self.itemId = itemId
         self.kind = kind
         self.plannedStart = plannedStart
         self.plannedMinutes = plannedMinutes
         self.actualMinutes = actualMinutes
         self.status = status
-        self.loggedAt = loggedAt
     }
 
     public var score: Double {

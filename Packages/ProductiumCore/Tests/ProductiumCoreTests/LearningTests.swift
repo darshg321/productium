@@ -6,7 +6,7 @@ final class LearningTests: XCTestCase {
 
     func testMarkerParsing() {
         let c = [Fx.school, Fx.soccer]
-        func p(_ s: String, _ h: Int = 8) -> [TimelineEvent] { MarkerParser.parse(s, at: Fx.mon(h), commitments: c, calendar: cal) }
+        func p(_ s: String, _ h: Int = 8) -> [CheckIn] { MarkerParser.parse(s, at: Fx.mon(h), commitments: c, calendar: cal) }
         XCTAssertEqual(p("left home").first?.activity, "to_school")
         XCTAssertEqual(p("At school").map(\.activity), ["to_school", "school"])
         XCTAssertEqual(p("finished math class", 10).first?.phase, .end)
@@ -34,8 +34,8 @@ final class LearningTests: XCTestCase {
     func testTimelineInfersRoutinesWithoutCheckins() {
         var routines = Routine.defaults
         routines[1].samples = [25, 25, 25]
-        let d = DayInputs(day: Fx.mon(12), events: [], entries: Fx.timetable, routines: routines,
-                          outcomes: [], health: HealthDay(day: Fx.mon(0), sleepMinutes: 500, bedtime: Fx.mon(22, 30, plusDays: -1), wake: Fx.mon(6, 50)),
+        let d = DayInputs(day: Fx.mon(12), entries: Fx.timetable, routines: routines,
+                          health: HealthDay(day: Fx.mon(0), sleepMinutes: 500, bedtime: Fx.mon(22, 30, plusDays: -1), wake: Fx.mon(6, 50)),
                           screen: ScreenDay(day: Fx.mon(0), distractingMinutes: 90), prefs: Preferences())
         let segs = TimelineBuilder.segments(d, calendar: cal)
         XCTAssertTrue(segs.contains { $0.label == "To school" && $0.minutes == 25 && $0.inferred })
@@ -48,8 +48,7 @@ final class LearningTests: XCTestCase {
     func testCheckinsOverrideSchedule() {
         let evs = MarkerParser.parse("left school", at: Fx.mon(15, 0), commitments: [Fx.school], calendar: cal)
             + MarkerParser.parse("home", at: Fx.mon(15, 40), commitments: [Fx.school], calendar: cal)
-        let d = DayInputs(day: Fx.mon(12), events: evs, entries: Fx.schoolEntries, routines: Routine.defaults, outcomes: [],
-                          health: nil, screen: nil, prefs: Preferences())
+        let d = DayInputs(day: Fx.mon(12), entries: Fx.log(evs), routines: Routine.defaults, health: nil, screen: nil, prefs: Preferences())
         let segs = TimelineBuilder.segments(d, calendar: cal)
         let trip = segs.first { $0.label == "Home from school" }!
         XCTAssertEqual(trip.minutes, 40)
@@ -182,10 +181,10 @@ final class MarkerMergeTests: XCTestCase {
     func testTheThreeLeftHomesBecomeOneAndTeachTheWalkOnce() {
         let day = Fx.mon(0)
         func at(_ h: Int, _ m: Int, _ sec: Int = 0) -> Date { day.addingTimeInterval(Double(h * 3600 + m * 60 + sec)) }
-        func mk(_ t: Date, _ p: MarkerPhase, _ src: MarkerSource) -> TimelineEvent {
-            TimelineEvent(at: t, phrase: "x", activity: "to_school", category: .commute, phase: p, source: src)
+        func mk(_ t: Date, _ p: MarkerPhase, _ src: MarkerSource) -> CheckIn {
+            CheckIn(at: t, phrase: "x", activity: "to_school", category: .commute, phase: p, source: src)
         }
-        var log: [TimelineEvent] = []
+        var log: [CheckIn] = []
         MarkerLog.add([mk(at(13, 4, 58), .start, .geofence)], to: &log)
         MarkerLog.add([mk(at(13, 5, 16), .start, .geofence)], to: &log)
         MarkerLog.add([mk(at(13, 2), .start, .voice)], to: &log)
@@ -200,9 +199,9 @@ final class MarkerMergeTests: XCTestCase {
     }
 
     func testAMarkerFarFromTheFirstIsKept() {
-        var log: [TimelineEvent] = []
-        let a = TimelineEvent(at: Fx.mon(8), phrase: "x", activity: "study", category: .study, phase: .start)
-        let b = TimelineEvent(at: Fx.mon(8, 10), phrase: "x", activity: "study", category: .study, phase: .start)
+        var log: [CheckIn] = []
+        let a = CheckIn(at: Fx.mon(8), phrase: "x", activity: "study", category: .study, phase: .start)
+        let b = CheckIn(at: Fx.mon(8, 10), phrase: "x", activity: "study", category: .study, phase: .start)
         MarkerLog.add([a, b], to: &log)
         XCTAssertEqual(log.count, 2)
         XCTAssertEqual(MarkerLog.merged([b, a, a]).count, 2)

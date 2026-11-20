@@ -43,7 +43,7 @@ public struct LearnedModel: Codable, Hashable, Sendable {
         estimateRatio[kind.rawValue] = m
     }
 
-    public mutating func record(outcome: BlockOutcome, calendar: Calendar) {
+    public mutating func record(session outcome: SessionResult, calendar: Calendar) {
         let alpha = adherenceSamples < 10 ? 0.25 : 0.12
         adherence = (1 - alpha) * adherence + alpha * outcome.score
         adherenceSamples += 1

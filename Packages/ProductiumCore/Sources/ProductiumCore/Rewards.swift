@@ -223,17 +223,16 @@ public enum RewardImpact {
         public var works: Bool { withMoments - without >= RewardImpact.minDifference }
     }
 
-    public static func evaluate(log: RewardLog, outcomes: [BlockOutcome], now: Date, calendar cal: Calendar) -> Result? {
+    public static func evaluate(log: RewardLog, entries: [Entry], tree: CategoryTree = CategoryTree(), now: Date,
+                                calendar cal: Calendar) -> Result? {
         guard let first = log.moments.map(\.at).min(),
               now.timeIntervalSince(first) >= Double(minWeeks) * 7 * 86400 else { return nil }
         let celebrated = Set(log.moments.filter { $0.intensity >= .medium }.map { cal.startOfDay(for: $0.at) })
-        var focus: [Date: Double] = [:]
-        for o in outcomes where o.status != .skipped { focus[cal.startOfDay(for: o.plannedStart), default: 0] += Double(o.actualMinutes) }
         let today = cal.startOfDay(for: now)
         var with: [Double] = [], without: [Double] = []
         var day = cal.startOfDay(for: first)
         while let next = cal.date(byAdding: .day, value: 1, to: day), next < today {
-            let after = focus[next] ?? 0
+            let after = Double(WorkDone.minutes(on: next, entries: entries, tree: tree, now: now, progress: [], calendar: cal))
             if celebrated.contains(day) { with.append(after) } else { without.append(after) }
             day = next
         }

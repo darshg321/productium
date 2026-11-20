@@ -31,6 +31,13 @@ enum Fx {
                       repeats: .weekly([2, 4]), source: .you)]
     }
 
+    /// Check-ins written into a log (the timetable by default), as the app writes them.
+    static func log(_ checkIns: [CheckIn], over base: [Entry] = schoolEntries, now: Date? = nil) -> [Entry] {
+        var entries = base, tree = CategoryTree()
+        CheckIns.apply(checkIns, to: &entries, tree: &tree, now: now ?? checkIns.map(\.at).max() ?? mon(12), calendar: cal)
+        return entries
+    }
+
     static var schoolEntries: [Entry] { [timetable[0]] }
 
     /// Planner input driven by entries and rules (no commitments).

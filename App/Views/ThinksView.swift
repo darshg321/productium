@@ -41,12 +41,13 @@ struct ThinksView: View {
                     }
                 }
             }
-            if !model.state.gapNotes.isEmpty {
+            let gaps = model.state.telemetry.events.filter { $0.area == .gap && $0.name == "cant_do" }.suffix(30).reversed()
+            if !gaps.isEmpty {
                 Section {
-                    ForEach(model.state.gapNotes.reversed()) { g in
+                    ForEach(Array(gaps.enumerated()), id: \.offset) { _, g in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(g.wanted)
-                            if !g.said.isEmpty { Text("“\(g.said)”").font(.caption).foregroundStyle(.secondary) }
+                            Text(g.detail["what"] ?? "")
+                            if let said = g.detail["said"], !said.isEmpty { Text(said).font(.caption).foregroundStyle(.secondary) }
                         }
                     }
                 } header: { Text("Things I Couldn't Do Yet") } footer: {

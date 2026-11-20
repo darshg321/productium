@@ -169,16 +169,24 @@ final class AppModel {
     /// motion routine learning, calendar twins). Entries are the source of truth.
     var legacyCommitments: [Commitment] { Timetable.commitments(from: state.entries, tree: state.categories, calendar: cal) }
 
+    /// The log as instants (starts and ends) over the last `days` days, for the estimators that work on instants.
+    func recentCheckIns(days: Int = 21) -> [CheckIn] {
+        let now = Date()
+        let start = cal.date(byAdding: .day, value: -days, to: cal.startOfDay(for: now)) ?? now
+        return CheckIns.derive(state.entries, tree: state.categories, in: DateInterval(start: start, end: now), now: now,
+                               book: state.dayRules, calendar: cal)
+    }
+
     var itemsById: [UUID: WorkItem] { Dictionary(uniqueKeysWithValues: state.items.map { ($0.id, $0) }) }
 
     func replan() {
         let now = Date()
         let started = ContinuousClock.now
         var locked: [PlannedBlock] = []
-        if let f = state.focus, var b = state.plan.blocks.first(where: { $0.id == f.blockId }) {
+        if var b = Sessions.block(for: running, in: state.plan, now: now) {
             b.end = max(b.end, now.addingTimeInterval(60))
             locked = [b]
-        } else if let cur = state.plan.current(at: now), cur.isStudy, !state.outcomes.contains(where: { $0.blockId == cur.id }) {
+        } else if let cur = state.plan.current(at: now), cur.isStudy, !Sessions.isWorked(cur, entries: state.entries, now: now) {
             locked = [cur]
         }
         let input = plannerInput(now: now, locked: locked)
@@ -239,10 +247,10 @@ final class AppModel {
     }
 
     func nudgeInput(now: Date = Date()) -> NudgeInput {
-        let answered = Set(state.outcomes.filter { $0.plannedStart > now.addingTimeInterval(-2 * 86400) }.map(\.blockId))
+        let answered = Sessions.worked(plan: state.plan, entries: state.entries, now: now)
         let snoozed = Set(state.snoozed.filter { $0.value > now }.map(\.key))
         return NudgeInput(now: now, calendar: cal, plan: state.plan, items: state.items, settings: state.prefs.nudges,
-                          startedBlockId: state.focus?.blockId, answeredBlockIds: answered, snoozedBlockIds: snoozed,
+                          startedBlockId: Sessions.block(for: running, in: state.plan, now: now)?.id, answeredBlockIds: answered, snoozedBlockIds: snoozed,
                           markerPrompts: markerPrompts(), timeLabel: { $0.formatted(date: .omitted, time: .shortened) },
                           policy: state.policy, alarmRules: state.alarmRules, dayRules: state.dayRules)
     }
@@ -253,28 +261,37 @@ final class AppModel {
         state.plan.blocks(on: date, calendar: cal).filter { $0.kind != .sleep }
     }
 
+    /// Study blocks that ended in the last 36 hours with no time tracked on them and no answer ("No") yet.
     var pendingOutcomes: [PlannedBlock] {
-        let now = Date()
-        let answered = Set(state.outcomes.map(\.blockId))
-        return state.plan.blocks.filter { $0.isStudy && $0.end <= now && $0.end > now.addingTimeInterval(-36 * 3600) && !answered.contains($0.id) }
+        Sessions.pending(plan: state.plan, entries: state.entries, now: Date()).filter { state.snoozed[$0.id] == nil }
     }
 
     var activeWarnings: [PlanWarning] {
         state.plan.warnings.filter { !state.dismissed.contains($0.message) }
     }
 
+    /// How a planned block went. Done / partly = time tracked on the task (an entry); "No" is remembered so the block
+    /// isn't asked about or counted as missed twice. Learning, put-off history and the reward moment follow.
     func logOutcome(blockId: UUID, status: OutcomeStatus, actualMinutes: Int? = nil, reason: String? = nil) {
-        guard !state.outcomes.contains(where: { $0.blockId == blockId }),
-              let b = state.plan.blocks.first(where: { $0.id == blockId }) else { return }
+        guard let b = state.plan.blocks.first(where: { $0.id == blockId }), !Sessions.isWorked(b, entries: state.entries, now: Date()) else { return }
         let actual = actualMinutes ?? (status == .done ? b.minutes : status == .partial ? b.minutes / 2 : 0)
         let idx = b.itemId.flatMap { id in state.items.firstIndex { $0.id == id } }
-        let o = BlockOutcome(blockId: blockId, itemId: b.itemId, kind: idx.map { state.items[$0].kind }, plannedStart: b.start,
-                             plannedMinutes: b.minutes, actualMinutes: actual, status: status)
-        state.outcomes.append(o)
-        state.snoozed[blockId] = nil
+        if status != .skipped, actual > 0 {
+            let item = idx.map { state.items[$0] }
+            let e = Entry(title: b.title, start: b.start, end: b.start.addingTimeInterval(Double(actual) * 60),
+                          category: item?.category ?? CategoryTree.studying, taskId: b.itemId, source: .you, createdAt: Date())
+            var entries = state.entries
+            TimeLog.insert(e, now: Date(), entries: &entries, calendar: cal)
+            state.entries = entries
+        } else if status == .skipped {
+            state.snoozed[blockId] = Date().addingTimeInterval(40 * 3600)
+        }
+        let result = SessionResult(itemId: b.itemId, kind: idx.map { state.items[$0].kind }, plannedStart: b.start,
+                                   plannedMinutes: b.minutes, actualMinutes: actual, status: status)
         NotificationService.cancel(blockId: blockId)
-        state.learned.record(outcome: o, calendar: cal)
-        if let i = idx { state.items[i].completedMinutes += actual }
+        state.learned.record(session: result, calendar: cal)
+        if status != .skipped, let i = idx { state.items[i].completedMinutes += actual }
+        log(.log, "session", ["block": b.title, "status": status.rawValue, "minutes": "\(actual)"])
         if status == .skipped {
             Avoidance.record(reason == nil ? .skipped : .cantToday, itemId: b.itemId, in: &state.items, at: Date(), reason: reason, blockId: blockId)
             toast = "No problem. It's been moved to a better slot."
@@ -282,17 +299,44 @@ final class AppModel {
         replan()
     }
 
+    // MARK: Focus: a running entry on a task
+
+    /// What the full-screen focus view shows: the running entry that's on a task, and the block it's for.
+    struct FocusInfo {
+        var entry: Entry
+        var block: PlannedBlock?
+        var plannedEnd: Date
+        var title: String { entry.title }
+        var startedAt: Date { entry.start }
+    }
+
+    var running: Entry? { TimeLog.running(state.entries) }
+
+    var focus: FocusInfo? {
+        guard let e = running, e.taskId != nil else { return nil }
+        let block = Sessions.block(for: e, in: state.plan, now: Date())
+        let planned = block.map { max($0.end, e.start.addingTimeInterval(Double($0.minutes) * 60)) }
+            ?? e.start.addingTimeInterval(state.learned.focusMinutes * 60)
+        return FocusInfo(entry: e, block: block, plannedEnd: planned)
+    }
+
     func startFocus(_ b: PlannedBlock) {
-        let end = max(b.end, Date().addingTimeInterval(Double(b.minutes) * 60))
-        state.focus = FocusSession(blockId: b.id, itemId: b.itemId, title: b.title, startedAt: Date(), plannedEnd: end)
+        let now = Date()
+        let item = b.itemId.flatMap { id in state.items.first { $0.id == id } }
+        let e = Entry(title: b.title, start: now, end: nil, category: item?.category ?? CategoryTree.studying,
+                      topics: item?.topics ?? [], taskId: b.itemId, source: .you, createdAt: now)
+        var entries = state.entries
+        TimeLog.start(e, at: now, now: now, entries: &entries, calendar: cal)
+        state.entries = entries
         state.snoozed[b.id] = nil
         NotificationService.cancel(blockId: b.id)
+        log(.log, "focus_start", ["block": b.title])
         syncAlarms()
         save()
     }
 
     func startNowOrNext() {
-        guard state.focus == nil else { return }
+        guard focus == nil else { return }
         let now = Date()
         if let b = state.plan.current(at: now), b.isStudy { startFocus(b); return }
         if let n = state.plan.next(after: now), n.isStudy, n.start.timeIntervalSince(now) < 90 * 60 { startFocus(n); return }
@@ -302,7 +346,7 @@ final class AppModel {
     }
 
     func startFocus(blockId: UUID) {
-        guard state.focus == nil else { return }
+        guard focus == nil else { return }
         if let b = state.plan.blocks.first(where: { $0.id == blockId }), b.isStudy, b.end > Date() { startFocus(b) }
         else { startNowOrNext() }
     }
@@ -338,20 +382,43 @@ final class AppModel {
     }
 
     func endFocus(_ status: OutcomeStatus) {
-        guard let f = state.focus else { return }
-        let elapsed = max(1, Int(Date().timeIntervalSince(f.startedAt) / 60))
-        state.focus = nil
-        let item = f.itemId.flatMap { id in state.items.first { $0.id == id } }
+        guard let f = focus else { return }
+        let now = Date()
+        let elapsed = max(1, Int(now.timeIntervalSince(f.startedAt) / 60))
+        let item = f.entry.taskId.flatMap { id in state.items.first { $0.id == id } }
         func percent(_ done: Int) -> Int? { item.flatMap { $0.estimateMinutes > 0 ? min(100, done * 100 / $0.estimateMinutes) : nil } }
-        let totalBefore = state.outcomes.filter { $0.status != .skipped && $0.kind != nil }.reduce(0) { $0 + $1.actualMinutes }
         let before = percent(item?.completedMinutes ?? 0)
-        logOutcome(blockId: f.blockId, status: status, actualMinutes: elapsed)
-        let after = percent(state.items.first { $0.id == f.itemId }?.completedMinutes ?? 0)
+        let totalBefore = state.entries.filter { $0.taskId != nil && $0.source != .plan && !$0.isRunning }
+            .reduce(0) { $0 + $1.minutes(now: now) }
+        var entries = state.entries
+        if status == .skipped {
+            // Couldn't focus: nothing was done, so nothing is logged.
+            entries.removeAll { $0.id == f.entry.id }
+        } else {
+            TimeLog.stop(at: now, entries: &entries, calendar: cal)
+        }
+        state.entries = entries
+        let idx = item.flatMap { it in state.items.firstIndex { $0.id == it.id } }
+        let result = SessionResult(itemId: item?.id, kind: item?.kind, plannedStart: f.startedAt,
+                                   plannedMinutes: f.block?.minutes ?? elapsed, actualMinutes: status == .skipped ? 0 : elapsed, status: status)
+        state.learned.record(session: result, calendar: cal)
+        if status != .skipped, let i = idx { state.items[i].completedMinutes += elapsed }
+        if let b = f.block {
+            NotificationService.cancel(blockId: b.id)
+            if status == .skipped {
+                state.snoozed[b.id] = now.addingTimeInterval(40 * 3600)
+                Avoidance.record(.skipped, itemId: b.itemId, in: &state.items, at: now, reason: nil, blockId: b.id)
+                toast = "No problem. It's been moved to a better slot."
+            }
+        }
+        log(.log, "focus_end", ["status": status.rawValue, "minutes": "\(elapsed)"])
+        replan()
+        let after = percent(state.items.first { $0.id == item?.id }?.completedMinutes ?? 0)
         celebrate(.focusEnded(status: status, minutes: elapsed, title: item?.title, percentBefore: before, percentAfter: after,
                               freeAfterMinutes: nil, totalFocusMinutesBefore: totalBefore))
-        let today = state.plan.blocks(on: Date(), calendar: cal).filter(\.isStudy)
-        if status != .skipped, !today.isEmpty,
-           today.allSatisfy({ b in state.outcomes.contains { $0.blockId == b.id && $0.status != .skipped } }) {
+        let today = state.plan.blocks(on: now, calendar: cal).filter(\.isStudy)
+        let worked = Sessions.worked(plan: state.plan, entries: state.entries, now: now)
+        if status != .skipped, !today.isEmpty, today.allSatisfy({ worked.contains($0.id) }) {
             celebrate(.planFinished(freeMinutesLeft: nil))
         }
     }
@@ -419,7 +486,11 @@ final class AppModel {
     func logMarker(_ phrase: String, source: MarkerSource = .manual, at: Date = Date()) {
         let evs = MarkerParser.parse(phrase, at: at, commitments: legacyCommitments, calendar: cal, source: source)
         guard !evs.isEmpty else { return }
-        MarkerLog.add(evs, to: &state.markers)
+        var entries = state.entries, tree = state.categories
+        CheckIns.apply(evs, to: &entries, tree: &tree, now: Date(), calendar: cal)
+        state.entries = entries
+        state.categories = tree
+        log(.log, "check_in", ["phrase": phrase, "source": source.rawValue, "events": "\(evs.count)"])
         learnRoutines(days: 1)
         if source != .geofence { offerPlace(after: evs) }
         if evs.contains(where: { $0.category == .sleep }) { estimateSleep(); replan() } else { save() }
@@ -455,7 +526,7 @@ final class AppModel {
         }
     }
 
-    private func offerPlace(after evs: [TimelineEvent]) {
+    private func offerPlace(after evs: [CheckIn]) {
         guard placeOffer == nil, LocationService.shared.status != .denied,
               let found = PlaceSuggester.offer(after: evs, places: state.places, commitments: legacyCommitments,
                                                declined: state.declinedPlaces) else { return }
@@ -513,9 +584,9 @@ final class AppModel {
             return
         }
         guard state.integrations.notifications, state.prefs.nudges.arrivingHome, state.prefs.nudges.level != .gentle,
-              state.focus == nil else { return }
+              focus == nil else { return }
         let now = Date()
-        if let b = state.plan.current(at: now), b.isStudy, !state.outcomes.contains(where: { $0.blockId == b.id }) {
+        if let b = state.plan.current(at: now), b.isStudy, !Sessions.isWorked(b, entries: state.entries, now: now) {
             NotificationService.notify("Welcome home", "\(b.title) is on now, until \(b.end.hm). Start when you're in the door.",
                                        deeplink: "productium://now", blockId: b.id)
         } else if let n = state.plan.blocks.first(where: { $0.isStudy && $0.start > now && $0.start < now.addingTimeInterval(2 * 3600) }) {
@@ -601,8 +672,9 @@ final class AppModel {
     func dayRecords(back n: Int) -> [DayRecord] {
         let today = cal.startOfDay(for: Date())
         let days = (1...n).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
-        return CapacityLearner.records(days: days, planHistory: state.planHistory, outcomes: state.outcomes, progress: state.progress,
-                                       markers: state.markers, isSchoolDay: isSchoolDay,
+        return CapacityLearner.records(days: days, planHistory: state.planHistory, dayPlans: state.dayPlans, entries: state.entries,
+                                       tree: state.categories, book: state.dayRules, now: Date(), progress: state.progress,
+                                       isSchoolDay: isSchoolDay,
                                        eveningFree: { d in
                                            let segs = self.segments(on: d)
                                            guard let end = segs.filter({ [.school, .activities].contains($0.category) }).map(\.end).max() else { return nil }
@@ -613,7 +685,7 @@ final class AppModel {
     /// Moments the phone was in use: app opens, scrolling, and check-ins typed or tapped.
     var phoneUse: [Date] {
         state.appOpens + Friction.log.sessions.flatMap { [$0.openedAt] + ($0.endedAt.map { [$0] } ?? []) }
-            + state.markers.filter { $0.source != .geofence && $0.source != .inferred }.map(\.at)
+            + state.entries.filter { $0.source == .you && $0.repeats == nil && $0.createdAt > Date().addingTimeInterval(-21 * 86400) }.map(\.createdAt)
     }
 
     /// Changes the state the box and the insight pass work on, about-me included.
@@ -628,8 +700,8 @@ final class AppModel {
     }
 
     private func learnCapacities() {
-        state.beliefs = CapacityLearner.learn(state.beliefs, days: dayRecords(back: CapacityLearner.window), outcomes: state.outcomes,
-                                              markers: state.markers, now: Date(), calendar: cal)
+        state.beliefs = CapacityLearner.learn(state.beliefs, days: dayRecords(back: CapacityLearner.window), entries: state.entries,
+                                              tree: state.categories, book: state.dayRules, now: Date(), calendar: cal)
     }
 
     var healthStatus: HealthStatus {
@@ -654,7 +726,7 @@ final class AppModel {
             let from = d.addingTimeInterval(-6 * 3600), to = d.addingTimeInterval(3 * 3600)
             if let t = plugs.filter({ $0 >= from && $0 <= to }).max() { charging[d] = t }
         }
-        state.health = SleepEstimator.fill(state.health, days: days, markers: state.markers, motion: state.motion,
+        state.health = SleepEstimator.fill(state.health, days: days, markers: recentCheckIns(), motion: state.motion,
                                            phoneUse: phoneUse, sleepNeedMinutes: state.prefs.sleepNeedMinutes, calendar: cal,
                                            firstPickups: pickups, charging: charging)
     }
@@ -694,7 +766,8 @@ final class AppModel {
         let today = cal.startOfDay(for: Date())
         for i in 0..<days {
             guard let day = cal.date(byAdding: .day, value: -i, to: today) else { continue }
-            let evs = state.markers.filter { cal.isDate($0.at, inSameDayAs: day) }
+            let evs = CheckIns.derive(state.entries, tree: state.categories, in: Days.dayInterval(day, cal), now: Date(),
+                                      book: state.dayRules, calendar: cal)
             guard !evs.isEmpty else { continue }
             let wake = state.health.first { cal.isDate($0.day, inSameDayAs: day) }?.wake
             state.routines = RoutineLearner.learn(day: evs, healthWake: wake, routines: state.routines)
@@ -712,7 +785,7 @@ final class AppModel {
         if let at = state.reviewAt {
             weeklyDue = now.timeIntervalSince(at) > (force ? 600 : 6.5 * 86400)
         } else {
-            weeklyDue = force || state.outcomes.count >= 5
+            weeklyDue = force || state.entries.filter { $0.taskId != nil && $0.source != .plan }.count >= 5
         }
         guard let trigger = InsightPass.trigger(now: now, lastRun: state.insightAt, deferrals: deferrals, days: days,
                                                 weeklyDue: weeklyDue, asked: question != nil, budgetAllows: aiAllowed(.review),
@@ -738,7 +811,7 @@ final class AppModel {
         let run = InsightRun(at: now, note: out.headline, model: model)
         var drafts = InsightPass.drafts(out, runId: run.id, items: state.items, now: now, model: model, calendar: cal)
         // F6: with four weeks of data, celebrations that made no difference to the next day's focus are turned down.
-        let impact = RewardImpact.evaluate(log: state.rewards, outcomes: state.outcomes, now: now, calendar: cal)
+        let impact = RewardImpact.evaluate(log: state.rewards, entries: state.entries, tree: state.categories, now: now, calendar: cal)
         if let level = RewardImpact.turnDown(impact, settings: state.rewardSettings), let i = impact {
             drafts.append(LoggedChange(runId: run.id, change: .celebrations(to: level, from: state.rewardSettings.level),
                                        reason: "Focus the day after a celebration was \(Int(i.withMoments.rounded())) min, and \(Int(i.without.rounded())) min after none, over \(i.daysWith + i.daysWithout) days",
@@ -785,7 +858,7 @@ final class AppModel {
 
     func gapInput(now: Date = Date()) -> GapInput {
         GapInput(now: now, day: dayInputs(cal.startOfDay(for: now)), scrolling: Friction.log.sessions, phoneUse: phoneUse,
-                 plan: state.plan, focusing: state.focus != nil, log: state.gaps,
+                 plan: state.plan, focusing: focus != nil, log: state.gaps,
                  explained: state.visits.map { v in DateInterval(start: v.arrival, end: max(v.arrival, v.departure ?? now)) })
     }
 
@@ -814,7 +887,10 @@ final class AppModel {
         asked.end = gap.end
         asked.answer = text
         if let markers = GapAnswer.markers(for: text, gap: gap, commitments: legacyCommitments, known: known, calendar: cal) {
-            MarkerLog.add(markers, to: &state.markers)
+            var entries = state.entries, tree = state.categories
+            CheckIns.apply(markers, to: &entries, tree: &tree, now: Date(), calendar: cal)
+            state.entries = entries
+            state.categories = tree
             asked.activity = markers.first?.activity
             state.gaps.asked.append(asked)
             dueGap = nil
@@ -828,8 +904,8 @@ final class AppModel {
 
     func dayInputs(_ day: Date) -> DayInputs {
         let next = cal.date(byAdding: .day, value: 1, to: day) ?? day
-        return DayInputs(day: day, events: state.markers, entries: state.entries, categories: state.categories,
-                         routines: state.routines, outcomes: state.outcomes, itemsById: itemsById,
+        return DayInputs(day: day, entries: state.entries, categories: state.categories,
+                         routines: state.routines, itemsById: itemsById,
                          health: state.health.first { cal.isDate($0.day, inSameDayAs: day) },
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
                          screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,
@@ -850,12 +926,13 @@ final class AppModel {
         let days = (0..<n).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
         var planned: [Date: Int] = [:]
         for d in days {
-            let m = PlanHistory.plannedMinutes(on: d, history: state.planHistory, plan: state.plan, outcomes: state.outcomes, calendar: cal)
+            let m = PlanHistory.plannedMinutes(on: d, history: state.planHistory, plan: state.plan, calendar: cal)
             if m > 0 { planned[d] = m }
         }
         let x = MetricsInput(days: days, screen: ScreenSeries.daily(screen: state.screen, averages: state.screenAverages, days: days, calendar: cal),
                              screenDays: state.screen, health: state.health, moods: state.moods, items: state.items,
-                             outcomes: state.outcomes, progress: state.progress, markers: state.markers, planned: planned,
+                             progress: state.progress, entries: state.entries, categories: state.categories, now: Date(),
+                             dayRules: state.dayRules, planned: planned,
                              sleepNeed: state.prefs.sleepNeedMinutes,
                              away: PlaceTime.awayMinutes(visits: state.visits, home: state.places.first { $0.id == "home" },
                                                          now: Date(), calendar: cal),
@@ -867,7 +944,7 @@ final class AppModel {
         let today = cal.startOfDay(for: Date())
         return (0..<n).reversed().compactMap { i -> DayTotals? in
             guard let d = cal.date(byAdding: .day, value: -(i + (includeToday ? 0 : 1)), to: today) else { return nil }
-            let planned = PlanHistory.plannedMinutes(on: d, history: state.planHistory, plan: state.plan, outcomes: state.outcomes, calendar: cal)
+            let planned = PlanHistory.plannedMinutes(on: d, history: state.planHistory, plan: state.plan, calendar: cal)
             return Insights.dayTotals(dayInputs(d), plannedStudy: planned, moods: state.moods,
                                       screenTarget: state.taper.targetMinutes, calendar: cal, now: Date())
         }
@@ -1235,10 +1312,9 @@ final class AppModel {
             ("daily-summary.csv", Data(Exporter.dailyCSV(days).utf8)),
             ("timeline.csv", Data(Exporter.segmentsCSV(segs).utf8)),
             ("tasks.csv", Data(Exporter.itemsCSV(state.items).utf8)),
-            ("study-sessions.csv", Data(Exporter.outcomesCSV(state.outcomes).utf8)),
+            ("entries.csv", Data(Exporter.entriesCSV(state.entries, tree: state.categories).utf8)),
             ("moods.csv", Data(Exporter.moodsCSV(state.moods).utf8)),
             ("metrics.csv", Data(MetricsExport.csv(metricSeries(days: 365), calendar: cal).utf8)),
-            ("check-ins.csv", Data(Exporter.markersCSV(state.markers).utf8)),
             ("plan.ics", Data(Exporter.ics(state.plan).utf8)),
         ]
         return try files.map { name, data in

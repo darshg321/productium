@@ -147,12 +147,12 @@ public enum GapAnswer {
     ]
 
     public static func markers(for text: String, gap: MysteryGap, commitments: [Commitment], known: [AskedGap],
-                               calendar cal: Calendar) -> [TimelineEvent]? {
+                               calendar cal: Calendar) -> [CheckIn]? {
         let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "’", with: "'")
         guard !t.isEmpty else { return nil }
-        func pair(_ key: String, _ c: TimeCategory) -> [TimelineEvent] {
-            [TimelineEvent(at: gap.start, phrase: text, activity: key, category: c, phase: .start, source: .notification),
-             TimelineEvent(at: gap.end, phrase: text, activity: key, category: c, phase: .end, source: .notification)]
+        func pair(_ key: String, _ c: TimeCategory) -> [CheckIn] {
+            [CheckIn(at: gap.start, phrase: text, activity: key, category: c, phase: .start, source: .notification),
+             CheckIn(at: gap.end, phrase: text, activity: key, category: c, phase: .end, source: .notification)]
         }
         if let c = commitments.first(where: { t.contains(MarkerParser.normalise($0.title)) }) {
             return pair(MarkerParser.normalise(c.title), TimeCategory.from(c.kind))
@@ -181,20 +181,5 @@ public enum GapAnswer {
         }
         return groups.values.filter { $0.3 >= 3 }.map { (activity: $0.0, weekday: $0.1, hour: $0.2, count: $0.3) }
             .sorted { $0.count > $1.count }
-    }
-}
-
-public struct GapNote: Codable, Hashable, Identifiable, Sendable {
-    public var id: UUID
-    public var at: Date
-    /// What the student said.
-    public var said: String
-    /// What the model wanted to do that the app can't.
-    public var wanted: String
-    public init(id: UUID = UUID(), at: Date, said: String, wanted: String) {
-        self.id = id
-        self.at = at
-        self.said = said
-        self.wanted = wanted
     }
 }

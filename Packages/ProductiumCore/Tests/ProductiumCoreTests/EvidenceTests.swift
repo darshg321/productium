@@ -5,8 +5,7 @@ final class EvidenceTests: XCTestCase {
     let cal = Fx.cal
 
     func state(items: [WorkItem] = []) -> DumpState {
-        DumpState(items: items, markers: [],
-                  routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpState(items: items,                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 
 
@@ -18,10 +17,10 @@ final class EvidenceTests: XCTestCase {
         let day = Fx.mon(0)
         func at(_ h: Int, _ m: Int, _ sec: Int = 0) -> Date { day.addingTimeInterval(Double(h * 3600 + m * 60 + sec)) }
         let markers = [
-            TimelineEvent(at: at(13, 2), phrase: "leaving for school", activity: "to_school", category: .commute, phase: .start, source: .voice),
-            TimelineEvent(at: at(13, 7, 58), phrase: "left home", activity: "to_school", category: .commute, phase: .start, source: .geofence),
-            TimelineEvent(at: at(13, 8, 16), phrase: "left home", activity: "to_school", category: .commute, phase: .start, source: .geofence),
-            TimelineEvent(at: at(13, 16), phrase: "at school", activity: "to_school", category: .commute, phase: .end, source: .voice),
+            CheckIn(at: at(13, 2), phrase: "leaving for school", activity: "to_school", category: .commute, phase: .start, source: .voice),
+            CheckIn(at: at(13, 7, 58), phrase: "left home", activity: "to_school", category: .commute, phase: .start, source: .geofence),
+            CheckIn(at: at(13, 8, 16), phrase: "left home", activity: "to_school", category: .commute, phase: .start, source: .geofence),
+            CheckIn(at: at(13, 16), phrase: "at school", activity: "to_school", category: .commute, phase: .end, source: .voice),
         ]
         var routines = RoutineLearner.learn(day: markers, healthWake: nil, routines: Routine.defaults)
         XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
@@ -45,10 +44,10 @@ final class MotionTests: XCTestCase {
         let walk = spans.first { $0.kind == .walking }!
         XCTAssertEqual(walk.start, Fx.mon(8, 2))
         XCTAssertEqual(walk.end, Fx.mon(8, 16), "records of the same kind merge")
-        let markers = [TimelineEvent(at: Fx.mon(15), phrase: "left school", activity: "from_school", category: .commute, phase: .start),
-                       TimelineEvent(at: Fx.mon(15, 30), phrase: "home", activity: "from_school", category: .commute, phase: .end)]
-        let segs = TimelineBuilder.segments(DayInputs(day: Fx.mon(12), events: markers, entries: Fx.schoolEntries, routines: Routine.defaults,
-                                                      outcomes: [], health: nil, screen: nil, prefs: Preferences(), motion: spans),
+        let markers = [CheckIn(at: Fx.mon(15), phrase: "left school", activity: "from_school", category: .commute, phase: .start),
+                       CheckIn(at: Fx.mon(15, 30), phrase: "home", activity: "from_school", category: .commute, phase: .end)]
+        let segs = TimelineBuilder.segments(DayInputs(day: Fx.mon(12), entries: Fx.log(markers), routines: Routine.defaults,
+                                                      health: nil, screen: nil, prefs: Preferences(), motion: spans),
                                             calendar: cal, now: Fx.mon(18))
         XCTAssertEqual(segs.first { $0.label == "Walk" }?.start, Fx.mon(8, 2))
         XCTAssertEqual(segs.first { $0.label == "Walk" }?.end, Fx.mon(8, 16))
@@ -110,15 +109,15 @@ final class BeliefTests: XCTestCase {
             days.append(DayRecord(day: d, isSchoolDay: school, planned: school ? 150 : 240,
                                   done: school ? 90 + (i % 4) * 10 : 200 + (i % 3) * 20, eveningFree: school ? 120 : 240))
         }
-        let outcomes = (1...8).map { i in
-            BlockOutcome(blockId: UUID(), itemId: nil, kind: .essay, plannedStart: Fx.mon(19, plusDays: -i), plannedMinutes: 40,
-                         actualMinutes: 30, status: .done)
+        let sessions = (1...8).map { i in
+            Entry(title: "Essay", start: Fx.mon(19, plusDays: -i), end: Fx.mon(19, 30, plusDays: -i), category: CategoryTree.studying,
+                  taskId: UUID(), source: .you, createdAt: Fx.mon(19, 30, plusDays: -i))
         }
-        let dinner = (1...6).flatMap { i -> [TimelineEvent] in
-            [TimelineEvent(at: Fx.mon(19, 0, plusDays: -i), phrase: "dinner", activity: "dinner", category: .routine, phase: .start),
-             TimelineEvent(at: Fx.mon(19, 25, plusDays: -i), phrase: "done", activity: "dinner", category: .routine, phase: .end)]
+        let dinner = (1...6).map { i in
+            Entry(title: "Dinner", start: Fx.mon(19, 0, plusDays: -i), end: Fx.mon(19, 25, plusDays: -i), category: CategoryTree.meals,
+                  topics: ["dinner"], source: .you, createdAt: Fx.mon(19, 25, plusDays: -i))
         }
-        let b = CapacityLearner.learn(Beliefs(), days: days, outcomes: outcomes, markers: dinner, now: now, calendar: cal)
+        let b = CapacityLearner.learn(Beliefs(), days: days, entries: sessions + dinner, tree: CategoryTree(), now: now, calendar: cal)
         let school = b["study.schoolDayCapacity"]!
         XCTAssertEqual(school.samples, 15)
         XCTAssertLessThan(school.value, 180, "moved down from the prior")

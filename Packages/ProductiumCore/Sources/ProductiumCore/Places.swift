@@ -39,7 +39,7 @@ public enum PlaceSuggester {
     }
 
     /// "At school", or the end of something that happens somewhere, with no saved place of that name.
-    public static func offer(after markers: [TimelineEvent], places: [SavedPlace], commitments: [Commitment],
+    public static func offer(after markers: [CheckIn], places: [SavedPlace], commitments: [Commitment],
                              declined: Set<String>) -> PlaceOffer? {
         func missing(_ id: String) -> Bool {
             !places.contains { $0.id == id || slug($0.name) == id } && !declined.contains(id)

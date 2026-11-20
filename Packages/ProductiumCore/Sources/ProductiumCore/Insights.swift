@@ -43,8 +43,8 @@ public enum Insights {
         let segs = TimelineBuilder.segments(inputs, calendar: cal, now: now)
         let totals = TimelineBuilder.totals(segs, screen: inputs.screen)
         let dayMoods = moods.filter { cal.isDate($0.at, inSameDayAs: inputs.day) }.map { Double($0.mood) }
-        let done = WorkDone.minutes(on: inputs.day, outcomes: inputs.outcomes, progress: inputs.progress,
-                                    markers: inputs.events, calendar: cal)
+        let done = WorkDone.minutes(on: inputs.day, entries: inputs.entries, tree: inputs.categories, now: now, book: inputs.dayRules,
+                                    progress: inputs.progress, calendar: cal)
         return DayTotals(day: cal.startOfDay(for: inputs.day), minutes: totals, plannedStudy: plannedStudy, doneStudy: done,
                          mood: dayMoods.isEmpty ? nil : dayMoods.reduce(0, +) / Double(dayMoods.count),
                          sleep: inputs.health?.sleepMinutes, screen: inputs.screen?.distractingMinutes,
