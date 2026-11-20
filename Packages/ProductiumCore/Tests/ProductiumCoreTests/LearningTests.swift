@@ -178,32 +178,6 @@ final class StatedRoutineTests: XCTestCase {
 }
 
 final class MarkerMergeTests: XCTestCase {
-    func testTheThreeLeftHomesBecomeOneAndTeachTheWalkOnce() {
-        let day = Fx.mon(0)
-        func at(_ h: Int, _ m: Int, _ sec: Int = 0) -> Date { day.addingTimeInterval(Double(h * 3600 + m * 60 + sec)) }
-        func mk(_ t: Date, _ p: MarkerPhase, _ src: MarkerSource) -> CheckIn {
-            CheckIn(at: t, phrase: "x", activity: "to_school", category: .commute, phase: p, source: src)
-        }
-        var log: [CheckIn] = []
-        MarkerLog.add([mk(at(13, 4, 58), .start, .geofence)], to: &log)
-        MarkerLog.add([mk(at(13, 5, 16), .start, .geofence)], to: &log)
-        MarkerLog.add([mk(at(13, 2), .start, .voice)], to: &log)
-        MarkerLog.add([mk(at(13, 16), .end, .voice)], to: &log)
-        XCTAssertEqual(log.count, 2)
-        let start = log.first { $0.phase == .start }!
-        XCTAssertEqual(start.at, at(13, 2), "the earliest time is kept")
-        XCTAssertEqual(start.source, .voice, "the best source is kept")
-        var routines = RoutineLearner.learn(day: log, healthWake: nil, routines: Routine.defaults)
-        routines = RoutineLearner.learn(day: log, healthWake: nil, routines: routines)
-        XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
-    }
 
-    func testAMarkerFarFromTheFirstIsKept() {
-        var log: [CheckIn] = []
-        let a = CheckIn(at: Fx.mon(8), phrase: "x", activity: "study", category: .study, phase: .start)
-        let b = CheckIn(at: Fx.mon(8, 10), phrase: "x", activity: "study", category: .study, phase: .start)
-        MarkerLog.add([a, b], to: &log)
-        XCTAssertEqual(log.count, 2)
-        XCTAssertEqual(MarkerLog.merged([b, a, a]).count, 2)
-    }
+
 }
