@@ -68,7 +68,22 @@ public struct Draft: Codable, Hashable, Sendable {
 }
 
 public struct AppState: Codable, Sendable {
+    /// v1.2 is a clean break: state stored by an older schema isn't read (the app starts fresh, onboarding re-runs).
+    public static let schema = 4
+    public var schema = AppState.schema
     public var onboarded = false
+    /// v1.2 Part 0: everything timed (classes, events, sessions, sleep, the log, the plan's blocks).
+    public var entries: [Entry] = []
+    /// v1.2 Part 0: standing instructions in the AI's words.
+    public var rules: [Rule] = []
+    /// v1.2 Part C.
+    public var categories = CategoryTree()
+    /// v1.2: what each day's plan asked for, per task, snapshotted at the day's first plan (`Accountability`).
+    public var dayPlans: [DayKey: [UUID: Int]] = [:]
+    /// v1.2 F3: charts pinned to Review. Only the query is kept; the numbers are computed live from the log.
+    public var pinnedCharts: [PinnedChart] = []
+    /// v1.2 Part T: the development log, in every backup.
+    public var telemetry = Telemetry()
     public var prefs = Preferences()
     public var items: [WorkItem] = []
     public var commitments: [Commitment] = []
@@ -114,9 +129,9 @@ public struct AppState: Codable, Sendable {
     public var draft = Draft()
     public var focus: FocusSession?
     @SortedSet public var dismissed: Set<String> = []
-    /// What the insight pass changed (v1.0 key `proposals`).
+    /// What the insight pass changed.
     public var changes = ChangeLog()
-    /// When the insight pass last ran (v1.0 key `reflectionAt`).
+    /// When the insight pass last ran.
     public var insightAt: Date?
     /// Celebrations (v1.1 F): what was shown and how much the student wants.
     public var rewards = RewardLog()
@@ -174,7 +189,15 @@ public struct AppState: Codable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AppState()
         func v<T: Decodable>(_ k: CodingKeys, _ def: T) -> T { (try? c.decodeIfPresent(T.self, forKey: k)) ?? def }
+        // No migration (v1.2 decision): an older schema decodes as a fresh state.
+        guard v(.schema, 0) >= AppState.schema else { self = d; return }
         onboarded = v(.onboarded, d.onboarded)
+        entries = v(.entries, d.entries)
+        rules = v(.rules, d.rules)
+        categories = v(.categories, d.categories)
+        dayPlans = v(.dayPlans, d.dayPlans)
+        telemetry = v(.telemetry, d.telemetry)
+        pinnedCharts = v(.pinnedCharts, d.pinnedCharts)
         prefs = v(.prefs, d.prefs)
         items = v(.items, d.items)
         commitments = v(.commitments, d.commitments)
@@ -215,11 +238,8 @@ public struct AppState: Codable, Sendable {
         draft = v(.draft, d.draft)
         focus = v(.focus, d.focus)
         dismissed = v(.dismissed, d.dismissed)
-        let legacy = try? decoder.container(keyedBy: LegacyKeys.self)
-        changes = (try? c.decodeIfPresent(ChangeLog.self, forKey: .changes)).flatMap { $0 }
-            ?? (try? legacy?.decodeIfPresent(ChangeLog.self, forKey: .proposals)).flatMap { $0 } ?? d.changes
-        insightAt = (try? c.decodeIfPresent(Date.self, forKey: .insightAt)).flatMap { $0 }
-            ?? (try? legacy?.decodeIfPresent(Date.self, forKey: .reflectionAt)).flatMap { $0 }
+        changes = v(.changes, d.changes)
+        insightAt = v(.insightAt, d.insightAt)
         rewards = v(.rewards, d.rewards)
         metricTiles = v(.metricTiles, d.metricTiles)
         rewardSettings = v(.rewardSettings, d.rewardSettings)
@@ -229,10 +249,9 @@ public struct AppState: Codable, Sendable {
         snoozed = v(.snoozed, d.snoozed)
     }
 
-    enum LegacyKeys: String, CodingKey { case proposals, reflectionAt }
-
     public mutating func prune(now: Date) {
         snoozed = snoozed.filter { $0.value > now.addingTimeInterval(-3600) }
+        telemetry.prune(now: now)
     }
 
     public mutating func restore(full s: AppState, keepingDevice: Bool = true) {

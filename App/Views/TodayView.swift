@@ -220,6 +220,9 @@ struct TurnView: View {
                 }
                 .font(.footnote)
             }
+            ForEach(Array((turn.queries ?? []).enumerated()), id: \.offset) { _, q in
+                LiveChart(query: q, title: turn.text.isEmpty ? nil : String(turn.text.prefix(60)))
+            }
             ForEach(turn.applied.changes, id: \.self) { c in
                 Label(c, systemImage: c.hasPrefix("(undone)") ? "arrow.uturn.backward" : "checkmark")
                     .font(.footnote)
@@ -229,6 +232,18 @@ struct TurnView: View {
                 Label(p, systemImage: "exclamationmark.triangle")
                     .font(.footnote)
                     .foregroundStyle(.orange)
+            }
+            if model.heldTurnId == turn.id, !model.held.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(model.held.enumerated()), id: \.offset) { _, h in
+                        Label(h.why, systemImage: "hand.raised").font(.footnote).foregroundStyle(.orange)
+                    }
+                    HStack {
+                        Button("Approve") { withAnimation { model.approveHeld() } }.buttonStyle(.borderedProminent)
+                        Button("Decline") { withAnimation { model.declineHeld() } }.buttonStyle(.bordered)
+                    }
+                    .font(.subheadline)
+                }
             }
             HStack(spacing: 16) {
                 if model.undoTurnId == turn.id { Button("Undo") { withAnimation { model.undo() } } }

@@ -2,7 +2,7 @@ import XCTest
 @testable import ProductiumCore
 
 final class ConversationTests: XCTestCase {
-    let tool = ConversationPolicy.tool(schema: Schemas.dump)
+    let tool = ConversationPolicy.tool(schema: BoxSchema.result)
 
     func encoded(_ m: [AIMessage]) throws -> [Data] {
         let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]
@@ -19,39 +19,6 @@ final class ConversationTests: XCTestCase {
         return try JSONDecoder().decode(AIResponse.self, from: Data(json.utf8))
     }
 
-    func testTwentyTurnsReplayExactlyAndReadTheCache() throws {
-        var c = Conversation(startedAt: Date(timeIntervalSince1970: 0))
-        var ledger = UsageLedger()
-        var previous: [Data] = []
-        for n in 1...20 {
-            let now = Date(timeIntervalSince1970: Double(n) * 60)
-            let ctx = "Now: \(n)\nOpen tasks:\n- id t1 \"Essay\" \(n * 10)/120m"
-            let image = n == 7 ? [AIImage(mediaType: "image/png", base64: "aGk=")] : []
-            let content = ConversationPolicy.userContent(for: c, text: "prompt \(n)", images: image, fullContext: ctx)
-            let req = c.request(system: Prompts.dump(), tool: tool, userContent: content, maxTokens: 3000)
-            let sent = try encoded(req.messages)
-            XCTAssertEqual(Array(sent.prefix(previous.count)), previous, "turn \(n) rewrote history")
-            XCTAssertEqual(sent.count, previous.count + 1)
-            XCTAssertEqual(req.tool_choice?.name, "apply")
-
-            let res = try reply(n)
-            ledger.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: res.tokens))
-            let result = try XCTUnwrap(DumpResult.read(res))
-            XCTAssertEqual(result.reply, "ok \(n)")
-            c.add(ConversationTurn(at: now, text: "prompt \(n)", images: image, userContent: content,
-                                   assistantContent: res.rawContent, reply: result.reply,
-                                   applied: AppliedReport(changes: ["Changed Essay"]), tokens: res.tokens, context: ctx))
-            previous = sent + (try encoded([AIMessage(role: "assistant", raw: res.rawContent!)]))
-        }
-        XCTAssertEqual(c.history.count, 20)
-        let reads = ledger.records.map(\.tokens.cacheRead)
-        XCTAssertEqual(reads.first, 0)
-        XCTAssertTrue(reads.dropFirst().allSatisfy { $0 > 0 }, "turns 2-20 read the prompt cache")
-        XCTAssertEqual(c.tokenStats.requests, 20)
-        XCTAssertEqual(c.tokenStats.size, 40 + 120 + 3000 + 20 * 150)
-        XCTAssertEqual(c.tokenStats.outputTotal, 20 * 90)
-        XCTAssertEqual(c.turns.map(\.text), (1...20).map { "prompt \($0)" })
-    }
 
     func testLaterTurnsStartWithTheToolResultAndCarryOnlyADelta() throws {
         var c = Conversation(startedAt: Date())

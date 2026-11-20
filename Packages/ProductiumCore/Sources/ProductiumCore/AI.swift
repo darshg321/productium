@@ -371,7 +371,7 @@ public enum Prompts {
         if !aboutMe.isEmpty { lines.append(aboutMe.promptText) }
         if let beliefs { lines.append(beliefs) }
         if let changes { lines.append(changes) }
-        let open = items.filter { !$0.isDone && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(8)
+        let open = items.filter { $0.isOpen && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(8)
         if !open.isEmpty {
             lines.append("Coming up: " + open.map { "\($0.title) (\(df.string(from: $0.due)), \($0.completedMinutes)/\($0.estimateMinutes)m)" }
                 .joined(separator: "; "))

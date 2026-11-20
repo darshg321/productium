@@ -100,7 +100,7 @@ public enum AlarmRules {
 
         var extra: [PlannedAlarm] = []
         let end = now.addingTimeInterval(Double(horizonDays) * 86400)
-        let open = Dictionary(items.filter { !$0.isDone }.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let open = Dictionary(items.filter { $0.isOpen }.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         for r in live {
             let name = r.label
             switch r.kind {

@@ -19,6 +19,25 @@ enum Fx {
     static let soccer = Commitment(title: "Soccer practice", kind: .extracurricular, weekdays: [2, 4],
                                    start: TimeOfDay(16, 0), end: TimeOfDay(17, 30))
 
+    /// The same week as `school` + `soccer`, as v1.2 entries (Mon–Fri school 8:30–15:00, Mon / Wed soccer 16:00–17:30).
+    static var timetable: [Entry] {
+        [Entry(title: "School", start: mon(8, 30), end: mon(15), category: CategoryTree.school,
+               repeats: .weekly([2, 3, 4, 5, 6]), source: .you),
+         Entry(title: "Soccer practice", start: mon(16), end: mon(17, 30), category: CategoryTree.extracurricular,
+               repeats: .weekly([2, 4]), source: .you)]
+    }
+
+    /// Planner input driven by entries and rules (no commitments).
+    static func input(now: Date, items: [WorkItem], entries: [Entry], rules: [Rule] = [], categories: CategoryTree? = nil,
+                      prefs: Preferences = Preferences(), learned: LearnedModel = LearnedModel(),
+                      moods: [MoodEntry] = [], health: [HealthDay] = [], routines: [Routine] = [],
+                      horizon: Int = 7) -> PlannerInput {
+        var i = PlannerInput(now: now, calendar: cal, items: items, preferences: prefs, learned: learned, health: health,
+                             moods: moods, routines: routines, horizonDays: horizon, entries: entries, rules: rules)
+        if let categories { i.categories = categories }
+        return i
+    }
+
     static func input(now: Date, items: [WorkItem], prefs: Preferences = Preferences(), learned: LearnedModel = LearnedModel(),
                       moods: [MoodEntry] = [], health: [HealthDay] = [], routines: [Routine] = Routine.defaults,
                       horizon: Int = 14) -> PlannerInput {

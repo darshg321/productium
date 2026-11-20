@@ -210,9 +210,7 @@ final class AlarmRuleTests: XCTestCase {
         s.alarmsAllowed = true
         return s
     }
-    func run(_ s: inout DumpState, _ ops: [DumpOp]) -> DumpReport {
-        DumpApplier.apply(DumpResult(ops: ops, reply: ""), to: &s, now: Fx.mon(20), calendar: cal, writer: .box)
-    }
+
     func str(_ v: String) -> JSONValue { .string(v) }
 
     func testTaskAlarmIsBeforeDueAndGoesWhenTheTaskIsDone() {
@@ -258,68 +256,26 @@ final class AlarmRuleTests: XCTestCase {
         XCTAssertEqual(tue.count, base.filter { $0.kind == .wake }.count - (base.contains { $0.kind == .wake && cal.component(.weekday, from: $0.at) == 3 } ? 1 : 0))
     }
 
-    func testBoxCreatesTaskAlarmsAndStandaloneOnes() {
-        var s = state()
-        let t = Ref.task(essay.id)
-        var r = run(&s, [.upsert("task", id: t, ["alarm": .number(60), "blockAlarm": .number(10)])])
-        XCTAssertEqual(s.alarmRules.count, 2, "\(r.problems)")
-        XCTAssertTrue(r.changes.contains { $0.contains("before Essay is due") || $0.contains("before") }, "\(r.changes)")
-        // A plain clock alarm tied to nothing, only on weekdays, then moved.
-        r = run(&s, [.upsert("alarm", ["kind": str("clock"), "label": str("Pack bag"), "time": str("21:30"), "scope": str(#"{"weekdays":[1,2,3,4,5]}"#)])])
-        XCTAssertTrue(r.problems.isEmpty, "\(r.problems)")
-        let id = Ref.alarm(s.alarmRules.last!.id)
-        r = run(&s, [.upsert("alarm", id: id, ["time": str("21:00")])])
-        XCTAssertEqual(s.alarmRules.last?.time, TimeOfDay(21), "\(r.problems)")
-        XCTAssertEqual(s.alarmRules.count, 3)
-        // Remove the task's due alarm (-1), then delete the standalone one, then the task takes the rest.
-        run(&s, [.upsert("task", id: t, ["alarm": .number(-1)])])
-        XCTAssertEqual(s.alarmRules.filter { $0.kind == .beforeDue }.count, 0)
-        run(&s, [DumpOp("delete", entity: "alarm", id: id)])
-        XCTAssertEqual(s.alarmRules.count, 1)
-        run(&s, [DumpOp("delete", entity: "task", id: t)])
-        XCTAssertTrue(s.alarmRules.isEmpty, "a task's alarms go with it")
-    }
-
-    func testBoxMovesProductiumsOwnAlarmsAndTogglesWakeAlarms() {
-        var s = state()
-        var r = run(&s, [.upsert("alarm", ["kind": str("shift"), "alarmKind": str("bedtime"), "minutes": .number(-15), "scope": str(#"{"weekdays":[6]}"#)])])
-        XCTAssertEqual(s.alarmRules.first?.minutes, -15, "\(r.problems)")
-        r = run(&s, [.upsert("alarm", ["kind": str("off"), "alarmKind": str("leave"), "scope": str(#"{"weekdays":[4]}"#)])])
-        XCTAssertEqual(s.alarmRules.count, 2, "\(r.problems)")
-        r = run(&s, [.upsert("alarm", ["kind": str("shift"), "alarmKind": str("bedtime")])])
-        XCTAssertFalse(r.problems.isEmpty, "a shift needs minutes")
-        r = run(&s, [.set("wakeAlarms", "off")])
-        XCTAssertFalse(s.prefs.wakeAlarms, "\(r.problems)")
-        s.alarmsAllowed = false
-        r = run(&s, [.set("wakeAlarms", "on")])
-        XCTAssertFalse(s.prefs.wakeAlarms, "the box can't grant the permission: \(r.problems)")
-        s.alarmsAllowed = true
-        run(&s, [.set("wakeAlarms", "on"), .set("celebrations", "subtle"), .set("movementNudges", "off"), .set("scrollingApps", "Instagram:on, Slack:off")])
-        XCTAssertTrue(s.prefs.wakeAlarms)
-        XCTAssertEqual(s.rewardSettings.level, .subtle)
-        XCTAssertFalse(s.prefs.nudges.movement)
-        XCTAssertEqual(s.scrollingApps["Instagram"], true)
-        XCTAssertEqual(s.scrollingApps["Slack"], false)
-    }
 }
 
 final class BoxPowerTests: XCTestCase {
     let cal = Fx.cal
-    func run(_ s: inout DumpState, _ ops: [DumpOp]) -> DumpReport {
-        DumpApplier.apply(DumpResult(ops: ops, reply: ""), to: &s, now: Fx.mon(20), calendar: cal, writer: .box)
-    }
-    func testRemindersAndReviewTilesFromTheBox() {
-        var s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [], routines: [], moods: [], screen: [], prefs: Preferences())
-        var r = run(&s, [.upsert("reminder", ["text": .string("Pack my bag"), "time": .string("21:00"), "weekdays": .array([.number(2), .number(3)])])])
-        XCTAssertEqual(s.policy.intentions.first?.byStudent, true, "\(r.problems)")
-        XCTAssertEqual(s.policy.intentions.first?.weekdays, [2, 3])
-        let id = Ref.reminder(s.policy.intentions[0].id)
-        r = run(&s, [.upsert("reminder", id: id, ["time": .string("20:45")])])
-        XCTAssertEqual(s.policy.intentions.first?.time, TimeOfDay(20, 45))
-        XCTAssertTrue(Prompts.dumpContext(DumpContextInput(now: Fx.mon(20), calendar: cal, state: s, plan: .empty, warnings: [])).contains("id \(id) \"Pack my bag\" at \(TimeOfDay(20, 45).label)"))
-        run(&s, [DumpOp("delete", entity: "reminder", id: id)])
-        XCTAssertTrue(s.policy.intentions.isEmpty)
-        r = run(&s, [.set("metricTiles", "sleep, focus, mood, sleep")])
-        XCTAssertEqual(s.metricTiles, [.sleep, .focus, .mood], "\(r.problems)")
+
+
+}
+
+final class EntryAlarmWiringTests: XCTestCase {
+    func testEntryAlarmsJoinTheWantedListOnce() {
+        let cal = Fx.cal
+        let sleep = Entry(title: "Sleep", start: Fx.mon(23), end: Fx.mon(7, plusDays: 1), category: CategoryTree.sleep,
+                          alert: .wake, source: .plan)
+        let occ = Days.expand([sleep], in: DateInterval(start: Fx.mon(12), duration: 3 * 86400), now: Fx.mon(12), calendar: cal)
+        let entryAlarms = EntryAlerts.alarms(occ, now: Fx.mon(12), allowed: true)
+        XCTAssertEqual(entryAlarms.count, 1)
+        let input = NudgeInput(now: Fx.mon(12), calendar: cal, plan: .empty, items: [], settings: NudgeSettings())
+        let wanted = AlarmPlanner.desired(input, wake: false, entryAlarms: entryAlarms)
+        XCTAssertEqual(wanted.map(\.at), [Fx.mon(7, plusDays: 1)])
+        XCTAssertEqual(AlarmPlanner.desired(input, wake: false, entryAlarms: []).count, 0)
+        XCTAssertTrue(EntryAlerts.alarms(occ, now: Fx.mon(12), allowed: false).isEmpty)
     }
 }

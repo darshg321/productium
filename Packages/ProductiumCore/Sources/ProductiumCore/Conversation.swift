@@ -27,11 +27,14 @@ public struct ConversationTurn: Codable, Hashable, Identifiable, Sendable {
     public var failed: Bool
     public var detail: String?
     public var context: String
+    /// The box's queries for this turn (Part F): charts re-run them live against the log.
+    public var queries: [TimeQuery]?
 
     public init(id: UUID = UUID(), at: Date, text: String, images: [AIImage] = [], userContent: JSONValue,
                 assistantContent: JSONValue? = nil, reply: String = "", applied: AppliedReport = AppliedReport(),
                 callId: UUID? = nil, tokens: TokenCount? = nil, failed: Bool = false, detail: String? = nil,
-                context: String = "") {
+                context: String = "", queries: [TimeQuery]? = nil) {
+        self.queries = queries.flatMap { $0.isEmpty ? nil : $0 }
         self.id = id
         self.at = at
         self.text = text

@@ -107,8 +107,10 @@ final class ExportTests: XCTestCase {
 
     func testOlderFormatsAreRefused() {
         let old = #"{"format":"productium-backup","version":2,"exportedAt":"2026-11-17T13:28:00Z","state":{}}"#
-        XCTAssertThrowsError(try ExportBundle.read(Data(old.utf8))) { e in
-            XCTAssertTrue("\(e)".contains("format 2"), "\(e)")
+        XCTAssertThrowsError(try ExportBundle.read(Data(old.utf8)))
+        let v3 = #"{"format":"productium-export","version":3,"exportedAt":"2026-11-17T13:28:00Z","state":{}}"#
+        XCTAssertThrowsError(try ExportBundle.read(Data(v3.utf8))) { e in
+            XCTAssertTrue("\(e)".contains("format 3"), "\(e)")
         }
         XCTAssertThrowsError(try ExportBundle.read(Data("{}".utf8)))
     }

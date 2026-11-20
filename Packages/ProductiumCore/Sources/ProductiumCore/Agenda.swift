@@ -72,7 +72,7 @@ public enum Agenda {
         }
         flush()
 
-        for item in items where !item.isDone && item.parentId == nil && cal.isDate(item.due, inSameDayAs: dayStart) {
+        for item in items where item.isOpen && item.parentId == nil && cal.isDate(item.due, inSameDayAs: dayStart) {
             row("due.\(item.id)", .due, item.due, nil, item.title, detail: "Due", item: item.id)
         }
 

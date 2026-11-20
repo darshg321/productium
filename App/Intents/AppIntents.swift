@@ -8,6 +8,7 @@ struct TellProductiumIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        AppModel.shared.log(.intent, "TellProductiumIntent")
         await AppModel.shared.dump(text)
         let reply = AppModel.shared.state.conversation.turns.last?.reply ?? "Got it."
         return .result(dialog: "\(reply)")
@@ -34,6 +35,7 @@ struct CheckInIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        AppModel.shared.log(.intent, "CheckInIntent")
         AppModel.shared.logMarker(phrase.rawValue, source: .voice)
         return .result(dialog: "Logged.")
     }
@@ -45,6 +47,7 @@ struct LogMoodIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        AppModel.shared.log(.intent, "LogMoodIntent")
         AppModel.shared.logMood(mood, energy: nil, note: nil)
         return .result(dialog: "Thanks. Today's plan has adjusted.")
     }
@@ -57,6 +60,7 @@ struct StartFocusIntent: LiveActivityIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
+        AppModel.shared.log(.intent, "StartFocusIntent")
         AppModel.shared.startNowOrNext()
         return .result()
     }
@@ -72,6 +76,7 @@ struct PauseBeforeScrollingIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
+        AppModel.shared.log(.intent, "PauseBeforeScrollingIntent")
         guard Friction.opened(app) else { return .result(value: false) }
         if #available(iOS 26.0, *), systemContext.currentMode.canContinueInForeground {
             if (try? await continueInForeground(alwaysConfirm: false)) != nil {
@@ -88,7 +93,8 @@ struct ShouldPauseIntent: AppIntent {
     @Parameter(title: "App", default: "Scrolling app") var app: String
 
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
-        .result(value: Friction.opened(app))
+        await AppModel.shared.log(.intent, "ShouldPauseIntent")
+        return .result(value: Friction.opened(app))
     }
 }
 
@@ -98,7 +104,8 @@ struct ClosedDistractingAppIntent: AppIntent {
     @Parameter(title: "App (leave empty for “any”)") var app: String?
 
     func perform() async throws -> some IntentResult & ReturnsValue<Int> {
-        .result(value: Friction.closed(app))
+        await AppModel.shared.log(.intent, "ClosedDistractingAppIntent")
+        return .result(value: Friction.closed(app))
     }
 }
 
@@ -119,6 +126,7 @@ struct StoppedScrollingIntent: AppIntent {
     @Parameter(title: "What happened", default: .charger) var signal: StopSignal
 
     func perform() async throws -> some IntentResult {
+        await AppModel.shared.log(.intent, "StoppedScrollingIntent")
         Friction.ended(by: signal.source)
         if signal == .charger {
             let d = LocalStore.defaults
@@ -144,6 +152,7 @@ struct CurrentPlanIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<PlanMomentEnum> & ProvidesDialog {
+        AppModel.shared.log(.intent, "CurrentPlanIntent")
         let m = AppModel.shared.state.plan.moment(at: Date())
         let value = PlanMomentEnum(rawValue: m.rawValue) ?? .free
         return .result(value: value, dialog: "\(m.title)")
@@ -156,6 +165,7 @@ struct ScreensOffIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
+        AppModel.shared.log(.intent, "ScreensOffIntent")
         let m = AppModel.shared.state.plan.moment(at: Date())
         return .result(value: m == .windDown || m == .sleep)
     }

@@ -76,7 +76,8 @@ enum ExportService {
                             sharedDefaults: [:],
                             appDefaults: PlistJSON.domain(UserDefaults.standard.persistentDomain(forName: appDomainName)),
                             files: files(), pendingNotifications: pending, deliveredNotifications: delivered,
-                            permissions: await permissions(), serverSnapshots: snapshots)
+                            permissions: await permissions(), serverSnapshots: snapshots,
+                            diagnostics: Diagnostics.snapshot(model.state, now: Date(), calendar: .current))
     }
 
     static func files() -> [String: String] {

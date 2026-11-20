@@ -210,9 +210,6 @@ extension DayRule {
         case .not(let r): return "not \(r.text(cal))"
         }
     }
-
-    /// The weekday set when the rule is only that (the v1.0 shape), for code that still reads weekdays.
-    public var plainWeekdays: Set<Int>? { if case .weekdays(let w) = self { return w }; return nil }
 }
 
 // Compact, stable JSON: {"weekdays":[2,3]}, {"nthOf":{"sequence":"school","mod":2,"eq":1}}, {"not":{…}}.
@@ -224,8 +221,6 @@ extension DayRule: Codable {
     struct Nth: Codable { var sequence: String; var mod: Int; var eq: Int }
 
     public init(from decoder: Decoder) throws {
-        // A bare weekday list is the v1.0 shape.
-        if let w = try? decoder.singleValueContainer().decode([Int].self) { self = .weekdays(Set(w)); return }
         let c = try decoder.container(keyedBy: K.self)
         guard let k = c.allKeys.first else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "empty day rule"))

@@ -2,7 +2,7 @@ import Foundation
 
 public struct ExportBundle: Codable, Sendable {
     public static let formatID = "productium-export"
-    public static let currentVersion = 3
+    public static let currentVersion = 4
 
     public struct Device: Codable, Hashable, Sendable {
         public var appVersion: String?
@@ -53,11 +53,15 @@ public struct ExportBundle: Codable, Sendable {
     public var deliveredNotifications: [Notification]
     public var permissions: [String: String]
     public var serverSnapshots: [String: JSONValue]
+    /// v1.2 Part T: `Diagnostics.snapshot` at export time (coverage, counts, last error).
+    public var diagnostics: [String: String]
 
     public init(exportedAt: Date, device: Device, state: AppState, aboutMe: String = "", callLog: AICallLog = AICallLog(),
                 sharedDefaults: [String: JSONValue] = [:], appDefaults: [String: JSONValue] = [:], files: [String: String] = [:],
                 pendingNotifications: [Notification] = [], deliveredNotifications: [Notification] = [],
-                permissions: [String: String] = [:], serverSnapshots: [String: JSONValue] = [:]) {
+                permissions: [String: String] = [:], serverSnapshots: [String: JSONValue] = [:],
+                diagnostics: [String: String] = [:]) {
+        self.diagnostics = diagnostics
         self.format = ExportBundle.formatID
         self.version = ExportBundle.currentVersion
         self.exportedAt = exportedAt
@@ -94,7 +98,7 @@ public struct ExportBundle: Codable, Sendable {
         public var description: String {
             switch self {
             case .notAnExport: return "That file isn't a Productium export."
-            case .oldFormat(let v): return "That export is format \(v), from an older Productium. Only format 3 and later can be imported."
+            case .oldFormat(let v): return "That export is format \(v), from an older Productium. v1.2 starts fresh and only imports format 4 (v1.2) exports."
             }
         }
     }
@@ -102,8 +106,8 @@ public struct ExportBundle: Codable, Sendable {
     public static func read(_ data: Data) throws -> ExportBundle {
         struct Head: Decodable { var format: String?; var version: Int? }
         let head = try? decoder().decode(Head.self, from: data)
-        guard let head, head.format == formatID || head.format == "productium-backup" else { throw ReadError.notAnExport }
-        guard (head.version ?? 0) >= currentVersion, head.format == formatID else { throw ReadError.oldFormat(head.version ?? 0) }
+        guard let head, head.format == formatID else { throw ReadError.notAnExport }
+        guard (head.version ?? 0) >= currentVersion else { throw ReadError.oldFormat(head.version ?? 0) }
         return try decoder().decode(ExportBundle.self, from: data)
     }
 

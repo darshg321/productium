@@ -11,7 +11,6 @@ final class AppModel {
 
     var state: AppState
     var toast: String?
-    @ObservationIgnored private var undoSnapshot: AppState?
     var busy: Set<String> = []
     var serverOnline: Bool?
     var serverUsage: ServerUsage?
@@ -33,6 +32,15 @@ final class AppModel {
         state = loaded
         callLog = CallLogStore.load()
         aboutMe = AboutMeStore.load()
+        if let e = Persistence.loadError {
+            state.telemetry.record(.storage, "decode_failed", level: .error, ["error": e])
+            Persistence.loadError = nil
+        }
+    }
+
+    /// One line in the development log (Part T). Call at decisions and boundaries, not in loops.
+    func log(_ area: TelemetryEvent.Area, _ name: String, level: TelemetryEvent.Level = .info, _ detail: [String: String] = [:]) {
+        state.telemetry.record(area, name, level: level, at: Date(), detail)
     }
 
     // The Inbox draft survives tab changes, backgrounding and relaunch: text in state, images as files.
@@ -92,7 +100,9 @@ final class AppModel {
         saveTask = Task.detached(priority: .utility) {
             try? await Task.sleep(nanoseconds: 400_000_000)
             if Task.isCancelled { return }
-            Persistence.save(snapshot)
+            if let e = Persistence.save(snapshot) {
+                await MainActor.run { AppModel.shared.log(.storage, "save_failed", level: .error, ["error": e]) }
+            }
         }
     }
 
@@ -116,6 +126,7 @@ final class AppModel {
             LocationService.shared.visitsWanted = true
             LocationService.shared.monitorVisits(true)
         }
+        log(.lifecycle, "launch", ["onboarded": "\(state.onboarded)", "entries": "\(state.entries.count)"])
         Task { await UpdateChecker.shared.checkIfDue() }
         if state.onboarded { Task { await refresh() } }
     }
@@ -123,6 +134,7 @@ final class AppModel {
     func foreground() {
         Friction.ended(by: .productium)
         state.appOpens.append(Date())
+        log(.lifecycle, "foreground")
         if let link = LocalStore.defaults.string(forKey: LocalStore.Key.pendingDeepLink) {
             deepLink = link
             LocalStore.defaults.removeObject(forKey: LocalStore.Key.pendingDeepLink)
@@ -157,6 +169,7 @@ final class AppModel {
 
     func replan() {
         let now = Date()
+        let started = ContinuousClock.now
         var locked: [PlannedBlock] = []
         if let f = state.focus, var b = state.plan.blocks.first(where: { $0.id == f.blockId }) {
             b.end = max(b.end, now.addingTimeInterval(60))
@@ -169,6 +182,17 @@ final class AppModel {
         PlanHistory.record(previous: state.plan, into: &state.planHistory, now: now, calendar: cal)
         PlanHistory.recordBedtimes(plan: state.plan, into: &state.plannedBedtimes, now: now, calendar: cal)
         state.plan = Planner.merge(previous: state.plan, new: Planner.plan(input), now: now, calendar: cal)
+        // O3: the plan's future blocks are `plan` entries; what each day asked for is kept at its first plan.
+        PlanEntries.replace(in: &state.entries, with: PlanEntries.from(state.plan, items: state.items, now: now), now: now)
+        let todayKey = DayKeys.key(now, cal)
+        if state.dayPlans[todayKey] == nil { state.dayPlans[todayKey] = Accountability.asked(by: state.plan, on: now, calendar: cal) }
+        let took = started.duration(to: .now)
+        log(.planner, "replan", [
+            "ms": "\(Int(took.components.seconds * 1000 + took.components.attoseconds / 1_000_000_000_000_000))",
+            "blocks": "\(state.plan.blocks.count)", "warnings": "\(state.plan.warnings.count)",
+            "warningText": state.plan.warnings.map(\.message).joined(separator: " | "),
+            "shortfalls": state.plan.shortfalls.map { "\(Ref.task($0.key)) \($0.value)m" }.sorted().joined(separator: ", "),
+        ].filter { !$0.value.isEmpty })
         save()
         applyPlanEffects()
     }
@@ -178,7 +202,8 @@ final class AppModel {
                      events: shownEvents + state.oneOffs, preferences: state.prefs, learned: state.learned,
                      health: state.health, moods: state.moods, locked: locked, routines: state.routines,
                      exceptions: state.exceptions, horizonDays: 14, policy: state.policy, beliefs: state.beliefs,
-                     situations: state.situations, dayRules: state.dayRules)
+                     situations: state.situations, dayRules: state.dayRules,
+                     entries: state.entries, rules: state.rules, categories: state.categories)
     }
 
     private func applyPlanEffects() {
@@ -188,7 +213,9 @@ final class AppModel {
         dueGap = GapDetector.due(gapInput(now: now), calendar: cal)
         if state.integrations.notifications { scheduleGapQuestion(now: now) }
         if state.integrations.notifications {
-            NotificationService.schedule(NudgePlanner.plan(nudges))
+            let planned = NudgePlanner.plan(nudges)
+            log(.notification, "scheduled", ["count": "\(planned.count)", "next": planned.first.map { "\($0.title) at \($0.at)" } ?? "none"])
+            NotificationService.schedule(planned)
             NotificationService.scheduleHousekeeping(expiry: signatureExpiry)
         }
         let n = state.prefs.nudges
@@ -200,7 +227,12 @@ final class AppModel {
 
     /// Both alarm toggles feed one wanted list; an off toggle means its alarms are cancelled, not left behind.
     func syncAlarms(_ input: NudgeInput? = nil) {
-        AlarmService.sync(AlarmPlanner.desired(input ?? nudgeInput(), wake: state.integrations.alarms && state.prefs.wakeAlarms))
+        let now = Date()
+        let soon = DateInterval(start: now, duration: 3 * 86400)
+        let entryAlarms = EntryAlerts.alarms(Days.expand(state.entries.filter { state.prefs.wakeAlarms || !($0.source == .plan && $0.category == CategoryTree.sleep) }, in: soon, now: now, book: state.dayRules, calendar: cal),
+                                             now: now, allowed: state.integrations.alarms)
+        AlarmService.sync(AlarmPlanner.desired(input ?? nudgeInput(), wake: state.integrations.alarms && state.prefs.wakeAlarms,
+                                               entryAlarms: entryAlarms))
     }
 
     func nudgeInput(now: Date = Date()) -> NudgeInput {
@@ -396,6 +428,7 @@ final class AppModel {
     var rewardMoment: RewardMoment?
 
     func recordVisit(_ v: PlaceVisit) {
+        log(.sensor, "visit", ["arrival": "\(v.arrival)", "departure": v.departure.map { "\($0)" } ?? "open"])
         guard let i = state.visits.firstIndex(where: { $0.arrival == v.arrival }) else {
             state.visits = Array((state.visits + [v]).suffix(120))
             offerFrequentPlace()
@@ -455,6 +488,7 @@ final class AppModel {
     }
 
     private func handleGeofence(_ place: String, entered: Bool) {
+        log(.sensor, "geofence", ["place": place, "entered": "\(entered)"])
         let name = state.places.first { $0.id == place }?.name ?? place
         let phrase: String
         switch (place, entered) {
@@ -525,6 +559,7 @@ final class AppModel {
         guard state.integrations.health else { return }
         state.integrations.healthNeedsRequest = await HealthService.shared.requestNeeded()
         let days = await HealthService.shared.days(back: 21, calendar: cal)
+        log(.health, "read", ["days": "\(days.count)", "needsRequest": "\(state.integrations.healthNeedsRequest)"])
         guard !days.isEmpty else { return }
         var byDay = Dictionary(state.health.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
         for d in days { byDay[cal.startOfDay(for: d.day)] = d }
@@ -544,6 +579,7 @@ final class AppModel {
         let now = Date()
         let from = now.addingTimeInterval(-7 * 86400)
         let samples = await MotionService.shared.samples(from: from, to: now)
+        log(.sensor, "motion_read", ["samples": "\(samples.count)"])
         guard !samples.isEmpty else { return }
         let fresh = MotionTimeline.spans(samples, until: now, previous: state.motion)
         state.motion = MotionTimeline.merge(state.motion, with: fresh, from: samples.map(\.at).min() ?? from)
@@ -628,6 +664,7 @@ final class AppModel {
     private func syncCalendar() {
         guard state.integrations.calendarImport, CalendarService.shared.authorized else { return }
         state.events = CalendarService.shared.events(days: 14)
+        log(.sensor, "calendar_read", ["events": "\(state.events.count)"])
         for cand in CalendarService.shared.deadlineCandidates(days: 30) {
             if let i = state.items.firstIndex(where: { $0.externalId == cand.externalId }) {
                 state.items[i].due = cand.due
@@ -946,8 +983,56 @@ final class AppModel {
         save()
     }
 
+    // MARK: The box (O6)
+
     var undoTurnId: UUID?
-    @ObservationIgnored private var undoAboutMe: AboutMe?
+    /// Ops waiting for Approve / Decline, with why (shown under the turn that made them).
+    var held: [HeldOp] = []
+    var heldTurnId: UUID?
+    @ObservationIgnored private var undoReceipt: BoxReceipt?
+    @ObservationIgnored private var undoSide: SideSnapshot?
+
+    /// What the side ops (`BoxSideOps`) can change; the receipt covers the rest.
+    private struct SideSnapshot {
+        var moods: [MoodEntry], screen: [ScreenDay], screenAverages: [ScreenDay], scrollingApps: [String: Bool]
+        var prefs: Preferences, policy: BehaviourPolicy, aboutMe: AboutMe
+    }
+
+    private func clearUndo() {
+        undoReceipt = nil
+        undoSide = nil
+        undoTurnId = nil
+        held = []
+        heldTurnId = nil
+    }
+
+    /// "school days Mon–Fri, sleep need 8h, sleep floor 7h, wake 6:45 on school days, notifications standard".
+    var settingsLine: String {
+        let p = state.prefs
+        let names = cal.shortWeekdaySymbols
+        let days = p.schoolDays.sorted()
+        func name(_ d: Int) -> String { names[(d - 1) % 7] }
+        var contiguous = days.count > 2
+        for (x, y) in zip(days, days.dropFirst()) where y != x + 1 { contiguous = false }
+        let school = days.isEmpty ? "none" : contiguous ? "\(name(days.first!))–\(name(days.last!))" : days.map(name).joined(separator: ", ")
+        func hours(_ m: Int) -> String { m % 60 == 0 ? "\(m / 60)h" : String(format: "%.1fh", Double(m) / 60) }
+        return "school days \(school), sleep need \(hours(p.sleepNeedMinutes)), sleep floor \(hours(p.sleepFloorMinutes)), "
+            + "wake \(p.schoolDayWake.hour):\(String(format: "%02d", p.schoolDayWake.minute)) on school days, notifications \(p.nudges.level.rawValue)"
+    }
+
+    private func boxState(entries: [Entry]) -> BoxState {
+        BoxState(entries: entries, rules: state.rules, items: state.items, categories: state.categories,
+                 dayRules: state.dayRules, sleepFloorMinutes: state.prefs.sleepFloorMinutes)
+    }
+
+    /// Writes the box's changes back. Plan entries aren't the box's: they're kept as they were and a replan renews them.
+    private func absorb(_ b: BoxState, plan: [Entry]) {
+        state.entries = b.entries + plan
+        state.items = b.items
+        state.rules = b.rules
+        state.categories = b.categories
+        state.dayRules = b.dayRules
+    }
 
     @discardableResult
     func dump(_ raw: String, images: [AIImage] = []) async -> Bool {
@@ -956,41 +1041,72 @@ final class AppModel {
         busy.insert("dump")
         defer { busy.remove("dump") }
         let now = Date()
-        let today = cal.startOfDay(for: now)
-        let context = Prompts.dumpContext(DumpContextInput(now: now, calendar: cal, state: state.dumpState,
-                                                           calendarEvents: shownEvents, todaySegments: segments(on: today),
-                                                           plan: state.plan, warnings: activeWarnings, aboutMe: aboutMe,
-                                                           changes: state.changes.changeSummary(now: now)))
-        let convo = state.conversation
-        let content = ConversationPolicy.userContent(for: convo, text: text, images: images, fullContext: context)
-        let req = convo.request(system: Prompts.dump(), tool: ConversationPolicy.tool(schema: Schemas.dump),
-                                userContent: content, maxTokens: 3000, model: AIFeature.box.route.model,
-                                effort: AIFeature.box.route.effort)
+        let plan = state.entries.filter { $0.source == .plan }
+        let mine = state.entries.filter { $0.source != .plan }
+        let context = BoxContext.make(BoxContextInput(now: now, calendar: cal, state: boxState(entries: mine), planned: plan,
+                                                      aboutMe: aboutMe.markdown, settings: settingsLine))
+        let route = AIFeature.box.route
+        let (req, content) = BoxTurn.request(state.conversation, context: context, text: text, images: images,
+                                             model: route.model, effort: route.effort)
         do {
-            let (result, res, tokens) = try await ClaudeClient.shared.send(req, feature: .box) { DumpResult.read($0) }
-            undoSnapshot = state
-            undoAboutMe = aboutMe
-            let before = Set(state.items.map(\.id))
-            let itemsBefore = state.items
+            let tz = cal.timeZone
+            let (result, res, tokens) = try await ClaudeClient.shared.send(req, feature: .box) { BoxResult.read($0, timeZone: tz) }
             let turnId = UUID()
-            let alarmsBefore = state.alarmRules.count
-            let report = editDumpState { DumpApplier.apply(result, to: &$0, now: now, calendar: cal, writer: .box, turnId: turnId) }
-            // The student just asked for an alarm: make sure iOS has been asked to allow it.
-            if state.alarmRules.count > alarmsBefore { Task { _ = await AlarmService.requestAuthorization() } }
+            let callId = callLog.calls.last { $0.feature == .box && $0.ok }?.id
+            clearUndo()
+            let side = SideSnapshot(moods: state.moods, screen: state.screen, screenAverages: state.screenAverages,
+                                    scrollingApps: state.scrollingApps, prefs: state.prefs, policy: state.policy, aboutMe: aboutMe)
+            let itemsBefore = state.items
+            let beforeIds = Set(state.items.map(\.id))
+            let ops = BoxSideOps.split(result.ops)
+            var bs = boxState(entries: mine)
+            var receipt = BoxApplier.apply(ops.box, to: &bs, now: now, calendar: cal)
+            absorb(bs, plan: plan)
+            var me = aboutMe
+            let sideResult = BoxSideOps.apply(ops.side, to: &state, aboutMe: &me, now: now, calendar: cal)
+            receipt.lines += sideResult.lines
+            receipt.problems += sideResult.problems
+            for f in result.facts {
+                switch me.apply(f, by: .box, now: now) {
+                case .success(let line): if line.hasPrefix("Noted") { receipt.lines.append(line) }
+                case .failure(let why): receipt.problems.append("Didn't note “\(f.text.prefix(60))”: \(why)")
+                }
+            }
+            if me != aboutMe { aboutMe = me }
+            // Queries: the app computes every number; the reply's {q1.total} etc. are filled from the results.
+            var reply = result.reply
+            if !result.queries.isEmpty {
+                let results = result.queries.map {
+                    TimeQueryEngine.run($0, entries: state.entries, items: state.items, tree: state.categories, now: now,
+                                        book: state.dayRules, calendar: cal)
+                }
+                reply = QueryText.fill(reply, results)
+                receipt.problems += results.flatMap(\.problems)
+            }
+            if reply.isEmpty {
+                reply = receipt.lines.isEmpty && receipt.held.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done."
+            }
+            if res.isTruncated { reply += " That was a lot at once, so I may have missed the end. Check the list and send the rest again." }
+            askForAlarmsIfWanted()
             Avoidance.recordDueMoves(before: itemsBefore, after: &state.items, at: now, reason: text)
             estimateSleep()
-            var reply = result.reply
-            if reply.isEmpty { reply = report.changes.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done." }
-            if res.isTruncated { reply += " That was a lot at once, so I may have missed the end. Check the list and send the rest again." }
-            let turn = ConversationTurn(id: turnId, at: now, text: text, images: images, userContent: content,
-                                        assistantContent: res.rawContent ?? .array([]), reply: reply,
-                                        applied: AppliedReport(changes: report.changes, problems: report.problems),
-                                        callId: callLog.calls.last { $0.feature == .box && $0.ok }?.id, tokens: tokens,
-                                        context: context)
-            state.conversation.add(turn)
-            undoTurnId = report.changes.isEmpty ? nil : turn.id
+            BoxTurn.record(&state.conversation, at: now, text: text, content: content, response: res, result: result,
+                           receipt: receipt, context: context, turnId: turnId, callId: callId, reply: reply)
+            if let i = state.conversation.turns.lastIndex(where: { $0.id == turnId }) {
+                state.conversation.turns[i].images = images
+                state.conversation.turns[i].tokens = tokens
+            }
+            state.telemetry.boxTurn(receipt, turnId: turnId, message: text, ops: result.ops, at: now)
+            for bad in result.unreadable { log(.gap, "unreadable_op", level: .warn, ["turn": turnId.uuidString, "op": bad]) }
+            if let g = result.gap { state.telemetry.gap(g, said: reply, turnId: turnId, at: now) }
+            if !receipt.lines.isEmpty || !receipt.before.isEmpty || !receipt.tasksBefore.isEmpty || !receipt.rulesBefore.isEmpty {
+                undoTurnId = turnId
+                undoReceipt = receipt
+                undoSide = side
+            }
+            if !receipt.held.isEmpty { held = receipt.held; heldTurnId = turnId }
             replan()
-            for item in state.items where !before.contains(item.id) { followUp(new: item) }
+            for item in state.items where !beforeIds.contains(item.id) { followUp(new: item) }
             return true
         } catch {
             let ai = error as? AIError
@@ -999,6 +1115,7 @@ final class AppModel {
                                                     callId: callLog.calls.last { $0.feature == .box }?.id, failed: true,
                                                     detail: ai?.detail ?? (ai == nil ? error.localizedDescription : nil),
                                                     context: context))
+            log(.box, "failed", level: .error, ["message": text, "error": ai?.detail ?? error.localizedDescription])
             save()
             if let d = ai?.detail {
                 try? Data(d.utf8).write(to: Persistence.url.deletingLastPathComponent().appendingPathComponent("last-ai-error.txt"))
@@ -1007,27 +1124,79 @@ final class AppModel {
         }
     }
 
+    /// The student has an alarm of their own: make sure iOS has been asked to allow alarms.
+    private func askForAlarmsIfWanted() {
+        guard state.entries.contains(where: { $0.source != .plan && $0.alert?.kind == .alarm }) else { return }
+        Task { _ = await AlarmService.requestAuthorization() }
+    }
+
+    // MARK: Charts (F3)
+
+    func run(_ q: TimeQuery) -> QueryResult {
+        TimeQueryEngine.run(q, entries: state.entries, items: state.items, tree: state.categories, now: Date(),
+                            book: state.dayRules, calendar: cal)
+    }
+
+    func pin(_ q: TimeQuery, title: String?) {
+        guard !state.pinnedCharts.contains(where: { $0.query == q }) else { return }
+        state.pinnedCharts.append(PinnedChart(title: title ?? "Chart", query: q, pinnedAt: Date()))
+        log(.box, "chart_pinned", ["title": title ?? ""])
+        toast = "Pinned to Review."
+        save()
+    }
+
+    func unpin(chart id: UUID) {
+        state.pinnedCharts.removeAll { $0.id == id }
+        save()
+    }
+
+    /// Approve: applies the held ops as they were asked (they were held, not changed).
+    func approveHeld() {
+        guard !held.isEmpty else { return }
+        let now = Date()
+        let plan = state.entries.filter { $0.source == .plan }
+        var bs = boxState(entries: state.entries.filter { $0.source != .plan })
+        let receipt = BoxApplier.apply(held.map(\.op), to: &bs, now: now, calendar: cal, approved: true)
+        absorb(bs, plan: plan)
+        askForAlarmsIfWanted()
+        log(.box, "approved", ["lines": receipt.lines.joined(separator: " | "), "problems": receipt.problems.joined(separator: " | ")])
+        toast = receipt.lines.first ?? "Done."
+        held = []
+        heldTurnId = nil
+        replan()
+    }
+
+    func declineHeld() {
+        log(.box, "declined", ["ops": held.map(\.why).joined(separator: " | ")])
+        held = []
+        heldTurnId = nil
+        save()
+    }
+
     func undo() {
-        guard let snap = undoSnapshot, let id = undoTurnId else { return }
-        let convo = state.conversation, archive = state.archive
-        state = snap
-        if let me = undoAboutMe { aboutMe = me }
-        state.conversation = convo
-        state.archive = archive
+        guard let receipt = undoReceipt, let id = undoTurnId else { return }
+        let plan = state.entries.filter { $0.source == .plan }
+        var bs = boxState(entries: state.entries.filter { $0.source != .plan })
+        BoxApplier.undo(receipt, in: &bs)
+        absorb(bs, plan: plan)
+        if let s = undoSide {
+            state.moods = s.moods; state.screen = s.screen; state.screenAverages = s.screenAverages
+            state.scrollingApps = s.scrollingApps; state.prefs = s.prefs; state.policy = s.policy
+            if aboutMe != s.aboutMe { aboutMe = s.aboutMe }
+        }
         if let i = state.conversation.turns.firstIndex(where: { $0.id == id }) {
             state.conversation.turns[i].applied.problems.append("The student undid all of these changes")
             state.conversation.turns[i].applied.changes = state.conversation.turns[i].applied.changes.map { "(undone) " + $0 }
         }
-        undoSnapshot = nil
-        undoTurnId = nil
+        log(.box, "undo", ["turn": id.uuidString])
+        clearUndo()
         replan()
     }
 
     func clearConversation() {
         state.archive.archive(state.conversation, now: Date())
         state.conversation = Conversation(startedAt: Date())
-        undoSnapshot = nil
-        undoTurnId = nil
+        clearUndo()
         save()
     }
 
@@ -1036,8 +1205,7 @@ final class AppModel {
         state.archive.archive(state.conversation, now: Date())
         c.archivedAt = nil
         state.conversation = c
-        undoSnapshot = nil
-        undoTurnId = nil
+        clearUndo()
         save()
     }
 
@@ -1111,8 +1279,7 @@ final class AppModel {
 
     func applyRestore(_ p: RestorePreview) {
         ExportService.restore(p.bundle, into: self)
-        undoSnapshot = nil
-        undoTurnId = nil
+        clearUndo()
         if state.integrations.location { LocationService.shared.monitor(state.places) }
         replan()
         toast = "Restored from the export."

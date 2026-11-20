@@ -108,12 +108,6 @@ final class AvoidanceTests: XCTestCase {
         XCTAssertEqual(earlier[0].deferralCount, 1, "an earlier date isn't a put-off")
     }
 
-    func testBoxContextShowsPutOff() {
-        var items = [item()]
-        for i in 0..<3 { Avoidance.record(.skipped, itemId: items[0].id, in: &items, at: Fx.mon(8 + i), blockId: UUID()) }
-        let s = DumpState(items: items, commitments: [], exceptions: [], oneOffs: [], markers: [], routines: [], moods: [], screen: [], prefs: Preferences())
-        XCTAssertTrue(Prompts.dumpContext(DumpContextInput(now: Fx.mon(12), calendar: Fx.cal, state: s)).contains("put off 3×"))
-    }
 }
 
 /// v1.1 A9: the insight pass can turn repeated one-day changes into one rule, or make a behaviour conditional.

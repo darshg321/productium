@@ -34,7 +34,7 @@ public enum TaskBoard {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let stepsByParent = Dictionary(grouping: items.filter { $0.parentId != nil }, by: { $0.parentId! })
         let top = items.filter { $0.parentId == nil }.filter { q.isEmpty || matches($0, q, steps: stepsByParent[$0.id] ?? []) }
-        let open = top.filter { !$0.isDone }.sorted { ($0.due, $1.importance, $0.title) < ($1.due, $0.importance, $1.title) }
+        let open = top.filter { $0.isOpen }.sorted { ($0.due, $1.importance, $0.title) < ($1.due, $0.importance, $1.title) }
         let recentDone = top.filter { $0.isDone && ($0.doneAt ?? $0.due) > now.addingTimeInterval(-14 * 86400) }
             .sorted { ($0.doneAt ?? $0.due) > ($1.doneAt ?? $1.due) }
 
@@ -83,8 +83,8 @@ public enum TaskBoard {
     }
 
     public static func minutesLeft(_ item: WorkItem, steps: [WorkItem], factor: Double) -> Int {
-        guard !item.isDone else { return 0 }
-        let open = steps.filter { !$0.isDone }
+        guard item.isOpen else { return 0 }
+        let open = steps.filter { $0.isOpen }
         if !steps.isEmpty {
             return open.reduce(0) { $0 + max(0, Int(Double($1.estimateMinutes) * factor) - $1.completedMinutes) }
         }
@@ -98,11 +98,11 @@ public enum TaskBoard {
 
     public static func summary(items: [WorkItem], plan: Plan, factor: (TaskKind) -> Double, now: Date,
                                calendar cal: Calendar) -> TaskSummary {
-        let top = items.filter { $0.parentId == nil && !$0.isDone }
+        let top = items.filter { $0.parentId == nil && $0.isOpen }
         let steps = Dictionary(grouping: items.filter { $0.parentId != nil }, by: { $0.parentId! })
         let week = cal.date(byAdding: .day, value: 7, to: cal.startOfDay(for: now))!
         let left = top.reduce(0) { $0 + minutesLeft($1, steps: steps[$1.id] ?? [], factor: factor($1.kind)) }
-        let openIds = Set(items.filter { !$0.isDone }.map(\.id))
+        let openIds = Set(items.filter { $0.isOpen }.map(\.id))
         let planned = plan.blocks.filter { $0.isStudy && $0.end > now && $0.itemId.map(openIds.contains) == true }
             .reduce(0) { $0 + Int($1.end.timeIntervalSince(max($1.start, now)) / 60) }
         return TaskSummary(open: top.count, pastDue: top.filter { $0.due < now }.count,

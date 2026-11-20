@@ -136,7 +136,11 @@ public struct PlannedNudge: Hashable, Sendable {
 }
 
 public struct PlannedAlarm: Codable, Hashable, Sendable {
-    public enum Kind: String, Codable, Sendable { case wake, bedtime, leave, missedStart }
+    public enum Kind: String, Codable, Sendable {
+        case wake, bedtime, leave, missedStart
+        /// v1.2 O4: an approved alarm `Alert` on an Entry (`EntryAlerts`).
+        case entry
+    }
     public var key: String
     public var kind: Kind
     public var at: Date
@@ -281,7 +285,7 @@ public enum NudgePlanner {
         }
 
         if input.settings.deadlines {
-            for item in input.items where !item.isDone && item.parentId == nil && item.due > now {
+            for item in input.items where item.isOpen && item.parentId == nil && item.due > now {
                 let left = max(0, item.estimateMinutes - item.completedMinutes)
                 guard left > 0 || item.kind.isMemoryBased else { continue }
                 let cal = input.calendar

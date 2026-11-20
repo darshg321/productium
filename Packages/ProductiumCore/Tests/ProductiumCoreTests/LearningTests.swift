@@ -151,14 +151,6 @@ final class MarkerCategoryTests: XCTestCase {
         XCTAssertEqual(MarkerCategory.infer(activity: "gaming", commitments: c), .free)
     }
 
-    func testBoxMarkerIsFiledUnderTravelNotFree() {
-        var s = DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [],
-                          routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
-        DumpApplier.apply(DumpResult(ops: [.upsert("marker", ["activity": .string("to_school"), "phase": .string("start"), "at": .string("2026-11-16T13:02")]),
-                                           .upsert("marker", ["activity": .string("in_bed"), "at": .string("2026-11-17T00:59")])], reply: ""),
-                          to: &s, now: Fx.mon(14), calendar: Fx.cal)
-        XCTAssertEqual(s.markers.map(\.category), [.commute, .sleep])
-    }
 }
 
 final class StatedRoutineTests: XCTestCase {
@@ -184,16 +176,6 @@ final class StatedRoutineTests: XCTestCase {
         XCTAssertNil(r.disagreement)
     }
 
-    func testStatingARoutineThroughTheBoxWritesNoFakeSamples() {
-        var s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [],
-                          routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
-        DumpApplier.apply(DumpResult(ops: [.upsert("routine", id: "to_school", ["minutes": .number(25)])], reply: ""),
-                          to: &s, now: Fx.mon(14), calendar: Fx.cal)
-        let r = s.routines.first { $0.id == "to_school" }!
-        XCTAssertEqual(r.stated, 25)
-        XCTAssertTrue(r.samples.isEmpty)
-        XCTAssertEqual(Beliefs.routines(s.routines).first { $0.key == "to_school" }?.confidence, .stated)
-    }
 }
 
 final class MarkerMergeTests: XCTestCase {

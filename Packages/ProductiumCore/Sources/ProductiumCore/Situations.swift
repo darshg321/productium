@@ -274,7 +274,7 @@ extension Effect: Codable {
     enum F: String, CodingKey { case start, end, title, commitment, with, path, value, task }
 
     static func time<Key: CodingKey>(_ c: KeyedDecodingContainer<Key>, _ k: Key) throws -> TimeOfDay {
-        if let s = try? c.decode(String.self, forKey: k), let t = DumpApplier.timeOfDay(s) { return t }
+        if let s = try? c.decode(String.self, forKey: k), let t = ClockText.timeOfDay(s) { return t }
         if let t = try? c.decode(TimeOfDay.self, forKey: k) { return t }
         throw DecodingError.dataCorruptedError(forKey: k, in: c, debugDescription: "expected HH:mm")
     }

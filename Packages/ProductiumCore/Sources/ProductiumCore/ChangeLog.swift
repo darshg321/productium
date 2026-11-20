@@ -208,7 +208,7 @@ public struct ChangeLog: Codable, Hashable, Sendable {
             p.from = Knobs.format(cur)
             p.to = Knobs.format(v)
         case .starterStep(let parent, let title, let minutes, _):
-            guard let task = s.items.first(where: { $0.id == parent && !$0.isDone }), !title.isEmpty else { return "No open task for a first step" }
+            guard let task = s.items.first(where: { $0.id == parent && $0.isOpen }), !title.isEmpty else { return "No open task for a first step" }
             guard (5...20).contains(minutes) else { return "A first step is 5-20 minutes" }
             p.from = task.title
             p.to = title
@@ -324,49 +324,11 @@ public struct ChangeLog: Codable, Hashable, Sendable {
 
     public mutating func unpin(_ target: String) { pinned.remove(target) }
 
-    // v1.0 stored a `ProposalBook` (pending / approved / rejected / reverted / expired). Approved ones were applied,
-    // so they stay as applied; rejected ones become declined (still fed back); pending and expired never happened.
-    enum CodingKeys: String, CodingKey { case changes, runs, pinned, proposals }
-
-    struct Legacy: Decodable {
-        var id: UUID
-        var runId: UUID
-        var change: InsightChange
-        var from: String
-        var to: String
-        var reason: String
-        var evidence: [String]
-        var model: String
-        var at: Date
-        var status: String
-        var decidedAt: Date?
-        var created: UUID?
-        var previous: Double?
-
-        var migrated: LoggedChange? {
-            let s: ChangeStatus
-            switch status {
-            case "approved", "applied": s = .applied
-            case "reverted": s = .reverted
-            case "rejected", "declined": s = .declined
-            default: return nil
-            }
-            var c = LoggedChange(id: id, runId: runId, change: change, from: from, to: to, reason: reason, evidence: evidence,
-                                 model: model, at: s == .applied ? (decidedAt ?? at) : at, status: s)
-            if s != .applied { c.revertedAt = decidedAt ?? at }
-            c.created = created
-            c.previous = previous
-            return c
-        }
-    }
+    enum CodingKeys: String, CodingKey { case changes, runs, pinned }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        if let new = try? c.decode([LoggedChange].self, forKey: .changes) {
-            changes = new
-        } else {
-            changes = ((try? c.decode([Legacy].self, forKey: .proposals)) ?? []).compactMap(\.migrated)
-        }
+        changes = (try? c.decode([LoggedChange].self, forKey: .changes)) ?? []
         runs = (try? c.decode([InsightRun].self, forKey: .runs)) ?? []
         _pinned = (try? c.decode(SortedSet<String>.self, forKey: .pinned)) ?? SortedSet(wrappedValue: [])
     }

@@ -18,13 +18,23 @@ public struct PlannerInput: Sendable {
     public var beliefs: Beliefs
     public var situations: [Situation]
     public var dayRules: DayRuleBook
+    /// v1.2 O3: fixed Entries (classes, events, pinned task sessions) the plan works around, and past entries with a
+    /// `taskId` (finished sessions, for numbering). `plan` entries are ignored: the plan is what this makes.
+    public var entries: [Entry]
+    /// v1.2: rules whose `limits` change the planner on their days.
+    public var rules: [Rule]
+    public var categories: CategoryTree
 
     public init(now: Date, calendar: Calendar = .current, items: [WorkItem], commitments: [Commitment] = [],
                 events: [FixedEvent] = [], preferences: Preferences = Preferences(),
                 learned: LearnedModel = LearnedModel(), health: [HealthDay] = [], moods: [MoodEntry] = [],
                 locked: [PlannedBlock] = [], routines: [Routine] = Routine.defaults,
                 exceptions: [DayException] = [], horizonDays: Int = 14, policy: BehaviourPolicy = BehaviourPolicy(),
-                beliefs: Beliefs = Beliefs(), situations: [Situation] = [], dayRules: DayRuleBook = DayRuleBook()) {
+                beliefs: Beliefs = Beliefs(), situations: [Situation] = [], dayRules: DayRuleBook = DayRuleBook(),
+                entries: [Entry] = [], rules: [Rule] = [], categories: CategoryTree = CategoryTree()) {
+        self.entries = entries
+        self.rules = rules
+        self.categories = categories
         self.situations = situations
         self.dayRules = dayRules
         self.policy = policy
@@ -73,6 +83,8 @@ public enum Planner {
     struct Interval: Hashable {
         var start: Date
         var end: Date
+        /// Inside open time (a spare, lunch): only light tasks go here.
+        var light = false
         var minutes: Int { Int((end.timeIntervalSince(start) / 60).rounded()) }
     }
 
@@ -96,6 +108,7 @@ public enum Planner {
         var consumed = 0
         var borrowed = 0
         var itemCounts: [UUID: Int] = [:]
+        var itemMinutes: [UUID: Int] = [:]
     }
 
     struct Demand {
@@ -126,9 +139,21 @@ public enum Planner {
         var todayFactor = 1.0
         var wakePlans: [WakePlan] = []
         let situations: SituationResolver
+        let evaluator: DayRuleEvaluator
+        /// Occurrences of the non-plan entries over the horizon, by day key.
+        let entryDays: [DayKey: [DayEntry]]
+        let timetableInEntries: Bool
 
         init(input: PlannerInput) {
             self.input = input
+            let ev = DayRuleEvaluator(book: input.dayRules, calendar: input.calendar)
+            self.evaluator = ev
+            let today = input.calendar.startOfDay(for: input.now)
+            let end = input.calendar.date(byAdding: .day, value: input.horizonDays + 1, to: today) ?? today
+            let occ = Days.expand(input.entries.filter { $0.source != .plan }, in: DateInterval(start: today, end: end),
+                                  now: input.now, book: input.dayRules, calendar: input.calendar, evaluator: ev)
+            self.entryDays = Dictionary(grouping: occ, by: { DayKeys.key($0.start, input.calendar) })
+            self.timetableInEntries = Days.hasTimetable(input.entries, tree: input.categories)
             self.situations = SituationResolver(situations: input.situations, book: input.dayRules, calendar: input.calendar)
             self.cal = input.calendar
             self.prefs = input.preferences
@@ -146,13 +171,41 @@ public enum Planner {
         func commitments(on day: Date) -> [Commitment] { situations.commitments(input.commitments, on: day) }
         func routines(on day: Date) -> [Routine] { overrides(day).routines(input.routines) }
 
+        func entries(on day: Date) -> [DayEntry] { entryDays[DayKeys.key(day, cal)] ?? [] }
+
+        /// What the plan works around that day: everything that isn't the plan's own or open time, including task
+        /// sessions you put at a time.
+        func fixedEntries(on day: Date) -> [DayEntry] {
+            entries(on: day).filter { $0.busy && !$0.running && $0.end > input.now }
+        }
+
+        /// Open time (spares, lunch): light work only.
+        func openEntries(on day: Date) -> [DayEntry] {
+            entries(on: day).filter { $0.entry.open && $0.source != .plan && $0.end > input.now }
+        }
+
+        func limits(_ day: Date) -> PlannerLimits { Rules.limits(input.rules, on: day, evaluator) }
+
         func isSchoolDay(_ day: Date) -> Bool {
-            SchoolDay.isSchoolDay(day, prefs: prefs, commitments: commitments(on: day), exceptions: input.exceptions, calendar: cal)
+            if timetableInEntries {
+                return entries(on: day).contains { input.categories.isUnder($0.category, CategoryTree.school) }
+            }
+            return SchoolDay.isSchoolDay(day, prefs: prefs, commitments: commitments(on: day), exceptions: input.exceptions, calendar: cal)
         }
 
         func wakePlan(on day: Date) -> WakePlan {
-            let base = WakePlanner.plan(for: day, commitments: commitments(on: day), events: input.events,
-                                        routines: routines(on: day), prefs: prefs, calendar: cal, exceptions: input.exceptions)
+            let fromEntries = fixedEntries(on: day).filter { $0.taskId == nil }.map {
+                FixedEvent(id: $0.id, title: $0.title, start: $0.start, end: $0.end,
+                           kind: input.categories.isUnder($0.category, CategoryTree.school) ? .school : .other)
+            }
+            var base = WakePlanner.plan(for: day, commitments: commitments(on: day), events: input.events + fromEntries,
+                                        routines: routines(on: day), prefs: prefs, calendar: cal, exceptions: input.exceptions,
+                                        isSchoolDay: timetableInEntries ? isSchoolDay(day) : nil)
+            if let w = limits(day).wake {
+                let wake = at(day, w)
+                base = WakePlan(day: base.day, wake: wake, leaveBy: base.leaveBy.flatMap { $0 > wake ? $0 : nil },
+                                firstCommitment: base.firstCommitment, reason: "A rule you set")
+            }
             let o = overrides(day)
             guard let w = o.input("wake") else { return base }
             let wake = at(day, TimeOfDay(minutes: Int(w.rounded())))
@@ -184,7 +237,8 @@ public enum Planner {
                 let wakeT = wp.wake
                 let nextWake = wakePlan(on: tomorrow).wake
                 let bedtime = nextWake.addingTimeInterval(-Double(prefs.sleepNeedMinutes) * 60)
-                let windDown = o.input("windDownMinutes").map { Int($0.rounded()) } ?? prefs.windDownMinutes
+                let lim = limits(day)
+                let windDown = lim.windDownMinutes ?? o.input("windDownMinutes").map { Int($0.rounded()) } ?? prefs.windDownMinutes
                 let workEnd = bedtime.addingTimeInterval(-Double(windDown) * 60)
                 let ready = routine("get_ready", on: day)?.minutes ?? Planner.morningRoutineMinutes
                 var windowStart = wakeT.addingTimeInterval(Double(ready) * 60)
@@ -223,13 +277,19 @@ public enum Planner {
                                               start: max(ev.start, day), end: min(ev.end, tomorrow), title: ev.title,
                                               sourceId: ev.id))
                 }
+                for de in fixedEntries(on: day) {
+                    busy.append(Interval(start: de.start, end: de.end))
+                    fixed.append(PlannedBlock(id: Planner.stableUUID("entry|\(de.id)"), kind: de.taskId != nil ? .work : .commitment,
+                                              start: de.start, end: de.end, title: de.title, itemId: de.taskId,
+                                              hint: de.taskId != nil ? "You chose this time" : nil, sourceId: "entry:\(de.id)"))
+                }
                 for b in input.locked where b.end > day && b.start < tomorrow {
                     busy.append(Interval(start: b.start, end: b.end))
                     fixed.append(b)
                 }
                 // Study placed by a situation is a fixed block for that task.
                 for pl in o.places {
-                    guard let item = input.items.first(where: { $0.id == pl.item && !$0.isDone }) else { continue }
+                    guard let item = input.items.first(where: { $0.id == pl.item && $0.isOpen }) else { continue }
                     let s = at(day, pl.start), e = at(day, pl.end)
                     guard e > s, e > input.now else { continue }
                     busy.append(Interval(start: s, end: e))
@@ -261,12 +321,15 @@ public enum Planner {
                     }
                 }
 
-                let window = windowStart < workEnd ? [Interval(start: windowStart, end: workEnd)] : []
-                let free = Planner.subtract(window, busy).filter { $0.minutes >= 5 }
+                let studyFrom = windowStart
+                let studyTo = min(workEnd, lim.noStudyAfter.map { at(day, $0) } ?? workEnd)
+                let window = studyFrom < studyTo ? [Interval(start: studyFrom, end: studyTo)] : []
+                let opens = openEntries(on: day).map { Interval(start: $0.start, end: $0.end) }
+                let free = Planner.markLight(Planner.subtract(window, busy), opens).filter { $0.minutes >= 5 }
                 let freeTotal = free.reduce(0) { $0 + $1.minutes }
 
                 var cap = Double(capacity(school)) * loadFactor
-                    * input.policy.capacityMultiplier * (o.input("planner.capacity") ?? 1)
+                    * input.policy.capacityMultiplier * (lim.capacityFactor ?? o.input("planner.capacity") ?? 1)
                 if i == 0 { cap *= todayFactor }
                 let floor = Int(Double(input.beliefs.minutes(school ? "study.schoolDayFreeTime" : "study.freeDayFreeTime"))
                     * input.policy.freeTimeMultiplier * (o.input("planner.freeTimeMultiplier") ?? 1))
@@ -274,7 +337,7 @@ public enum Planner {
                 var d = Day(index: i, start: day, isSchoolDay: school, wake: wakeT, workEnd: workEnd,
                             bedtime: bedtime, nextWake: nextWake, free: free, fixed: fixed,
                             studyCap: Int(cap), freeFloor: floor, freeTotal: freeTotal)
-                d.maxBlock = o.input("planner.maxBlockMinutes").map { Int($0.rounded()) } ?? Int.max
+                d.maxBlock = lim.maxBlockMinutes ?? o.input("planner.maxBlockMinutes").map { Int($0.rounded()) } ?? Int.max
                 d.held = o.held
                 d.boosted = o.boosted
                 days.append(d)
@@ -315,6 +378,11 @@ public enum Planner {
                     total += Int(e.timeIntervalSince(max(s, input.now)) / 60)
                 }
             }
+            for list in entryDays.values {
+                for de in list where de.taskId == item && de.source == .you && !de.running && de.end > input.now {
+                    total += Int(de.end.timeIntervalSince(max(de.start, input.now)) / 60)
+                }
+            }
             return total
         }
 
@@ -323,7 +391,7 @@ public enum Planner {
             let lockedMinutes = input.locked.filter { $0.itemId == item.id }
                 .reduce(0) { $0 + Int(max(0, $1.end.timeIntervalSince(input.now)) / 60) } + placedMinutes(item.id)
             let left = corrected - item.completedMinutes - lockedMinutes
-            return left > 0 ? max(left, 10) : (item.isDone ? 0 : 15)
+            return left > 0 ? max(left, 10) : (item.isOpen ? 15 : 0)
         }
 
         func dayIndex(of date: Date) -> Int {
@@ -332,17 +400,23 @@ public enum Planner {
         }
 
         func buildDemands() -> [Demand] {
-            let parents = Set(input.items.filter { !$0.isDone }.compactMap(\.parentId))
+            let parents = Set(input.items.filter { $0.isOpen }.compactMap(\.parentId))
             var out: [Demand] = []
-            for item in input.items where !item.isDone && !parents.contains(item.id) && !item.isAtSchoolErrand {
+            for item in input.items where item.isOpen && !parents.contains(item.id) && !item.isAtSchoolErrand {
                 let left = remainingMinutes(item)
                 guard left > 0 else { continue }
                 if item.due <= input.now { continue }
-                if item.kind.isMemoryBased {
-                    out += spacedSessions(item, minutes: left)
-                } else {
-                    out += pacedChunks(item, minutes: left)
+                var ds = item.kind.isMemoryBased ? spacedSessions(item, minutes: left) : pacedChunks(item, minutes: left)
+                // "Not today" / "start Thursday" (A2): nothing before notBefore.
+                if let nb = item.notBefore, nb > input.now {
+                    guard nb < item.due else { continue }
+                    for k in ds.indices {
+                        ds[k].earliest = max(ds[k].earliest, nb)
+                        if ds[k].latest <= ds[k].earliest { ds[k].latest = item.due }
+                        if ds[k].preferredDay.map({ $0 < dayIndex(of: nb) }) == true { ds[k].preferredDay = dayIndex(of: nb) }
+                    }
                 }
+                out += ds
             }
             return out
         }
@@ -444,9 +518,9 @@ public enum Planner {
 
         /// Errands at school (ask a teacher) go in a school-hours slot with a reminder, not a study block.
         mutating func placeErrands() {
-            let parents = Set(input.items.filter { !$0.isDone }.compactMap(\.parentId))
+            let parents = Set(input.items.filter { $0.isOpen }.compactMap(\.parentId))
             var usedUntil: [Int: Date] = [:]
-            let errands = input.items.filter { !$0.isDone && $0.isAtSchoolErrand && !parents.contains($0.id) && $0.due > input.now }
+            let errands = input.items.filter { $0.isOpen && $0.isAtSchoolErrand && !parents.contains($0.id) && $0.due > input.now }
             for item in errands.sorted(by: { $0.due < $1.due }) {
                 let length = Double(max(5, item.estimateMinutes - item.completedMinutes)) * 60
                 var placed = false
@@ -538,9 +612,11 @@ public enum Planner {
                 case .crunch: (cap, minFree) = (Int(Double(day.studyCap) * 1.35) + 30, min(30, day.freeFloor))
                 default: (cap, minFree) = (day.studyCap, day.freeFloor)
                 }
+                if let maxDay = d.item.maxMinutesPerDay, (day.itemMinutes[d.item.id] ?? 0) + length > maxDay { continue }
                 guard day.studyUsed + length <= cap, length <= day.maxBlock, !day.held.contains(d.item.id),
                       day.freeTotal - day.consumed - length >= minFree else { continue }
                 for (ii, iv) in day.free.enumerated() {
+                    if iv.light && !d.item.isLight { continue }
                     var s = max(iv.start, d.earliest)
                     let hardEnd = min(iv.end, d.latest)
                     var tries = 0
@@ -592,10 +668,11 @@ public enum Planner {
             day.studyUsed += length
             day.consumed += length
             day.itemCounts[d.item.id, default: 0] += 1
+            day.itemMinutes[d.item.id, default: 0] += length
             if !borrowsSleep {
                 let iv = day.free[ii]
                 var pieces: [Interval] = []
-                if start > iv.start { pieces.append(Interval(start: iv.start, end: start)) }
+                if start > iv.start { pieces.append(Interval(start: iv.start, end: start, light: iv.light)) }
                 var after = end
                 if iv.end.timeIntervalSince(end) >= Double(breakMinutes + 5) * 60 {
                     let bEnd = end.addingTimeInterval(Double(breakMinutes) * 60)
@@ -605,7 +682,7 @@ public enum Planner {
                     day.consumed += breakMinutes
                     after = bEnd
                 }
-                if iv.end > after { pieces.append(Interval(start: after, end: iv.end)) }
+                if iv.end > after { pieces.append(Interval(start: after, end: iv.end, light: iv.light)) }
                 day.free.replaceSubrange(ii...ii, with: pieces.filter { $0.minutes >= 5 })
             }
             days[di] = day
@@ -622,7 +699,7 @@ public enum Planner {
                 let nextDayStart = cal.date(byAdding: .day, value: 1, to: day.start) ?? day.start
                 let nextDayEnd = cal.date(byAdding: .day, value: 2, to: day.start) ?? day.start
                 let memoryNext = input.items.contains {
-                    !$0.isDone && $0.kind.isMemoryBased && $0.due >= nextDayStart && $0.due < nextDayEnd
+                    $0.isOpen && $0.kind.isMemoryBased && $0.due >= nextDayStart && $0.due < nextDayEnd
                 }
                 let night = SleepPolicy.NightContext(dayIndex: di, workEnd: day.workEnd, alreadyBorrowed: day.borrowed,
                                                      memoryDueNextDay: memoryNext, borrowedNightIndices: borrowedNights,
@@ -679,15 +756,6 @@ public enum Planner {
         }
 
         mutating func finish() -> Plan {
-            let itemsByIdForTitles = Dictionary(uniqueKeysWithValues: input.items.map { ($0.id, $0) })
-            let grouped = Dictionary(grouping: blocks.indices.filter { blocks[$0].kind == .work }, by: { blocks[$0].itemId })
-            for (id, idxs) in grouped {
-                guard let id, let item = itemsByIdForTitles[id] else { continue }
-                let ordered = idxs.sorted { blocks[$0].start < blocks[$1].start }
-                for (k, i) in ordered.enumerated() {
-                    blocks[i].title = ordered.count > 1 ? "\(item.title) · \(k + 1)/\(ordered.count)" : item.title
-                }
-            }
             var all = blocks
             for day in days {
                 all += day.fixed
@@ -709,6 +777,7 @@ public enum Planner {
                 }
             }
             all = all.filter { $0.end > input.now }.sorted { $0.start < $1.start }
+            Planner.number(&all, items: input.items, entries: input.entries, now: input.now)
 
             let itemsById = Dictionary(uniqueKeysWithValues: input.items.map { ($0.id, $0) })
             for (id, mins) in shortfalls.sorted(by: { $0.value > $1.value }) where mins > 0 {
@@ -731,16 +800,38 @@ public enum Planner {
             var mutes: [NudgeMute] = []
             for day in days {
                 let o = overrides(day.start)
-                if o.muteAll { mutes.append(NudgeMute(day: day.start, kind: nil)) }
-                for k in o.muted.sorted(by: { $0.rawValue < $1.rawValue }) { mutes.append(NudgeMute(day: day.start, kind: k)) }
+                let lim = limits(day.start)
+                if o.muteAll || lim.muteAll == true { mutes.append(NudgeMute(day: day.start, kind: nil)) }
+                let kinds = o.muted.union(lim.mute ?? [])
+                for k in kinds.sorted(by: { $0.rawValue < $1.rawValue }) { mutes.append(NudgeMute(day: day.start, kind: k)) }
             }
             return Plan(generatedAt: input.now, blocks: all, warnings: warnings, shortfalls: shortfalls,
                         sleepTradeoffMinutes: borrowed, loadFactor: input.learned.loadFactor * todayFactor,
-                        wakePlans: wakePlans, mutes: input.situations.isEmpty ? nil : mutes)
+                        wakePlans: wakePlans, mutes: input.situations.isEmpty && input.rules.isEmpty ? nil : mutes)
         }
 
         func stableId(_ prefix: String, _ key: String, _ day: Date) -> UUID {
             Planner.stableUUID("\(prefix)|\(key)|\(Int(day.timeIntervalSince1970))")
+        }
+    }
+
+    /// v1.2 A2: "Reading · 2 of 5". Every session of a task, planned or pinned, numbered in time order after the
+    /// sessions already done (past entries with its `taskId`), so the earliest remaining one always has the lowest
+    /// remaining number and moving one never reorders the rest.
+    static func number(_ blocks: inout [PlannedBlock], items: [WorkItem], entries: [Entry], now: Date) {
+        let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let done = Dictionary(grouping: entries.filter { $0.taskId != nil && $0.source != .plan && $0.repeats == nil && ($0.end ?? now) <= now },
+                              by: { $0.taskId! }).mapValues(\.count)
+        let grouped = Dictionary(grouping: blocks.indices.filter { blocks[$0].isStudy && blocks[$0].itemId != nil },
+                                 by: { blocks[$0].itemId! })
+        for (id, idxs) in grouped {
+            guard let item = byId[id] else { continue }
+            let ordered = idxs.sorted { (blocks[$0].start, blocks[$0].id.uuidString) < (blocks[$1].start, blocks[$1].id.uuidString) }
+            let before = done[id] ?? 0
+            let total = before + ordered.count
+            for (k, i) in ordered.enumerated() {
+                blocks[i].title = total > 1 ? "\(item.title) · \(before + k + 1) of \(total)" : item.title
+            }
         }
     }
 
@@ -765,14 +856,27 @@ public enum Planner {
         }
     }
 
+    /// Splits free intervals at open time and marks the parts inside it light.
+    static func markLight(_ free: [Interval], _ opens: [Interval]) -> [Interval] {
+        guard !opens.isEmpty else { return free }
+        return free.flatMap { f -> [Interval] in
+            var cuts = Set([f.start, f.end])
+            for o in opens where o.start < f.end && o.end > f.start { cuts.insert(max(f.start, o.start)); cuts.insert(min(f.end, o.end)) }
+            let pts = cuts.sorted()
+            return zip(pts, pts.dropFirst()).map { a, b in
+                Interval(start: a, end: b, light: f.light || opens.contains { $0.start <= a && $0.end >= b })
+            }
+        }
+    }
+
     static func subtract(_ base: [Interval], _ busy: [Interval]) -> [Interval] {
         var result = base
         for b in busy {
             var next: [Interval] = []
             for r in result {
                 if b.end <= r.start || b.start >= r.end { next.append(r); continue }
-                if b.start > r.start { next.append(Interval(start: r.start, end: b.start)) }
-                if b.end < r.end { next.append(Interval(start: b.end, end: r.end)) }
+                if b.start > r.start { next.append(Interval(start: r.start, end: b.start, light: r.light)) }
+                if b.end < r.end { next.append(Interval(start: b.end, end: r.end, light: r.light)) }
             }
             result = next
         }

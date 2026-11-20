@@ -40,7 +40,7 @@ public enum Avoidance {
     @discardableResult
     public static func record(_ kind: DeferralKind, itemId: UUID?, in items: inout [WorkItem], at: Date,
                               reason: String? = nil, blockId: UUID? = nil) -> Bool {
-        guard let itemId, let i = items.firstIndex(where: { $0.id == itemId }), !items[i].isDone else { return false }
+        guard let itemId, let i = items.firstIndex(where: { $0.id == itemId }), items[i].isOpen else { return false }
         var log = items[i].deferrals
         if kind != .snoozed, let b = blockId, log.contains(where: { $0.blockId == b && $0.kind == kind }) { return false }
         log.append(DeferralEvent(at: at, kind: kind, reason: clean(reason), blockId: blockId))
@@ -51,7 +51,7 @@ public enum Avoidance {
     /// A due date moved later counts as putting it off, with what the student said as the reason.
     public static func recordDueMoves(before: [WorkItem], after items: inout [WorkItem], at: Date, reason: String?) {
         let was = Dictionary(before.map { ($0.id, $0.due) }, uniquingKeysWith: { a, _ in a })
-        for item in items where !item.isDone {
+        for item in items where item.isOpen {
             if let old = was[item.id], item.due > old.addingTimeInterval(3600) {
                 record(.dueMoved, itemId: item.id, in: &items, at: at, reason: reason)
             }

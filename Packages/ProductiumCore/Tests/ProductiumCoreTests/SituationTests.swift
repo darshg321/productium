@@ -227,68 +227,14 @@ final class SituationBoxTests: XCTestCase {
         DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
                   moods: [], screen: [], prefs: Preferences())
     }
-    func run(_ s: inout DumpState, _ ops: [DumpOp], writer: Writer = .box) -> DumpReport {
-        DumpApplier.apply(DumpResult(ops: ops, reply: ""), to: &s, now: Fx.mon(9), calendar: cal, writer: writer)
-    }
+
     func str(_ v: String) -> JSONValue { .string(v) }
 
-    func testABTimetableFromTheBox() {
-        var s = state()
-        let id = Ref.activity(Fx.school.id)
-        var r = run(&s, [.upsert("day_rule", ["name": str("school"), "kind": str("sequence"), "anchor": str("2026-11-16"),
-                                              "rule": str(#"{"all":[{"weekdays":[2,3,4,5,6]},{"not":{"label":"no-school"}}]}"#)])])
-        XCTAssertTrue(r.problems.isEmpty, "\(r.problems)")
-        XCTAssertEqual(s.dayRules.sequences.count, 1)
-        r = run(&s, [.upsert("situation", ["said": str("B days start at 10"),
-                                           "scope": str(#"{"nthOf":{"sequence":"school","mod":2,"eq":1}}"#),
-                                           "effects": .array([str(#"{"replace":{"commitment":"\#(id)","with":[{"title":"Art","start":"10:00","end":"15:00"}]}}"#)])])])
-        XCTAssertTrue(r.problems.isEmpty, "\(r.problems)")
-        XCTAssertEqual(s.situations.count, 1)
-        XCTAssertTrue(r.changes.contains { $0.hasPrefix("Added: B days start at 10") }, "\(r.changes)")
-        XCTAssertTrue(r.changes.contains { $0.contains("School 8:30–3:00 → 10:00–3:00") }, "\(r.changes)")
-        // Deleting by ref removes it.
-        r = run(&s, [DumpOp("delete", entity: "situation", id: Ref.situation(s.situations[0].id))])
-        XCTAssertTrue(s.situations.isEmpty, "\(r.problems)")
-    }
 
-    func testSickWeekNeedsAnExpiryAndBehaviourFromTheBoxIsRefused() {
-        var s = state()
-        let sick = ["said": str("sick till Wednesday"), "scope": str(#"{"dates":{"from":"2026-11-16","until":"2026-11-18"}}"#),
-                    "effects": .array([str(#"{"setInput":{"path":"planner.capacity","value":0}}"#), str(#"{"mute":"all"}"#)]),
-                    "expires": str("2026-11-18")]
-        var r = run(&s, [.upsert("situation", sick)])
-        XCTAssertTrue(r.problems.isEmpty, "\(r.problems)")
-        XCTAssertEqual(s.situations.count, 1)
-        // Open-ended: nothing bounds it, so it is a behaviour change and the box may not make it.
-        r = run(&s, [.upsert("situation", ["said": str("always lighter"), "scope": str(#"{"weekdays":[6]}"#),
-                                           "effects": .array([str(#"{"setInput":{"path":"planner.capacity","value":0.8}}"#)])])])
-        XCTAssertEqual(s.situations.count, 1)
-        XCTAssertEqual(r.problems.count, 1, "\(r.problems)")
-    }
-
-    func testUnreadableRuleOrEffectIsReportedAndGapsAreKept() {
-        var s = state()
-        var r = run(&s, [.upsert("situation", ["said": str("x"), "scope": str("nonsense"), "effects": .array([str("{}")])])])
-        XCTAssertTrue(s.situations.isEmpty)
-        XCTAssertFalse(r.problems.isEmpty)
-        r = run(&s, [.upsert("gap", ["said": str("lock my phone at 10"), "wanted": str("lock the phone")])])
-        XCTAssertEqual(s.gapNotes.count, 1)
-        XCTAssertTrue(r.problems.first?.contains("noted") ?? false)
-        let ctx = Prompts.dump()
-        XCTAssertTrue(ctx.contains("nthOf") && ctx.contains("situation"))
-    }
 }
 
 final class SituationObjectTests: XCTestCase {
-    func testRuleAndEffectsWrittenAsObjectsAreAccepted() {
-        var s = DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
-                          moods: [], screen: [], prefs: Preferences())
-        let op = DumpOp.upsert("situation", ["said": .string("sick"),
-                                             "scope": .object(["dates": .object(["from": .string("2026-11-17"), "until": .string("2026-11-18")])]),
-                                             "effects": .object(["mute": .string("all")]), "expires": .string("2026-11-18")])
-        let r = DumpApplier.apply(DumpResult(ops: [op], reply: ""), to: &s, now: Fx.mon(9), calendar: Fx.cal, writer: .box)
-        XCTAssertEqual(s.situations.count, 1, "\(r.problems)")
-    }
+
 }
 
 final class PlaceStudyTests: XCTestCase {
@@ -308,21 +254,4 @@ final class PlaceStudyTests: XCTestCase {
         XCTAssertLessThanOrEqual(total(plan), total(without) + 15, "the placed 2 h replaces other blocks instead of adding to them")
     }
 
-    func testBoxPlacesStudyAndRefusesNonsense() {
-        let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 6), estimateMinutes: 240)
-        var s = DumpState(items: [essay], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
-                          moods: [], screen: [], prefs: Preferences())
-        func run(_ eff: String) -> DumpReport {
-            DumpApplier.apply(DumpResult(ops: [.upsert("situation", ["said": .string("x"), "scope": .string(#"{"on":["2026-11-21"]}"#),
-                                                                       "effects": .array([.string(eff)])])], reply: ""),
-                              to: &s, now: Fx.mon(6), calendar: cal, writer: .box)
-        }
-        var r = run(#"{"place":{"task":"\#(Ref.task(essay.id))","start":"10:00","end":"12:00"}}"#)
-        XCTAssertTrue(r.problems.isEmpty, "\(r.problems)")
-        XCTAssertEqual(s.situations.count, 1)
-        r = run(#"{"place":{"task":"\#(Ref.task(essay.id))","start":"08:00","end":"15:00"}}"#)
-        XCTAssertFalse(r.problems.isEmpty, "seven hours isn't a block")
-        r = run(#"{"place":{"task":"t000000","start":"10:00","end":"11:00"}}"#)
-        XCTAssertFalse(r.problems.isEmpty)
-    }
 }

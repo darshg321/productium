@@ -100,7 +100,7 @@ public enum GapPlanner {
             .sorted(by: { $0.createdAt < $1.createdAt }).first {
             out.append(.read(r))
         }
-        if let essay = items.filter({ !$0.isDone && ($0.kind == .essay || $0.kind == .application || $0.kind == .project) })
+        if let essay = items.filter({ $0.isOpen && ($0.kind == .essay || $0.kind == .application || $0.kind == .project) })
             .min(by: { $0.due < $1.due }) {
             out.append(.nextStep(itemId: essay.id, prompt: "Write 3 bullet points for what the next part of “\(essay.title)” should say. That's the whole task. Next session starts warm."))
         }

@@ -23,7 +23,8 @@ public enum AlarmPlanner {
 
     /// The whole wanted list: wake alarms (Wake-Up Alarms) plus bedtime / leave / missed-start
     /// (Alarms for the Important Ones). Either toggle off means none of its alarms, so they get cancelled.
-    public static func desired(_ input: NudgeInput, wake: Bool, timeLabel: ((Date) -> String)? = nil) -> [PlannedAlarm] {
+    public static func desired(_ input: NudgeInput, wake: Bool, entryAlarms: [PlannedAlarm] = [],
+                               timeLabel: ((Date) -> String)? = nil) -> [PlannedAlarm] {
         let label = timeLabel ?? input.timeLabel ?? { NudgePlanner.clock($0, input.calendar) }
         var out: [PlannedAlarm] = []
         if wake {
@@ -42,7 +43,14 @@ public enum AlarmPlanner {
         nudges.removeAll { wakeMinutes.contains(minute($0.at)) }
         let all = AlarmRules.apply(out + nudges, rules: input.alarmRules, items: input.items, plan: input.plan, dayRules: input.dayRules,
                                    now: input.now, calendar: input.calendar, startedBlock: input.startedBlockId, label: label)
-        return all.sorted { $0.at < $1.at }
+        // Alarms an Entry asked for (`EntryAlerts`). One at the minute of another alarm is noise (a Sleep entry's wake
+        // alarm and the planner's own wake alarm are the same alarm until the separate wake path goes, O4).
+        var taken = Set(all.map { minute($0.at) })
+        var extra: [PlannedAlarm] = []
+        for a in entryAlarms.sorted(by: { ($0.at, $0.key) < ($1.at, $1.key) }) where a.at > input.now && taken.insert(minute(a.at)).inserted {
+            extra.append(a)
+        }
+        return (all + extra).sorted { $0.at < $1.at }
     }
 
     static func minute(_ d: Date) -> Int { Int((d.timeIntervalSince1970 / 60).rounded(.down)) }

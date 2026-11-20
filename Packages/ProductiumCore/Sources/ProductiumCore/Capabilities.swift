@@ -330,7 +330,7 @@ public enum Knobs {
         if spec.key.contains("."), s.beliefs[spec.key] != nil {
             let t = value.trimmingCharacters(in: .whitespaces).lowercased()
             var v: Double?
-            if spec.key == "routines.dinnerTime" { v = DumpApplier.timeOfDay(t).map { Double($0.minutesFromMidnight) } }
+            if spec.key == "routines.dinnerTime" { v = ClockText.timeOfDay(t).map { Double($0.minutesFromMidnight) } }
             else if spec.key == "sleep.chronotype" { v = Chronotype(rawValue: t)?.shiftHours }
             else if let n = Double(t.prefix { $0.isNumber || $0 == "." }) {
                 v = t.contains("h") && !t.contains("min") && n <= 12 ? n * 60 : n
@@ -410,7 +410,7 @@ enum PreferenceKnobs {
             if ["false", "no", "off", "0", "disable", "disabled", "none"].contains(lower) { return false }
             return nil
         }
-        func time() -> TimeOfDay? { DumpApplier.timeOfDay(t) }
+        func time() -> TimeOfDay? { ClockText.timeOfDay(t) }
         switch key {
         case "sleepneedminutes": guard let n = int(450, 600) else { return nil }; p.sleepNeedMinutes = n
         case "sleepfloorminutes": guard let n = int(360, 480) else { return nil }; p.sleepFloorMinutes = n

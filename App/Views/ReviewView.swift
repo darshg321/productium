@@ -10,6 +10,9 @@ struct ReviewView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     note
+                    ForEach(model.state.pinnedCharts) { p in
+                        LiveChart(query: p.query, title: p.title, pinnedId: p.id)
+                    }
                     MetricsSection()
                     SectionTitle("Your Week")
                     Card {

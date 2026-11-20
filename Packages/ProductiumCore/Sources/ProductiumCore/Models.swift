@@ -101,7 +101,8 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
     public var completedMinutes: Int
     public var importance: Int
     public var difficulty: Int
-    public var isDone: Bool
+    /// v1.2: open / done / dropped. `isDone` reads and writes it.
+    public var state: TaskState
     public var doneAt: Date?
     public var parentId: UUID?
     public var topics: [String]
@@ -112,6 +113,19 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
     public var color: String?
     public var atSchool: Bool?
     public var deferralLog: [DeferralEvent]?
+    /// v1.2: where its time is filed (nil: `CategoryRules` picks, usually Work › Studying › subject).
+    public var category: CategoryID?
+    /// v1.2 A2: not scheduled before this ("not today", "start Thursday").
+    public var notBefore: Date?
+    /// v1.2: at most this much of it in one day ("no more than 45 min of reading a day").
+    public var maxMinutesPerDay: Int?
+    /// v1.2 H: the first concrete step, named in reminders (instead of a separate "starter" task).
+    public var firstStep: String?
+
+    public var isDone: Bool {
+        get { state == .done }
+        set { state = newValue ? .done : (state == .done ? .open : state) }
+    }
 
     /// Done in school hours (ask a teacher, hand something in), so it gets a school slot, not a study block.
     public var isAtSchoolErrand: Bool {
@@ -138,7 +152,7 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
         self.completedMinutes = max(0, completedMinutes)
         self.importance = max(1, min(5, importance))
         self.difficulty = max(1, min(3, difficulty))
-        self.isDone = isDone
+        self.state = isDone ? .done : .open
         self.doneAt = doneAt
         self.parentId = parentId
         self.topics = topics

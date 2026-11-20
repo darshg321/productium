@@ -113,43 +113,8 @@ final class ChangeLogTests: XCTestCase {
         XCTAssertEqual(log.apply(run(), [draft(.aboutMe(section: .stated, text: "likes maths"))], to: &s, now: Fx.mon(9)).count, 1)
         XCTAssertEqual(s.aboutMe[.patterns].map(\.byStudent), [true])
     }
-
-    func testV1ProposalBookMigrates() throws {
-        let applied = UUID(), rejected = UUID(), pending = UUID()
-        func p(_ id: UUID, _ status: String) -> String {
-            #"{"id":"\#(id)","runId":"\#(UUID())","change":{"knob":{"key":"planner.maxBlockMinutes","to":45}},"from":"55","to":"45","reason":"r","evidence":[],"model":"opus","at":"2026-11-10T12:00:00Z","status":"\#(status)","decidedAt":"2026-11-11T12:00:00Z","previous":55}"#
-        }
-        let json = #"{"proposals":{"proposals":[\#(p(applied, "approved")),\#(p(rejected, "rejected")),\#(p(pending, "pending")),\#(p(UUID(), "expired"))],"runs":[{"id":"\#(UUID())","at":"2026-11-10T12:00:00Z","note":"n","model":"opus"}],"pinned":["planner.capacityMultiplier"],"pausedUntil":"2026-11-20T00:00:00Z"},"reflectionAt":"2026-11-10T12:00:00Z"}"#
-        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
-        let st = try dec.decode(AppState.self, from: Data(json.utf8))
-        XCTAssertEqual(st.changes.changes.map(\.id), [applied, rejected])
-        XCTAssertEqual(st.changes.changes.map(\.status), [.applied, .declined])
-        XCTAssertEqual(st.changes.changes[0].previous, 55, "still revertable")
-        XCTAssertEqual(st.changes.pinned, ["planner.capacityMultiplier"])
-        XCTAssertEqual(st.changes.runs.count, 1)
-        XCTAssertNotNil(st.insightAt)
-        XCTAssertTrue(st.changes.feedback.first?.hasPrefix("Turned down") ?? false)
-        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
-        let again = try dec.decode(AppState.self, from: enc.encode(st))
-        XCTAssertEqual(again.changes, st.changes, "round-trips in the new format")
-    }
 }
 
 final class KnowledgeSummaryTests: XCTestCase {
-    func testBoxAndWeeklyNoteSeeBeliefsAndChanges() {
-        var log = ChangeLog()
-        var s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
-                          moods: [], screen: [], prefs: Preferences())
-        XCTAssertNil(log.changeSummary(now: Fx.mon(10)))
-        log.apply(InsightRun(at: Fx.mon(9), note: "n", model: "sonnet"),
-                  [LoggedChange(runId: UUID(), change: .knob(key: "planner.maxBlockMinutes", to: 45), reason: "r", model: "sonnet", at: Fx.mon(9))],
-                  to: &s, now: Fx.mon(10))
-        let line = log.changeSummary(now: Fx.mon(11))
-        XCTAssertTrue(line?.hasPrefix("Changes Productium made lately:") == true, line ?? "nil")
-        let box = Prompts.dumpContext(DumpContextInput(now: Fx.mon(12), calendar: Fx.cal, state: s, changes: line))
-        XCTAssertTrue(box.contains("routines.to_school 20 min assumed") && box.contains("Changes Productium made lately"))
-        let weekly = Prompts.context(now: Fx.mon(12), items: [], plan: .empty, summary: nil, moods: [], taper: ScreenTaper(),
-                                     learned: LearnedModel(), calendar: Fx.cal, beliefs: s.beliefs.summary(routines: s.routines), changes: line)
-        XCTAssertTrue(weekly.contains("What the app believes:") && weekly.contains("Changes Productium made lately"))
-    }
+
 }

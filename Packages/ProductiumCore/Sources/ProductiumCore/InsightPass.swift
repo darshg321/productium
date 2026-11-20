@@ -76,7 +76,7 @@ public struct InsightInput {
 /// separate weekly review.
 public enum InsightPass {
     public static func deferrals(items: [WorkItem], since: Date) -> [Deferral] {
-        items.filter { !$0.isDone }.compactMap { item in
+        items.filter { $0.isOpen }.compactMap { item in
             let log = item.deferrals.filter { $0.at >= since }
             guard !log.isEmpty else { return nil }
             return Deferral(itemId: item.id, title: item.title, count: log.count, lastAt: log.map(\.at).max(),
@@ -183,7 +183,7 @@ public enum InsightPass {
             "\(Ref.task(d.itemId)) \"\(d.title)\" \(d.count)×" + (d.lastAt.map { " (last \(short.string(from: $0)))" } ?? "")
                 + (d.reasons.isEmpty ? "" : ": " + d.reasons.joined(separator: "; "))
         }.joined(separator: "; ")))
-        let open = x.items.filter { !$0.isDone && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(10)
+        let open = x.items.filter { $0.isOpen && $0.parentId == nil }.sorted { $0.due < $1.due }.prefix(10)
         if !open.isEmpty {
             l.append("Task ids: " + open.map { "\(Ref.task($0.id)) \"\($0.title)\"" }.joined(separator: "; "))
         }
@@ -250,14 +250,14 @@ public enum InsightPass {
                 guard let text = p.text else { continue }
                 let home = p.trigger?.lowercased().contains("home") ?? false
                 out.append(make(.intention(IntentionNudge(trigger: home ? .arriveHome : .time, weekdays: p.weekdays ?? [],
-                                                          time: DumpApplier.timeOfDay(p.time), text: text, itemId: task(p.task)?.id)),
+                                                          time: ClockText.timeOfDay(p.time), text: text, itemId: task(p.task)?.id)),
                                 p.reason, ev))
             case "alarm":
                 let k = (p.alarm_kind ?? "").lowercased().filter(\.isLetter)
                 guard let kind = ["clock": AlarmRule.Kind.clock, "beforedue": .beforeDue, "beforeblocks": .beforeBlocks, "shift": .shift, "off": .suppress][k] else { continue }
                 let target = p.alarm_target.flatMap { ["wake": PlannedAlarm.Kind.wake, "bed": .bedtime, "bedtime": .bedtime, "leave": .leave,
                                                        "missedstart": .missedStart][$0.lowercased().filter(\.isLetter)] }
-                let rule = AlarmRule(label: p.label ?? "", kind: kind, time: DumpApplier.timeOfDay(p.time), itemId: task(p.task)?.id,
+                let rule = AlarmRule(label: p.label ?? "", kind: kind, time: ClockText.timeOfDay(p.time), itemId: task(p.task)?.id,
                                      minutes: p.minutes ?? 0, target: target,
                                      when: SituationText.rule(p.scope, tz: cal.timeZone, commitments: commitments, items: items),
                                      expires: p.expires.flatMap { AIMapper.parseDate($0, timeZone: cal.timeZone) }, source: .reflection, createdAt: now)

@@ -80,14 +80,23 @@ actor AlarmScheduler {
         let device = onDevice.map { DeviceAlarm(id: $0.id, alerting: $0.state == .alerting) }
         let diff = AlarmReconciler.diff(desired: desired, device: device, ledger: ledger, now: now)
         guard !diff.isEmpty || diff.ledger != ledger else { return }
+        let (adding, cancelling, onDeviceCount) = (diff.add.count, diff.cancel.count, device.count)
+        await MainActor.run {
+            AppModel.shared.log(.alarm, "reconcile", ["desired": "\(desired.count)", "device": "\(onDeviceCount)",
+                                                      "add": "\(adding)", "cancel": "\(cancelling)"])
+        }
         var book = diff.ledger
         for id in diff.cancel { try? manager.cancel(id: id) }
         ledger = book
         for a in diff.add {
             let id = UUID()
-            if (try? await manager.schedule(id: id, configuration: configuration(a))) != nil {
+            do {
+                try await manager.schedule(id: id, configuration: configuration(a))
                 book[id] = AlarmLedgerEntry(a)
                 ledger = book
+            } catch {
+                let why = "\(error)", title = a.title
+                await MainActor.run { AppModel.shared.log(.alarm, "schedule_failed", level: .error, ["title": title, "error": why]) }
             }
         }
     }
@@ -106,7 +115,7 @@ actor AlarmScheduler {
         switch a.kind {
         case .wake, .bedtime: tint = .indigo
         case .leave: tint = .green
-        case .missedStart: tint = .blue
+        case .missedStart, .entry: tint = .blue
         }
         let attrs = AlarmAttributes<Metadata>(presentation: AlarmPresentation(alert: alert), metadata: Metadata(), tintColor: tint)
         let secondary: (any LiveActivityIntent)? = a.kind == .missedStart ? StartFocusIntent() : nil
@@ -142,6 +151,7 @@ enum BackgroundRefresh {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: nil) { task in
             schedule()
             let work = Task {
+                await MainActor.run { AppModel.shared.log(.lifecycle, "background_refresh") }
                 await handler()
                 task.setTaskCompleted(success: true)
             }

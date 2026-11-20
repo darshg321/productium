@@ -11,18 +11,33 @@ struct RestorePreview: Identifiable {
 enum Persistence {
     static var url: URL { LocalStore.containerURL.appendingPathComponent("state.json") }
 
+    /// Set when the stored state couldn't be read; `AppModel` writes it to the telemetry on launch (T2).
+    nonisolated(unsafe) static var loadError: String?
+
     static func load() -> AppState {
         guard let data = try? Data(contentsOf: url) else { return AppState() }
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
-        return (try? dec.decode(AppState.self, from: data)) ?? AppState()
+        do {
+            return try dec.decode(AppState.self, from: data)
+        } catch {
+            loadError = "\(error) (\(data.count) bytes)"
+            return AppState()
+        }
     }
 
-    static func save(_ s: AppState) {
+    /// Returns the error text when the state couldn't be encoded or written, so callers can record it (T2).
+    @discardableResult
+    static func save(_ s: AppState) -> String? {
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
-        guard let data = try? enc.encode(s) else { return }
-        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        do {
+            let data = try enc.encode(s)
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            return nil
+        } catch {
+            return "\(error)"
+        }
     }
 }
 

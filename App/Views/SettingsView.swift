@@ -54,6 +54,7 @@ struct SettingsView: View {
 
             Section {
                 row("Backup & Restore", "externaldrive.fill", .gray, nil) { BackupSettings() }
+                row("Debug", "ant.fill", .gray, "\(model.state.telemetry.events.count)") { DebugView() }
                 row("Keeping It Installed", "arrow.clockwise", .indigo,
                     UpdateChecker.shared.available.map { "\($0) available" } ?? "v\(UpdateChecker.installed)") { InstallSettings() }
             }

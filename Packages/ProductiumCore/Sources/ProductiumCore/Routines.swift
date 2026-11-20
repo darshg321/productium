@@ -96,8 +96,9 @@ public struct WakePlan: Codable, Hashable, Sendable {
 
 public enum WakePlanner {
     public static func plan(for day: Date, commitments: [Commitment], events: [FixedEvent], routines: [Routine],
-                            prefs: Preferences, calendar cal: Calendar, exceptions: [DayException] = []) -> WakePlan {
-        let isSchool = SchoolDay.isSchoolDay(day, prefs: prefs, commitments: commitments, exceptions: exceptions, calendar: cal)
+                            prefs: Preferences, calendar cal: Calendar, exceptions: [DayException] = [],
+                            isSchoolDay: Bool? = nil) -> WakePlan {
+        let isSchool = isSchoolDay ?? SchoolDay.isSchoolDay(day, prefs: prefs, commitments: commitments, exceptions: exceptions, calendar: cal)
         if let w = exceptions.wakeOverride(on: day, calendar: cal) {
             return WakePlan(day: day, wake: at(day, w, cal), leaveBy: nil, firstCommitment: nil, reason: "You changed this day's wake-up")
         }

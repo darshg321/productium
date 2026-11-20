@@ -88,7 +88,7 @@ final class DayRuleTests: XCTestCase {
         XCTAssertFalse(e.matches(.nthOf(sequence: "loop", mod: 0, eq: 0), on: day(1)))
     }
 
-    func testCodableIsCompactStableAndReadsV1Weekdays() throws {
+    func testCodableIsCompactAndStable() throws {
         let r = DayRule.all([.weekdays([6, 2, 4]), .not(.label("no-school")), .nthOf(sequence: "school", mod: 2, eq: 1),
                              .weekParity(anchor: day(0), odd: true), .dates(from: day(0), until: nil), .dateParity(odd: true)])
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601; enc.outputFormatting = .sortedKeys
@@ -98,7 +98,7 @@ final class DayRuleTests: XCTestCase {
         XCTAssertTrue(json.hasPrefix(#"{"all":[{"weekdays":[2,4,6]},{"not":{"label":"no-school"}},{"nthOf":{"eq":1,"mod":2,"sequence":"school"}}"#), json)
         XCTAssertEqual(try dec.decode(DayRule.self, from: data), r)
         XCTAssertEqual(try enc.encode(try dec.decode(DayRule.self, from: data)), data, "byte for byte")
-        XCTAssertEqual(try dec.decode(DayRule.self, from: Data("[2,4]".utf8)), .weekdays([2, 4]), "v1.0 weekday lists still load")
+        XCTAssertThrowsError(try dec.decode(DayRule.self, from: Data("[2,4]".utf8)), "bare v1.0 lists are gone")
         XCTAssertThrowsError(try dec.decode(DayRule.self, from: Data("{}".utf8)))
     }
 

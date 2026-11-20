@@ -41,6 +41,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let action = response.actionIdentifier
         await MainActor.run {
             let model = AppModel.shared
+            model.log(.notification, "answered", ["action": action, "id": response.notification.request.identifier,
+                                                  "kind": "\(info["kind"] ?? "")"])
             let blockId = (info["blockId"] as? String).flatMap(UUID.init(uuidString:))
             let itemId = (info["itemId"] as? String).flatMap(UUID.init(uuidString:))
             if let id = blockId, let status = OutcomeStatus(rawValue: action) {

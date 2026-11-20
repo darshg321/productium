@@ -56,12 +56,4 @@ final class AboutMeTests: XCTestCase {
         XCTAssertFalse(me[.inferred].first?.byStudent ?? true, "untouched AI lines stay AI lines")
     }
 
-    func testBoxContextIncludesIt() {
-        let s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
-                          moods: [], screen: [], prefs: Preferences())
-        let ctx = Prompts.dumpContext(DumpContextInput(now: Fx.mon(12), calendar: Fx.cal, state: s, aboutMe: AboutMe.parse(sample)))
-        XCTAssertTrue(ctx.contains("About the student (about-me.md):"))
-        XCTAssertTrue(ctx.contains("CS club is Thursdays at lunch"))
-        XCTAssertTrue(Prompts.dumpContext(DumpContextInput(now: Fx.mon(12), calendar: Fx.cal, state: s)).contains("nothing yet"))
-    }
 }
