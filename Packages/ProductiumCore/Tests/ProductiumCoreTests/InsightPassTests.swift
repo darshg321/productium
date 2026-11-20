@@ -49,7 +49,7 @@ final class InsightPassTests: XCTestCase {
         XCTAssertEqual(out.review.suggestions.count, 2, "the note keeps at most 2 suggestions")
         let run = InsightRun(at: Fx.mon(9), note: out.headline, model: "sonnet")
         let drafts = InsightPass.drafts(out, runId: run.id, items: [essay], now: Fx.mon(9), model: "sonnet", calendar: cal)
-        var s = DumpState(items: [essay], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
+        var s = DumpState(items: [essay], oneOffs: [], markers: [], routines: Routine.defaults,
                           moods: [], screen: [], prefs: Preferences())
         var log = ChangeLog()
         let problems = log.apply(run, drafts, to: &s, now: Fx.mon(9))
@@ -114,40 +114,15 @@ final class AvoidanceTests: XCTestCase {
 final class InsightSituationTests: XCTestCase {
     let cal = Fx.cal
 
-    func testRepeatedDayChangesAreShownToTheModel() {
-        let late = (0..<3).map { DayException(day: Fx.mon(8, plusDays: $0 * 7 - 21), commitmentId: Fx.school.id, start: TimeOfDay(10)) }
-        let r = InsightPass.repeats(exceptions: late, commitments: [Fx.school], now: Fx.mon(9), calendar: cal)
-        XCTAssertEqual(r, ["3× School starts 10:00 on Mon, Mon, Mon"])
-        let text = InsightPass.request(InsightInput(now: Fx.mon(9), calendar: cal, trigger: .weekly, commitments: [Fx.school], exceptions: late))
-        XCTAssertTrue(text.contains("Repeated one-day changes: 3× School starts 10:00"), text)
-        XCTAssertTrue(text.contains("Activity ids: \(Ref.activity(Fx.school.id))"))
-    }
 
-    func testSituationDraftsApplyThroughAdmitAndRevert() throws {
-        let out = InsightPass.Output(headline: "h", wins: [], suggestions: [], changes: [
-            .init(type: "situation", said: "Fridays are lighter", scope: #"{"weekdays":[6]}"#,
-                  effects: [#"{"setInput":{"path":"planner.capacity","value":0.85}}"#], reason: "Friday follow-through was 30%")], about_me: nil)
-        let drafts = InsightPass.drafts(out, runId: UUID(), items: [], now: Fx.mon(9), model: "sonnet", calendar: cal, commitments: [Fx.school])
-        XCTAssertEqual(drafts.count, 1)
-        var s = DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
-                          moods: [], screen: [], prefs: Preferences())
-        var log = ChangeLog()
-        let input = PlannerInput(now: Fx.mon(9), calendar: cal, items: [], commitments: [Fx.school])
-        let problems = log.apply(InsightRun(at: Fx.mon(9), note: "", model: "sonnet"), drafts, to: &s, now: Fx.mon(9),
-                                 admitSituation: { if case .failure(let w) = SituationRules.admit($0, into: input, writer: .reflection) { return w.reason }; return nil })
-        XCTAssertTrue(problems.isEmpty, "\(problems)")
-        XCTAssertEqual(s.situations.count, 1, "open-ended behaviour is allowed from the insight pass")
-        XCTAssertTrue(log.revert(log.applied[0].id, in: &s, now: Fx.mon(10)))
-        XCTAssertTrue(s.situations.isEmpty)
-    }
 }
 
 final class InsightAlarmTests: XCTestCase {
     let cal = Fx.cal
     func changes(_ cs: [InsightPass.Output.Change], items: [WorkItem] = []) -> (ChangeLog, DumpState, [String]) {
         let out = InsightPass.Output(headline: "h", wins: [], suggestions: [], changes: cs, about_me: nil)
-        let drafts = InsightPass.drafts(out, runId: UUID(), items: items, now: Fx.mon(9), model: "sonnet", calendar: cal, commitments: [Fx.school])
-        var s = DumpState(items: items, commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
+        let drafts = InsightPass.drafts(out, runId: UUID(), items: items, now: Fx.mon(9), model: "sonnet", calendar: cal)
+        var s = DumpState(items: items, oneOffs: [], markers: [], routines: Routine.defaults,
                           moods: [], screen: [], prefs: Preferences())
         var log = ChangeLog()
         let problems = log.apply(InsightRun(at: Fx.mon(9), note: "", model: "sonnet"), drafts, to: &s, now: Fx.mon(9))

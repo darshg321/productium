@@ -40,13 +40,6 @@ final class AgendaTests: XCTestCase {
         XCTAssertTrue(rows(1, now: now).filter { $0.kind == .now }.isEmpty)
     }
 
-    func testCancelledSchoolDayHasNoSchoolRow() {
-        var input = Fx.input(now: Fx.mon(6), items: [essay])
-        input.exceptions = [DayException(day: Fx.mon(0, plusDays: 1), kind: .school, cancelled: true)]
-        let plan = Planner.plan(input)
-        let r = Agenda.rows(day: Fx.mon(0, plusDays: 1), plan: plan, items: [essay], now: Fx.mon(6), calendar: cal)
-        XCTAssertTrue(r.filter { $0.kind == .fixed && $0.title.contains("School") }.isEmpty)
-    }
 
     func testPeriodsFoldIntoOneRow() {
         let blocks = [PlannedBlock(kind: .commitment, start: Fx.mon(8, 30), end: Fx.mon(10), title: "Math", sourceId: "school"),

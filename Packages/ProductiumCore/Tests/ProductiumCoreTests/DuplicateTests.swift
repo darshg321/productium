@@ -4,12 +4,13 @@ import XCTest
 final class DuplicateTests: XCTestCase {
     let cal = Fx.cal
 
+
+
+
     func state(_ commitments: [Commitment] = [Fx.school]) -> DumpState {
-        DumpState(items: [], commitments: commitments, exceptions: [], oneOffs: [], markers: [],
+        DumpState(items: [], oneOffs: [], markers: [],
                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
-
-
 
     func testSimilarTitlesAndOverlap() {
         XCTAssertTrue(EventMatch.similarTitles("Math (P1)", "P1 Math"))
@@ -23,7 +24,7 @@ final class DuplicateTests: XCTestCase {
         let thu = Fx.mon(0, plusDays: 3)
         let cs = FixedEvent(id: "g1", title: "CS Club Meeting", start: Fx.mon(11, 10, plusDays: 3), end: Fx.mon(12, plusDays: 3))
         let dentist = FixedEvent(id: "g2", title: "Dentist", start: Fx.mon(11, 10, plusDays: 3), end: Fx.mon(12, plusDays: 3))
-        let shown = EventMatch.withoutActivityTwins([cs, dentist], commitments: [club], exceptions: [], calendar: cal)
+        let shown = EventMatch.withoutActivityTwins([cs, dentist], commitments: [club], calendar: cal)
         XCTAssertEqual(shown.map(\.title), ["Dentist"])
         _ = thu
     }

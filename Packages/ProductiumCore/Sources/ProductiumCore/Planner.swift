@@ -4,7 +4,6 @@ public struct PlannerInput: Sendable {
     public var now: Date
     public var calendar: Calendar
     public var items: [WorkItem]
-    public var commitments: [Commitment]
     public var events: [FixedEvent]
     public var preferences: Preferences
     public var learned: LearnedModel
@@ -12,11 +11,9 @@ public struct PlannerInput: Sendable {
     public var moods: [MoodEntry]
     public var locked: [PlannedBlock]
     public var routines: [Routine]
-    public var exceptions: [DayException]
     public var horizonDays: Int
     public var policy: BehaviourPolicy
     public var beliefs: Beliefs
-    public var situations: [Situation]
     public var dayRules: DayRuleBook
     /// v1.2 O3: fixed Entries (classes, events, pinned task sessions) the plan works around, and past entries with a
     /// `taskId` (finished sessions, for numbering). `plan` entries are ignored: the plan is what this makes.
@@ -25,24 +22,22 @@ public struct PlannerInput: Sendable {
     public var rules: [Rule]
     public var categories: CategoryTree
 
-    public init(now: Date, calendar: Calendar = .current, items: [WorkItem], commitments: [Commitment] = [],
+    public init(now: Date, calendar: Calendar = .current, items: [WorkItem],
                 events: [FixedEvent] = [], preferences: Preferences = Preferences(),
                 learned: LearnedModel = LearnedModel(), health: [HealthDay] = [], moods: [MoodEntry] = [],
                 locked: [PlannedBlock] = [], routines: [Routine] = Routine.defaults,
-                exceptions: [DayException] = [], horizonDays: Int = 14, policy: BehaviourPolicy = BehaviourPolicy(),
-                beliefs: Beliefs = Beliefs(), situations: [Situation] = [], dayRules: DayRuleBook = DayRuleBook(),
+                horizonDays: Int = 14, policy: BehaviourPolicy = BehaviourPolicy(),
+                beliefs: Beliefs = Beliefs(), dayRules: DayRuleBook = DayRuleBook(),
                 entries: [Entry] = [], rules: [Rule] = [], categories: CategoryTree = CategoryTree()) {
         self.entries = entries
         self.rules = rules
         self.categories = categories
-        self.situations = situations
         self.dayRules = dayRules
         self.policy = policy
         self.beliefs = beliefs
         self.now = now
         self.calendar = calendar
         self.items = items
-        self.commitments = commitments
         self.events = events
         self.preferences = preferences
         self.learned = learned
@@ -50,7 +45,6 @@ public struct PlannerInput: Sendable {
         self.moods = moods
         self.locked = locked
         self.routines = routines
-        self.exceptions = exceptions
         self.horizonDays = max(1, min(42, horizonDays))
     }
 }
@@ -66,7 +60,7 @@ public enum Planner {
         let demands = ctx.buildDemands()
         ctx.allocate(demands)
         var plan = ctx.finish()
-        plan.blocks = Palette.paint(plan.blocks, items: input.items, commitments: input.commitments, events: input.events,
+        plan.blocks = Palette.paint(plan.blocks, items: input.items, events: input.events,
                                     colors: input.preferences.colors)
         return plan
     }
@@ -102,8 +96,6 @@ public enum Planner {
         let freeFloor: Int
         let freeTotal: Int
         var maxBlock = Int.max
-        var held: Set<UUID> = []
-        var boosted: Set<UUID> = []
         var studyUsed = 0
         var consumed = 0
         var borrowed = 0
@@ -138,7 +130,6 @@ public enum Planner {
         var lastNightDebt = 0
         var todayFactor = 1.0
         var wakePlans: [WakePlan] = []
-        let situations: SituationResolver
         let evaluator: DayRuleEvaluator
         /// Occurrences of the non-plan entries over the horizon, by day key.
         let entryDays: [DayKey: [DayEntry]]
@@ -154,7 +145,6 @@ public enum Planner {
                                   now: input.now, book: input.dayRules, calendar: input.calendar, evaluator: ev)
             self.entryDays = Dictionary(grouping: occ, by: { DayKeys.key($0.start, input.calendar) })
             self.timetableInEntries = Days.hasTimetable(input.entries, tree: input.categories)
-            self.situations = SituationResolver(situations: input.situations, book: input.dayRules, calendar: input.calendar)
             self.cal = input.calendar
             self.prefs = input.preferences
             self.chronotype = input.learned.inferredChronotype ?? Chronotype.nearest(shiftHours: input.beliefs.value("sleep.chronotype"))
@@ -166,10 +156,7 @@ public enum Planner {
             cal.date(bySettingHour: tod.hour, minute: tod.minute, second: 0, of: day) ?? day
         }
 
-        /// The situations' overrides for a day; everything below reads the day through these (A.2).
-        func overrides(_ day: Date) -> DayOverrides { situations.day(day) }
-        func commitments(on day: Date) -> [Commitment] { situations.commitments(input.commitments, on: day) }
-        func routines(on day: Date) -> [Routine] { overrides(day).routines(input.routines) }
+        func routines(on day: Date) -> [Routine] { input.routines }
 
         func entries(on day: Date) -> [DayEntry] { entryDays[DayKeys.key(day, cal)] ?? [] }
 
@@ -190,7 +177,7 @@ public enum Planner {
             if timetableInEntries {
                 return entries(on: day).contains { input.categories.isUnder($0.category, CategoryTree.school) }
             }
-            return SchoolDay.isSchoolDay(day, prefs: prefs, commitments: commitments(on: day), exceptions: input.exceptions, calendar: cal)
+            return prefs.schoolDays.contains(cal.component(.weekday, from: day))
         }
 
         func wakePlan(on day: Date) -> WakePlan {
@@ -198,19 +185,15 @@ public enum Planner {
                 FixedEvent(id: $0.id, title: $0.title, start: $0.start, end: $0.end,
                            kind: input.categories.isUnder($0.category, CategoryTree.school) ? .school : .other)
             }
-            var base = WakePlanner.plan(for: day, commitments: commitments(on: day), events: input.events + fromEntries,
-                                        routines: routines(on: day), prefs: prefs, calendar: cal, exceptions: input.exceptions,
+            var base = WakePlanner.plan(for: day, events: input.events + fromEntries,
+                                        routines: routines(on: day), prefs: prefs, calendar: cal,
                                         isSchoolDay: timetableInEntries ? isSchoolDay(day) : nil)
             if let w = limits(day).wake {
                 let wake = at(day, w)
                 base = WakePlan(day: base.day, wake: wake, leaveBy: base.leaveBy.flatMap { $0 > wake ? $0 : nil },
                                 firstCommitment: base.firstCommitment, reason: "A rule you set")
             }
-            let o = overrides(day)
-            guard let w = o.input("wake") else { return base }
-            let wake = at(day, TimeOfDay(minutes: Int(w.rounded())))
-            return WakePlan(day: base.day, wake: wake, leaveBy: base.leaveBy.flatMap { $0 > wake ? $0 : nil },
-                            firstCommitment: base.firstCommitment, reason: "For “\(o.inputBy["wake"] ?? "a change")”")
+            return base
         }
 
         func capacity(_ school: Bool) -> Int {
@@ -230,7 +213,6 @@ public enum Planner {
                 guard let day = cal.date(byAdding: .day, value: i, to: today),
                       let tomorrow = cal.date(byAdding: .day, value: 1, to: day) else { continue }
                 let school = isSchoolDay(day)
-                let o = overrides(day)
                 let dayRoutines = routines(on: day)
                 let wp = wakePlan(on: day)
                 if i > 0 || wp.wake > input.now { wakePlans.append(wp) }
@@ -238,7 +220,7 @@ public enum Planner {
                 let nextWake = wakePlan(on: tomorrow).wake
                 let bedtime = nextWake.addingTimeInterval(-Double(prefs.sleepNeedMinutes) * 60)
                 let lim = limits(day)
-                let windDown = lim.windDownMinutes ?? o.input("windDownMinutes").map { Int($0.rounded()) } ?? prefs.windDownMinutes
+                let windDown = lim.windDownMinutes ?? prefs.windDownMinutes
                 let workEnd = bedtime.addingTimeInterval(-Double(windDown) * 60)
                 let ready = routine("get_ready", on: day)?.minutes ?? Planner.morningRoutineMinutes
                 var windowStart = wakeT.addingTimeInterval(Double(ready) * 60)
@@ -250,9 +232,12 @@ public enum Planner {
                     fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: wakeT,
                                               end: wakeT.addingTimeInterval(Double(r.minutes) * 60), title: r.name))
                 }
-                let todays = Commitment.occurrences(commitments(on: day), on: day, exceptions: input.exceptions, calendar: cal)
+                let todays = fixedEntries(on: day).filter { $0.taskId == nil }.map {
+                    (start: $0.start, end: $0.end,
+                     kind: input.categories.isUnder($0.category, CategoryTree.school) ? CommitmentKind.school : .other)
+                }
                 for r in dayRoutines where r.enabled && r.anchor != .afterWake {
-                    let anchored = todays.filter { r.anchorKind == nil || $0.commitment.kind == r.anchorKind }
+                    let anchored = todays.filter { r.anchorKind == nil || $0.kind == r.anchorKind }
                     var s: Date?, e: Date?
                     if r.anchor == .beforeFirstCommitment, let f = anchored.min(by: { $0.start < $1.start }) {
                         e = f.start; s = f.start.addingTimeInterval(-Double(r.minutes) * 60)
@@ -263,13 +248,6 @@ public enum Planner {
                         busy.append(Interval(start: s, end: e))
                         fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: s, end: e, title: r.name))
                     }
-                }
-                for o in todays {
-                    let c = o.commitment, s = o.start, e = o.end
-                    let buf = Double(c.bufferMinutes) * 60
-                    busy.append(Interval(start: s.addingTimeInterval(-buf), end: e.addingTimeInterval(buf)))
-                    fixed.append(PlannedBlock(id: stableId("c", c.id.uuidString, day), kind: .commitment,
-                                              start: s, end: e, title: c.title, sourceId: c.id.uuidString))
                 }
                 for ev in input.events where ev.end > day && ev.start < tomorrow {
                     busy.append(Interval(start: ev.start, end: ev.end))
@@ -287,30 +265,8 @@ public enum Planner {
                     busy.append(Interval(start: b.start, end: b.end))
                     fixed.append(b)
                 }
-                // Study placed by a situation is a fixed block for that task.
-                for pl in o.places {
-                    guard let item = input.items.first(where: { $0.id == pl.item && $0.isOpen }) else { continue }
-                    let s = at(day, pl.start), e = at(day, pl.end)
-                    guard e > s, e > input.now else { continue }
-                    busy.append(Interval(start: s, end: e))
-                    fixed.append(PlannedBlock(id: stableId("w", "\(pl.situation)|\(pl.start.label)|\(item.id)", day), kind: .work, start: s, end: e,
-                                              title: item.title, itemId: item.id, hint: "You chose this time",
-                                              sourceId: "situation:\(pl.situation)"))
-                }
-                // Situations come last: their busy time, then the time they free up.
-                for b in o.busy {
-                    let s = at(day, b.start), e = at(day, b.end)
-                    busy.append(Interval(start: s, end: e))
-                    fixed.append(PlannedBlock(id: stableId("v", "\(b.situation)|\(b.start.label)", day), kind: .event,
-                                              start: s, end: e, title: b.title, sourceId: "situation:\(b.situation)"))
-                }
-                if !o.free.isEmpty {
-                    let frees = o.free.map { Interval(start: at(day, $0.start), end: at(day, $0.end)) }
-                    busy = Planner.subtract(busy, frees)
-                    fixed = Planner.cut(fixed, frees)
-                }
                 let beliefs = input.beliefs
-                let dinnerMinutes = o.input("routines.dinnerMinutes").map { Int($0.rounded()) } ?? beliefs.minutes("routines.dinnerMinutes")
+                let dinnerMinutes = beliefs.minutes("routines.dinnerMinutes")
                 if dinnerMinutes > 0 {
                     let dinner = TimeOfDay(minutes: beliefs.minutes("routines.dinnerTime"))
                     let s = at(day, dinner), e = s.addingTimeInterval(Double(dinnerMinutes) * 60)
@@ -329,17 +285,15 @@ public enum Planner {
                 let freeTotal = free.reduce(0) { $0 + $1.minutes }
 
                 var cap = Double(capacity(school)) * loadFactor
-                    * input.policy.capacityMultiplier * (lim.capacityFactor ?? o.input("planner.capacity") ?? 1)
+                    * input.policy.capacityMultiplier * (lim.capacityFactor ?? 1)
                 if i == 0 { cap *= todayFactor }
                 let floor = Int(Double(input.beliefs.minutes(school ? "study.schoolDayFreeTime" : "study.freeDayFreeTime"))
-                    * input.policy.freeTimeMultiplier * (o.input("planner.freeTimeMultiplier") ?? 1))
+                    * input.policy.freeTimeMultiplier)
 
                 var d = Day(index: i, start: day, isSchoolDay: school, wake: wakeT, workEnd: workEnd,
                             bedtime: bedtime, nextWake: nextWake, free: free, fixed: fixed,
                             studyCap: Int(cap), freeFloor: floor, freeTotal: freeTotal)
-                d.maxBlock = lim.maxBlockMinutes ?? o.input("planner.maxBlockMinutes").map { Int($0.rounded()) } ?? Int.max
-                d.held = o.held
-                d.boosted = o.boosted
+                d.maxBlock = lim.maxBlockMinutes ?? Int.max
                 days.append(d)
             }
         }
@@ -372,11 +326,6 @@ public enum Planner {
             var total = 0
             for i in 0..<max(1, input.horizonDays) {
                 guard let d = cal.date(byAdding: .day, value: i, to: cal.startOfDay(for: input.now)) else { continue }
-                for pl in situations.day(d).places where pl.item == item {
-                    guard let s = cal.date(bySettingHour: pl.start.hour, minute: pl.start.minute, second: 0, of: d),
-                          let e = cal.date(bySettingHour: pl.end.hour, minute: pl.end.minute, second: 0, of: d), e > input.now else { continue }
-                    total += Int(e.timeIntervalSince(max(s, input.now)) / 60)
-                }
             }
             for list in entryDays.values {
                 for de in list where de.taskId == item && de.source == .you && !de.running && de.end > input.now {
@@ -402,7 +351,7 @@ public enum Planner {
         func buildDemands() -> [Demand] {
             let parents = Set(input.items.filter { $0.isOpen }.compactMap(\.parentId))
             var out: [Demand] = []
-            for item in input.items where item.isOpen && !parents.contains(item.id) && !item.isAtSchoolErrand {
+            for item in input.items where item.isOpen && !parents.contains(item.id) {
                 let left = remainingMinutes(item)
                 guard left > 0 else { continue }
                 if item.due <= input.now { continue }
@@ -516,44 +465,7 @@ public enum Planner {
             return arr
         }
 
-        /// Errands at school (ask a teacher) go in a school-hours slot with a reminder, not a study block.
-        mutating func placeErrands() {
-            let parents = Set(input.items.filter { $0.isOpen }.compactMap(\.parentId))
-            var usedUntil: [Int: Date] = [:]
-            let errands = input.items.filter { $0.isOpen && $0.isAtSchoolErrand && !parents.contains($0.id) && $0.due > input.now }
-            for item in errands.sorted(by: { $0.due < $1.due }) {
-                let length = Double(max(5, item.estimateMinutes - item.completedMinutes)) * 60
-                var placed = false
-                for day in days where day.isSchoolDay && day.start < item.due && !placed {
-                    for o in Commitment.occurrences(commitments(on: day.start), on: day.start, exceptions: input.exceptions, calendar: cal)
-                    where o.commitment.kind == .school && !placed {
-                        let wd = cal.component(.weekday, from: day.start)
-                        let breakWords = ["lunch", "break", "recess", "advisory", "homeroom"]
-                        let breakStart = (o.commitment.periods ?? []).first { p in
-                            p.applies(on: wd) && breakWords.contains(where: { p.title.lowercased().contains($0) })
-                        }.map { at(day.start, $0.start) }
-                        var start = max(breakStart ?? o.start.addingTimeInterval(10 * 60), o.start)
-                        if day.index == 0 { start = max(start, nowRounded) }
-                        start = max(start, usedUntil[day.index] ?? start)
-                        let end = start.addingTimeInterval(length)
-                        guard end <= min(o.end, item.due) else { continue }
-                        usedUntil[day.index] = end
-                        blocks.append(PlannedBlock(id: Planner.stableUUID("x|\(item.id)|\(Int(start.timeIntervalSince1970))"),
-                                                   kind: .event, start: start, end: end, title: item.title, itemId: item.id,
-                                                   hint: "At school: do this between classes, not in a study block."))
-                        placed = true
-                    }
-                }
-                if !placed {
-                    warnings.append(PlanWarning(level: .caution,
-                        message: "No school slot before “\(item.title)” is due. Catch them at the start of the next school day or send a message.",
-                        itemId: item.id))
-                }
-            }
-        }
-
         mutating func allocate(_ demandsIn: [Demand]) {
-            placeErrands()
             let demands = demandsIn.sorted {
                 if $0.latest != $1.latest { return $0.latest < $1.latest }
                 return $0.value > $1.value
@@ -613,7 +525,7 @@ public enum Planner {
                 default: (cap, minFree) = (day.studyCap, day.freeFloor)
                 }
                 if let maxDay = d.item.maxMinutesPerDay, (day.itemMinutes[d.item.id] ?? 0) + length > maxDay { continue }
-                guard day.studyUsed + length <= cap, length <= day.maxBlock, !day.held.contains(d.item.id),
+                guard day.studyUsed + length <= cap, length <= day.maxBlock,
                       day.freeTotal - day.consumed - length >= minFree else { continue }
                 for (ii, iv) in day.free.enumerated() {
                     if iv.light && !d.item.isLight { continue }
@@ -649,7 +561,6 @@ public enum Planner {
                 s -= Double(day.index - earliestDay) * 0.12
             }
             s -= Double(day.itemCounts[demand.item.id] ?? 0) * 0.45
-            if day.boosted.contains(demand.item.id) { s += 1.5 }
             s -= Double(day.studyUsed) / Double(max(1, day.studyCap)) * 0.35
             if day.workEnd.timeIntervalSince(start.addingTimeInterval(Double(length) * 60)) < 45 * 60 { s -= 0.15 }
             if atIntervalStart { s += 0.05 }
@@ -799,15 +710,14 @@ public enum Planner {
             }
             var mutes: [NudgeMute] = []
             for day in days {
-                let o = overrides(day.start)
                 let lim = limits(day.start)
-                if o.muteAll || lim.muteAll == true { mutes.append(NudgeMute(day: day.start, kind: nil)) }
-                let kinds = o.muted.union(lim.mute ?? [])
+                if lim.muteAll == true { mutes.append(NudgeMute(day: day.start, kind: nil)) }
+                let kinds = lim.mute ?? []
                 for k in kinds.sorted(by: { $0.rawValue < $1.rawValue }) { mutes.append(NudgeMute(day: day.start, kind: k)) }
             }
             return Plan(generatedAt: input.now, blocks: all, warnings: warnings, shortfalls: shortfalls,
                         sleepTradeoffMinutes: borrowed, loadFactor: input.learned.loadFactor * todayFactor,
-                        wakePlans: wakePlans, mutes: input.situations.isEmpty && input.rules.isEmpty ? nil : mutes)
+                        wakePlans: wakePlans, mutes: input.rules.isEmpty ? nil : mutes)
         }
 
         func stableId(_ prefix: String, _ key: String, _ day: Date) -> UUID {

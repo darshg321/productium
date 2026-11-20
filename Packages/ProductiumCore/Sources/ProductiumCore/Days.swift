@@ -135,6 +135,14 @@ public enum Days {
 
     // MARK: - School days
 
+    /// A school day: some School entry happens that day; with no timetable yet, the weekdays in Settings.
+    public static func isSchoolDay(_ day: Date, entries: [Entry], tree: CategoryTree, prefs: Preferences,
+                                   book: DayRuleBook = DayRuleBook(), calendar cal: Calendar) -> Bool {
+        guard hasTimetable(entries, tree: tree) else { return prefs.schoolDays.contains(cal.component(.weekday, from: day)) }
+        let ds = on(day, entries.filter { $0.source != .plan }, now: day, book: book, calendar: cal)
+        return ds.contains { tree.isUnder($0.category, CategoryTree.school) && cal.isDate($0.start, inSameDayAs: day) }
+    }
+
     /// Whether the timetable lives in Entries (any repeating entry under School).
     public static func hasTimetable(_ entries: [Entry], tree: CategoryTree) -> Bool {
         entries.contains { $0.repeats != nil && tree.isUnder($0.category, CategoryTree.school) }

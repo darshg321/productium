@@ -5,7 +5,7 @@ final class ScreenTimeTests: XCTestCase {
     let cal = Fx.cal
 
     func state() -> DumpState {
-        DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [],
+        DumpState(items: [], oneOffs: [], markers: [],
                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 
@@ -45,7 +45,7 @@ final class ScreenTimeTests: XCTestCase {
     func testScrollingSessionsPaintExactlyAndScreenshotMinutesAreEstimated() {
         let sessions = [ScrollSession(app: "Instagram", openedAt: Fx.mon(17), endedAt: Fx.mon(17, 30), endSource: .closed),
                         ScrollSession(app: "Slack", openedAt: Fx.mon(18), endedAt: Fx.mon(18, 20), endSource: .closed)]
-        let inputs = DayInputs(day: Fx.mon(0), events: [], commitments: [Fx.school], routines: [], outcomes: [], health: nil,
+        let inputs = DayInputs(day: Fx.mon(0), events: [], entries: Fx.schoolEntries, routines: [], outcomes: [], health: nil,
                                screen: ScreenDay(day: Fx.mon(0), distractingMinutes: 60), prefs: Preferences(),
                                scrollSessions: sessions, scrollingApps: ["Instagram": true, "Slack": false])
         let segs = TimelineBuilder.segments(inputs, calendar: cal)
@@ -60,7 +60,7 @@ final class ScreenTimeTests: XCTestCase {
     }
 
     func testScreenshotMinutesWithoutSessionsAreShownInTheEvening() {
-        let inputs = DayInputs(day: Fx.mon(0), events: [], commitments: [Fx.school], routines: [], outcomes: [], health: nil,
+        let inputs = DayInputs(day: Fx.mon(0), events: [], entries: Fx.schoolEntries, routines: [], outcomes: [], health: nil,
                                screen: ScreenDay(day: Fx.mon(0), distractingMinutes: 90), prefs: Preferences())
         let segs = TimelineBuilder.segments(inputs, calendar: cal)
         let scroll = segs.filter { $0.category == .screen }
@@ -114,7 +114,7 @@ final class ScreenSeriesTests: XCTestCase {
 
 enum ShotFx {
     static func state() -> DumpState {
-        DumpState(items: [], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [],
+        DumpState(items: [], oneOffs: [], markers: [],
                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 

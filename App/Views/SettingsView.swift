@@ -33,7 +33,7 @@ struct SettingsView: View {
             }
 
             Section {
-                row("Schedule", "calendar", .red, "\(model.state.commitments.count)") { ScheduleSettings() }
+                row("Schedule", "calendar", .red, "\(model.legacyCommitments.count)") { ScheduleSettings() }
                 row("Sleep", "bed.double.fill", Theme.sleep, durationLabel(p.sleepNeedMinutes)) { SleepSettings() }
                 row("Study", "book.fill", .blue, nil) { StudySettings() }
                 row("Screen Time", "hourglass", Theme.screen, model.state.taper.targetMinutes.map { durationLabel($0) }) { ScreenTimeSettings() }
@@ -303,12 +303,12 @@ struct ScheduleSettings: View {
                 WeekdayToggles(days: $m.state.prefs.schoolDays, label: "School Days")
             }
             Section {
-                let sorted = model.state.commitments.sorted { ($0.kind == .school ? 0 : 1, $0.start, $0.title) < ($1.kind == .school ? 0 : 1, $1.start, $1.title) }
+                let sorted = model.legacyCommitments.sorted { ($0.kind == .school ? 0 : 1, $0.start, $0.title) < ($1.kind == .school ? 0 : 1, $1.start, $1.title) }
                 ForEach(sorted) { c in
                     Button { editing = c } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
-                                Circle().fill(Theme.named(Palette.color(for: c, colors: model.state.prefs.colors)) ?? Theme.fixed)
+                                Circle().fill(Theme.named(model.state.prefs.colors[c.kind.rawValue] ?? model.state.prefs.colors["activity"]) ?? Theme.fixed)
                                     .frame(width: 8, height: 8)
                                 Text(c.title).foregroundStyle(.primary)
                             }
@@ -319,8 +319,7 @@ struct ScheduleSettings: View {
                 }
                 .onDelete { offsets in
                     let ids = Set(offsets.map { sorted[$0].id })
-                    m.state.commitments.removeAll { ids.contains($0.id) }
-                    m.state.exceptions.removeAll { $0.commitmentId.map(ids.contains) ?? false }
+                    m.state.entries.removeAll { ids.contains($0.id) }
                     model.replan()
                 }
                 Button {
@@ -931,15 +930,16 @@ struct CommitmentEditor: View {
                 WeekdayToggles(days: $commitment.weekdays, label: "Days")
                 TimePicker(label: "Starts", time: $commitment.start)
                 TimePicker(label: "Ends", time: $commitment.end)
-                Stepper("Travel buffer: \(commitment.bufferMinutes) min", value: $commitment.bufferMinutes, in: 0...60, step: 5)
-                ColorChoice(color: $commitment.color, automatic: Theme.fixed)
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        model.state.commitments.removeAll { $0.id == commitment.id }
-                        model.state.commitments.append(commitment)
+                        var entries = model.state.entries, tree = model.state.categories
+                        Timetable.write(commitment, into: &entries, tree: &tree,
+                                        anchor: model.cal.startOfDay(for: Date()), calendar: model.cal)
+                        model.state.entries = entries
+                        model.state.categories = tree
                         model.replan()
                         dismiss()
                     }

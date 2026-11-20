@@ -77,14 +77,9 @@ public enum Palette {
             ?? colors["task:\(item.kind.rawValue)"]
     }
 
-    public static func color(for c: Commitment, colors: [String: String]) -> String? {
-        c.color ?? colors[c.kind.rawValue] ?? colors["activity"]
-    }
-
-    public static func paint(_ blocks: [PlannedBlock], items: [WorkItem], commitments: [Commitment],
+    public static func paint(_ blocks: [PlannedBlock], items: [WorkItem],
                              events: [FixedEvent], colors: [String: String]) -> [PlannedBlock] {
         let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let acts = Dictionary(commitments.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { a, _ in a })
         let evs = Dictionary(events.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         return blocks.map { b in
             var out = b
@@ -93,7 +88,7 @@ public enum Palette {
                 let item = b.itemId.flatMap { byId[$0] }
                 out.color = item.flatMap { color(for: $0, parent: $0.parentId.flatMap { byId[$0] }, colors: colors) } ?? colors["study"]
             case .commitment:
-                out.color = b.sourceId.flatMap { acts[$0] }.flatMap { color(for: $0, colors: colors) } ?? colors["activity"]
+                out.color = colors["activity"]
             case .event:
                 out.color = b.sourceId.flatMap { evs[$0]?.color } ?? colors["event"]
             default:

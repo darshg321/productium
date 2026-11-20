@@ -132,7 +132,7 @@ final class RewardImpactTests: XCTestCase {
         XCTAssertEqual(RewardImpact.turnDown(r, settings: RewardSettings()), .subtle)
         XCTAssertNil(RewardImpact.turnDown(r, settings: RewardSettings(level: .subtle)), "never below subtle, never to off")
 
-        var s = DumpState(items: [], commitments: [], exceptions: [], oneOffs: [], markers: [], routines: [], moods: [], screen: [], prefs: Preferences())
+        var s = DumpState(items: [], oneOffs: [], markers: [], routines: [], moods: [], screen: [], prefs: Preferences())
         var changes = ChangeLog()
         let draft = LoggedChange(runId: UUID(), change: .celebrations(to: .subtle, from: .full), reason: "No difference in focus the next day",
                                  model: "code", at: Fx.mon(10))

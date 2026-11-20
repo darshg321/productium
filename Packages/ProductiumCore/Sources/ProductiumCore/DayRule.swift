@@ -56,15 +56,6 @@ public struct DayRuleBook: Codable, Hashable, Sendable {
         labels[name] = keys.sorted()
     }
 
-    /// Rebuilds the `no-school` label from cancelled school days, so a rotation counted over school days
-    /// (`nthOf("school", …)` over a `school` sequence that excludes `no-school`) shifts by itself.
-    public mutating func syncNoSchool(exceptions: [DayException], commitments: [Commitment], calendar cal: Calendar) {
-        let schoolIds = Set(commitments.filter { $0.kind == .school }.map(\.id))
-        let days = exceptions.filter { $0.cancelled && ($0.kind == .school || ($0.commitmentId.map(schoolIds.contains) ?? false)) }
-            .map { CapacityLearner.dayKey($0.day, cal) }
-        labels["no-school"] = days.isEmpty ? nil : Array(Set(days)).sorted()
-    }
-
     public mutating func unlabel(_ name: String, _ days: [Date], calendar cal: Calendar) {
         let drop = Set(days.map { CapacityLearner.dayKey($0, cal) })
         labels[name] = labels[name]?.filter { !drop.contains($0) }

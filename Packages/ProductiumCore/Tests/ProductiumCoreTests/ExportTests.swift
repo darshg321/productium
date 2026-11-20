@@ -9,7 +9,7 @@ final class ExportTests: XCTestCase {
         s.prefs.sleepNeedMinutes = 560
         let task = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 4), completedMinutes: 30)
         s.items = [task]
-        s.commitments = [Fx.school]
+        s.entries = Fx.timetable
         s.routines[1].samples = [14]
         s.markers = [TimelineEvent(at: now, phrase: "left home", activity: "to_school", category: .commute, phase: .start)]
         s.outcomes = [BlockOutcome(blockId: UUID(), itemId: task.id, kind: .essay, plannedStart: now, plannedMinutes: 40,
@@ -21,7 +21,6 @@ final class ExportTests: XCTestCase {
         s.screen = [ScreenDay(day: Fx.mon(0), distractingMinutes: 131, totalMinutes: 202)]
         s.events = [FixedEvent(id: "EK:1", title: "CS Club Meeting", start: now, end: now.addingTimeInterval(3000))]
         s.oneOffs = [FixedEvent(id: UUID().uuidString, title: "Dentist", start: now, end: now.addingTimeInterval(3600))]
-        s.exceptions = [DayException(day: Fx.mon(0, plusDays: 1), kind: .school, cancelled: true)]
         s.learned.adherenceSamples = 3
         s.policy.maxBlockMinutes = 45
         _ = s.beliefs.state("study.schoolDayCapacity", 120, now: now)
@@ -55,8 +54,6 @@ final class ExportTests: XCTestCase {
         s.dumpState = ds
         s.changes.pinned = ["planner.freeTimeMultiplier"]
         s.dismissed = ["a warning"]
-        s.situations = [Situation(said: "B days", scope: .nthOf(sequence: "school", mod: 2, eq: 1),
-                                  effects: [.setInput(path: "wake", value: 450), .note("n")], expires: now, createdAt: now)]
         s.dayRules.sequences = [DaySequence(name: "school", rule: .weekdays([2, 3, 4, 5, 6]), anchor: now)]
         s.dayRules.label("exam-week", [now], calendar: Fx.cal)
         s.visits = [PlaceVisit(latitude: 43.6, longitude: -79.4, arrival: now)]
@@ -66,6 +63,8 @@ final class ExportTests: XCTestCase {
         s.snoozed = [UUID(): now.addingTimeInterval(600)]
         return s
     }
+
+
 
     func bundle(_ s: AppState) -> ExportBundle {
         var log = AICallLog()

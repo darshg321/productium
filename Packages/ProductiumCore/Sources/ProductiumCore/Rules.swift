@@ -104,3 +104,14 @@ public enum Rules {
         rules.filter { $0.isActive(at: now, calendar: cal) }.sorted { $0.createdAt < $1.createdAt }
     }
 }
+
+/// A day the planner muted reminders on (read by `NudgePlanner`).
+public struct NudgeMute: Codable, Hashable, Sendable {
+    public var day: Date
+    /// nil: every reminder that day.
+    public var kind: NudgeKind?
+    public init(day: Date, kind: NudgeKind?) {
+        self.day = day
+        self.kind = kind
+    }
+}

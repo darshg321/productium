@@ -23,13 +23,17 @@ var cal = Calendar(identifier: .gregorian)
 cal.timeZone = TimeZone(identifier: "America/Vancouver")!
 let now = cal.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: 19, minute: 10))!
 
-let school = Commitment(title: "School", kind: .school, weekdays: [2, 3, 4, 5, 6], start: TimeOfDay(8, 30), end: TimeOfDay(15, 0))
-let soccer = Commitment(title: "Soccer practice", kind: .extracurricular, weekdays: [2, 4], start: TimeOfDay(16), end: TimeOfDay(17, 30))
+var tree = CategoryTree()
+var timetable: [Entry] = []
+Timetable.write(Commitment(title: "School", kind: .school, weekdays: [2, 3, 4, 5, 6], start: TimeOfDay(8, 30), end: TimeOfDay(15, 0)),
+                into: &timetable, tree: &tree, anchor: now, calendar: cal)
+Timetable.write(Commitment(title: "Soccer practice", kind: .extracurricular, weekdays: [2, 4], start: TimeOfDay(16), end: TimeOfDay(17, 30)),
+                into: &timetable, tree: &tree, anchor: now, calendar: cal)
 var s = DumpState(items: [
     WorkItem(title: "Calc problem set 5", kind: .assignment, subject: "Math", due: now.addingTimeInterval(2 * 86400)),
     WorkItem(title: "Bio quiz on cells", kind: .quiz, subject: "Biology", due: now.addingTimeInterval(3 * 86400), topics: ["mitosis"]),
     WorkItem(title: "Gatsby essay", kind: .essay, subject: "English", due: now.addingTimeInterval(8 * 86400)),
-], commitments: [school, soccer], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults, moods: [], screen: [],
+], oneOffs: [], markers: [], routines: Routine.defaults, moods: [], screen: [],
    prefs: Preferences())
 
 func send(_ req: AIRequest) async throws -> AIResponse {
@@ -50,15 +54,12 @@ if CommandLine.arguments.dropFirst().first == "--insight" {
     var essay = s.items[2]
     essay.deferralLog = (0..<4).map { DeferralEvent(at: now.addingTimeInterval(-Double($0) * 86400), kind: .snoozed, reason: $0 == 0 ? "too tired after soccer" : nil) }
     s.items[2] = essay
-    let lateStarts = (0..<3).map { DayException(day: cal.date(byAdding: .day, value: -7 * ($0 + 1) - 0, to: cal.startOfDay(for: now))!, commitmentId: school.id, start: TimeOfDay(10)) }
-    s.exceptions = lateStarts
     let days = (1...14).map { i in DayRecord(day: cal.date(byAdding: .day, value: -i, to: cal.startOfDay(for: now))!, isSchoolDay: ![1, 7].contains(cal.component(.weekday, from: cal.date(byAdding: .day, value: -i, to: now)!)),
                                               planned: 90, done: i % 3 == 0 ? 80 : 20) }
-    let plan = Planner.plan(PlannerInput(now: now, calendar: cal, items: s.items, commitments: s.commitments, events: s.oneOffs,
-                                         preferences: s.prefs, routines: s.routines, exceptions: s.exceptions))
+    let plan = Planner.plan(PlannerInput(now: now, calendar: cal, items: s.items, events: s.oneOffs,
+                                         preferences: s.prefs, routines: s.routines, entries: timetable, categories: tree))
     let input = InsightInput(now: now, calendar: cal, trigger: .deferrals, deferrals: InsightPass.deferrals(items: s.items, since: now.addingTimeInterval(-14 * 86400)),
-                             days: days, policy: s.policy, items: s.items, plan: plan, commitments: s.commitments,
-                             situations: s.situations, dayRules: s.dayRules, exceptions: s.exceptions)
+                             days: days, policy: s.policy, items: s.items, plan: plan, dayRules: s.dayRules)
     let req = AIRequest(model: AIFeature.review.route.model, system: InsightPass.system(), messages: [AIMessage(role: "user", content: InsightPass.request(input))],
                         schema: InsightPass.schema, maxTokens: 1500, effort: AIFeature.review.route.effort)
     let res = try await send(req)
@@ -66,13 +67,9 @@ if CommandLine.arguments.dropFirst().first == "--insight" {
     guard let out = res.decoded(InsightPass.Output.self, schema: InsightPass.schema, accept: { !$0.headline.isEmpty }) else { print("UNREADABLE:", res.text); exit(1) }
     print("NOTE:", out.headline, "|", out.wins, "|", out.suggestions)
     let run = InsightRun(at: now, note: out.headline, model: "sonnet")
-    let drafts = InsightPass.drafts(out, runId: run.id, items: s.items, now: now, model: "sonnet", calendar: cal, commitments: s.commitments)
+    let drafts = InsightPass.drafts(out, runId: run.id, items: s.items, now: now, model: "sonnet", calendar: cal)
     var log = ChangeLog()
-    let base = PlannerInput(now: now, calendar: cal, items: s.items, commitments: s.commitments, events: s.oneOffs, preferences: s.prefs, routines: s.routines, exceptions: s.exceptions)
-    let problems = log.apply(run, drafts, to: &s, now: now, admitSituation: { sit in
-        if case .failure(let why) = SituationRules.admit(sit, into: base, writer: .reflection) { return why.reason }
-        return nil
-    })
+    let problems = log.apply(run, drafts, to: &s, now: now)
     print("asked for \(out.changes.count) changes, model said:", out.changes.map { "\($0.type): \($0.reason)" })
     print("APPLIED:", log.applied.map(\.title))
     print("REFUSED:", problems)

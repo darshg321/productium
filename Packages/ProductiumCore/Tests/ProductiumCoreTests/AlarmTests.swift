@@ -5,10 +5,10 @@ import XCTest
 final class AlarmTests: XCTestCase {
     let cal = Fx.cal
 
-    func plan(now: Date, exceptions: [DayException] = [], items: [WorkItem] = [], calendar: Calendar? = nil) -> Plan {
+
+    func plan(now: Date, items: [WorkItem] = [], calendar: Calendar? = nil) -> Plan {
         var input = Fx.input(now: now, items: items)
-        input.exceptions = exceptions
-        if let calendar { input.calendar = calendar }
+        if let calendar { input.calendar = calendar; input.entries = Fx.timetable(in: calendar) }
         return Planner.plan(input)
     }
 
@@ -53,20 +53,6 @@ final class AlarmTests: XCTestCase {
         XCTAssertEqual(late.first?.key, "wake.2026-11-17")
     }
 
-    func testDayChangeAndSleepIn() {
-        let tue = Fx.mon(0, plusDays: 1)
-        let sleepIn = DayException(day: tue, wake: TimeOfDay(9, 15))
-        let a = desired(plan(now: Fx.mon(20), exceptions: [sleepIn]), now: Fx.mon(20), nudges: false)
-        XCTAssertEqual(hm(a[0].at), "09:15")
-        XCTAssertEqual(a[0].title, "Good morning")
-        let cancelled = DayException(day: tue, kind: .school, cancelled: true)
-        let b = desired(plan(now: Fx.mon(20), exceptions: [cancelled]), now: Fx.mon(20), nudges: false)
-        XCTAssertEqual(hm(b[0].at), "08:30", "no school: the free-day wake")
-        let late = DayException(day: tue, kind: .school, start: TimeOfDay(10, 0))
-        let c = desired(plan(now: Fx.mon(20), exceptions: [late]), now: Fx.mon(20), nudges: false)
-        XCTAssertEqual(hm(c[0].at), "08:30", "late start: capped at the free-day wake, never later")
-        XCTAssertEqual(c[0].title, "Leave by 9:30 AM")
-    }
 
     func testDaylightSavingKeepsLocalTimes() {
         // Vancouver springs forward on Sunday 14 March 2027.
@@ -164,18 +150,6 @@ final class AlarmTests: XCTestCase {
         XCTAssertTrue(d.add.isEmpty)
     }
 
-    func testMovedAlarmIsReplacedAndTurningOffCancelsEverything() {
-        let now = Fx.mon(20)
-        var dev = FakeDevice()
-        dev.sync(desired(plan(now: now), now: now), now: now)
-        let tue = Fx.mon(0, plusDays: 1)
-        let moved = desired(plan(now: now, exceptions: [DayException(day: tue, wake: TimeOfDay(6, 0))]), now: now)
-        dev.sync(moved, now: now)
-        XCTAssertEqual(dev.alarms.values.filter { $0.key == "wake.2026-11-17" }.map { hm($0.at) }, ["06:00"])
-        dev.sync([], now: now)
-        XCTAssertTrue(dev.alarms.isEmpty, "Wake-Up Alarms off: nothing left ringing")
-        XCTAssertTrue(dev.ledger.isEmpty)
-    }
 
     func testRingingAlarmIsNeverCancelledAndFailedAddsRetry() {
         let now = Fx.mon(20)
@@ -205,7 +179,7 @@ final class AlarmRuleTests: XCTestCase {
     }
 
     func state() -> DumpState {
-        var s = DumpState(items: [essay], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
+        var s = DumpState(items: [essay], oneOffs: [], markers: [], routines: Routine.defaults,
                           moods: [], screen: [], prefs: Preferences())
         s.alarmsAllowed = true
         return s

@@ -114,7 +114,7 @@ public struct ExportBundle: Codable, Sendable {
     public var summary: String {
         let s = state
         let prompts = s.conversation.turns.count + s.archive.conversations.reduce(0) { $0 + $1.turns.count }
-        return "\(s.items.count) tasks, \(s.commitments.count) activities, \(s.markers.count) check-ins, "
+        return "\(s.items.count) tasks, \(s.entries.count) timed entries, \(s.markers.count) check-ins, "
             + "\(s.outcomes.count) study sessions, \(prompts) prompts, \(callLog.calls.count) AI calls and all settings."
     }
 }

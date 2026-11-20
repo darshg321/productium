@@ -34,7 +34,7 @@ final class LearningTests: XCTestCase {
     func testTimelineInfersRoutinesWithoutCheckins() {
         var routines = Routine.defaults
         routines[1].samples = [25, 25, 25]
-        let d = DayInputs(day: Fx.mon(12), events: [], commitments: [Fx.school, Fx.soccer], routines: routines,
+        let d = DayInputs(day: Fx.mon(12), events: [], entries: Fx.timetable, routines: routines,
                           outcomes: [], health: HealthDay(day: Fx.mon(0), sleepMinutes: 500, bedtime: Fx.mon(22, 30, plusDays: -1), wake: Fx.mon(6, 50)),
                           screen: ScreenDay(day: Fx.mon(0), distractingMinutes: 90), prefs: Preferences())
         let segs = TimelineBuilder.segments(d, calendar: cal)
@@ -48,7 +48,7 @@ final class LearningTests: XCTestCase {
     func testCheckinsOverrideSchedule() {
         let evs = MarkerParser.parse("left school", at: Fx.mon(15, 0), commitments: [Fx.school], calendar: cal)
             + MarkerParser.parse("home", at: Fx.mon(15, 40), commitments: [Fx.school], calendar: cal)
-        let d = DayInputs(day: Fx.mon(12), events: evs, commitments: [Fx.school], routines: Routine.defaults, outcomes: [],
+        let d = DayInputs(day: Fx.mon(12), events: evs, entries: Fx.schoolEntries, routines: Routine.defaults, outcomes: [],
                           health: nil, screen: nil, prefs: Preferences())
         let segs = TimelineBuilder.segments(d, calendar: cal)
         let trip = segs.first { $0.label == "Home from school" }!

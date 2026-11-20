@@ -11,8 +11,6 @@ public enum InsightChange: Codable, Hashable, Sendable {
     case intention(IntentionNudge)
     case beliefGroup(BeliefGroup, evidence: [String])
     case aboutMe(section: AboutMeSection, text: String)
-    /// A conditional override ("on A days, shorter blocks"). Revert removes it. v1.1 A9.
-    case situation(Situation)
     /// Celebrations turned down because they made no difference (F6). Revert restores `from`.
     case celebrations(to: CelebrationLevel, from: CelebrationLevel)
     /// An alarm the insight pass adds or moves (a nudge to start earlier, a bedtime alarm 15 minutes sooner).
@@ -20,20 +18,6 @@ public enum InsightChange: Codable, Hashable, Sendable {
 
     var isAboutMe: Bool { if case .aboutMe = self { return true }; return false }
     var isBeliefGroup: Bool { if case .beliefGroup = self { return true }; return false }
-
-    static func effectKey(_ e: Effect) -> String {
-        switch e {
-        case .setInput(let p, _): return p
-        case .place(let i, _, _): return "place:\(i.uuidString)"
-        case .hold(let i): return "hold:\(i.uuidString)"
-        case .boost(let i): return "boost:\(i.uuidString)"
-        case .replace(let c, _): return "replace:\(c)"
-        case .busy: return "busy"
-        case .free: return "free"
-        case .mute: return "mute"
-        case .note: return "note"
-        }
-    }
 
     /// What a pin or the once-a-week limit applies to.
     public var target: String {
@@ -45,7 +29,6 @@ public enum InsightChange: Codable, Hashable, Sendable {
         case .aboutMe(_, let t): return "about:\(t.prefix(40))"
         case .celebrations: return "celebrations"
         case .alarm(let r): return "alarm:\(r.kind.rawValue):\(r.target?.rawValue ?? r.itemId?.uuidString ?? r.label)"
-        case .situation(let s): return "situation:\(s.effects.map(Self.effectKey).sorted().joined(separator: ","))"
         }
     }
 }
@@ -94,7 +77,6 @@ public struct LoggedChange: Codable, Hashable, Identifiable, Sendable {
         case .intention(let i): return "Reminds you: \(i.text)"
         case .beliefGroup(let g, _): return "Started noticing: \(g.title)"
         case .aboutMe(let s, let t): return "About You (\(s.rawValue)): \(t)"
-        case .situation(let s): return "When it applies: \(s.said)"
         case .celebrations(let to, _): return "Celebrations: \(to.title)"
         case .alarm(let r): return "Alarm: \(r.summary(calendar: Calendar(identifier: .gregorian)))"
         }
@@ -159,15 +141,14 @@ public struct ChangeLog: Codable, Hashable, Sendable {
 
     /// Checks every draft against the rules and applies the ones that pass, at once. Returns why the rest didn't.
     @discardableResult
-    public mutating func apply(_ run: InsightRun, _ drafts: [LoggedChange], to s: inout DumpState, now: Date,
-                               admitSituation: ((Situation) -> String?)? = nil) -> [String] {
+    public mutating func apply(_ run: InsightRun, _ drafts: [LoggedChange], to s: inout DumpState, now: Date) -> [String] {
         var problems: [String] = []
         var done: [LoggedChange] = []
         for var p in drafts {
             p.runId = run.id
             p.status = .applied
             p.at = now
-            if let why = refusal(&p, done: done, state: s, now: now, admitSituation: admitSituation) { problems.append(why); continue }
+            if let why = refusal(&p, done: done, state: s, now: now) { problems.append(why); continue }
             if let why = perform(&p, in: &s, now: now) { problems.append(why); continue }
             done.append(p)
         }
@@ -178,8 +159,7 @@ public struct ChangeLog: Codable, Hashable, Sendable {
     }
 
     /// Why a draft can't be applied (nil: it can). Also fills in from / to and bounds knob values.
-    func refusal(_ p: inout LoggedChange, done: [LoggedChange], state s: DumpState, now: Date,
-                 admitSituation: ((Situation) -> String?)? = nil) -> String? {
+    func refusal(_ p: inout LoggedChange, done: [LoggedChange], state s: DumpState, now: Date) -> String? {
         if case .aboutMe(let section, let text) = p.change {
             guard section == .inferred || section == .patterns, !text.isEmpty else { return "About-me line refused: \(text.prefix(40))" }
             guard done.filter(\.change.isAboutMe).count < Self.maxAboutMePerRun else { return "More than 3 about-me lines" }
@@ -240,15 +220,6 @@ public struct ChangeLog: Codable, Hashable, Sendable {
             guard to == .subtle, from == .full, s.rewardSettings.level == .full else { return "Celebrations are already turned down" }
             p.from = from.title
             p.to = to.title
-        case .situation(var sit):
-            // Only the insight pass makes these, and `admit` (ranges, steps, invariants, sleep floor) decides.
-            sit.source = .reflection
-            sit.createdAt = now
-            guard let admit = admitSituation else { return "Situations can't be checked here" }
-            if let why = admit(sit) { return why }
-            guard s.situations.count < 8 else { return "Eight situations already" }
-            p.change = .situation(sit)
-            p.to = sit.said
         case .aboutMe: break
         }
         return nil
@@ -277,8 +248,6 @@ public struct ChangeLog: Codable, Hashable, Sendable {
             s.alarmRules.append(r)
         case .celebrations(let to, _):
             s.rewardSettings.level = to
-        case .situation(let sit):
-            s.situations.append(sit)
         case .aboutMe(let section, let text):
             guard case .success = s.aboutMe.apply(AboutMeFact(section: section.rawValue, text: text), by: .reflection, now: now) else {
                 return "About-me line refused: \(text.prefix(40))"
@@ -305,8 +274,6 @@ public struct ChangeLog: Codable, Hashable, Sendable {
             s.alarmRules.removeAll { $0.id == r.id }
         case .celebrations(_, let from):
             s.rewardSettings.level = from
-        case .situation(let sit):
-            s.situations.removeAll { $0.id == sit.id }
         case .aboutMe(let section, let text):
             s.aboutMe[section].removeAll { $0.text.plainKey == text.plainKey && !$0.byStudent }
         }

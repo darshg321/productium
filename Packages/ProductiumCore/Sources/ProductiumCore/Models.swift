@@ -111,7 +111,6 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
     public var externalId: String?
     public var createdAt: Date
     public var color: String?
-    public var atSchool: Bool?
     public var deferralLog: [DeferralEvent]?
     /// v1.2: where its time is filed (nil: `CategoryRules` picks, usually Work › Studying › subject).
     public var category: CategoryID?
@@ -127,22 +126,11 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
         set { state = newValue ? .done : (state == .done ? .open : state) }
     }
 
-    /// Done in school hours (ask a teacher, hand something in), so it gets a school slot, not a study block.
-    public var isAtSchoolErrand: Bool {
-        if let atSchool { return atSchool }
-        guard kind == .chore else { return false }
-        let t = title.lowercased()
-        let verbs = ["ask ", "email ", "tell ", "talk to ", "see ", "message ", "hand in ", "return "]
-        let people = ["teacher", "ms ", "mr ", "mrs ", "mx ", "miss ", "dr ", "prof", "counsel", "coach", "principal", "librarian"]
-        return verbs.contains { t.hasPrefix($0) } && people.contains { t.contains($0) }
-    }
-
     public init(id: UUID = UUID(), title: String, kind: TaskKind, subject: String? = nil, due: Date,
                 estimateMinutes: Int? = nil, completedMinutes: Int = 0, importance: Int = 3,
                 difficulty: Int = 2, isDone: Bool = false, doneAt: Date? = nil, parentId: UUID? = nil,
                 topics: [String] = [], notes: String? = nil, source: ItemSource = .manual,
-                externalId: String? = nil, createdAt: Date = Date(), color: String? = nil, atSchool: Bool? = nil) {
-        self.atSchool = atSchool
+                externalId: String? = nil, createdAt: Date = Date(), color: String? = nil) {
         self.id = id
         self.title = title
         self.kind = kind

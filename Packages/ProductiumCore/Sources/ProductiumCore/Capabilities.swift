@@ -75,21 +75,6 @@ public struct IntentionNudge: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-public struct FieldSpec: Hashable, Sendable {
-    public var name: String
-    public var format: String
-    public init(_ name: String, _ format: String) { self.name = name; self.format = format }
-}
-
-public struct EntitySpec: Hashable, Sendable {
-    public var name: String
-    public var tier: RiskTier
-    public var refPrefix: String?
-    public var canDelete: Bool
-    public var fields: [FieldSpec]
-    public var note: String
-}
-
 public struct KnobSpec: Hashable, Sendable {
     public var key: String
     public var tier: RiskTier
@@ -111,96 +96,8 @@ public struct KnobSpec: Hashable, Sendable {
     }
 }
 
-public struct MacroSpec: Hashable, Sendable {
-    public var name: String
-    public var entity: String
-    public var fields: [FieldSpec]
-    public var note: String
-}
-
 public enum Registry {
     static let colorFormat = "a colour name, #RRGGBB, or default"
-
-    public static let entities: [EntitySpec] = [
-        EntitySpec(name: "task", tier: .data, refPrefix: "t", canDelete: true, fields: [
-            FieldSpec("title", "text"),
-            FieldSpec("kind", TaskKind.allCases.map(\.rawValue).joined(separator: "|")),
-            FieldSpec("subject", "text"), FieldSpec("due", "YYYY-MM-DDTHH:mm (no time: tests 08:00, submissions 23:59)"),
-            FieldSpec("estimateMinutes", "realistic minutes"), FieldSpec("importance", "1-5"), FieldSpec("difficulty", "1-3"),
-            FieldSpec("doneMinutes", "minutes done so far in total (absolute, never added)"),
-            FieldSpec("done", "true|false"), FieldSpec("atSchool", "true: done in school hours (ask a teacher), gets a school slot"),
-            FieldSpec("topics", "list"), FieldSpec("notes", "text"),
-            FieldSpec("alarm", "minutes before it's due to ring (0 = at the due time; -1 removes it)"),
-            FieldSpec("blockAlarm", "minutes before each study block of this task to ring (-1 removes)"),
-            FieldSpec("color", colorFormat), FieldSpec("parent", "a task id, for a step"),
-        ], note: "homework, tests, projects. One per deadline on an assignment sheet."),
-        EntitySpec(name: "activity", tier: .data, refPrefix: "a", canDelete: true, fields: [
-            FieldSpec("title", "text"), FieldSpec("kind", CommitmentKind.allCases.map(\.rawValue).joined(separator: "|")),
-            FieldSpec("weekdays", "1=Sun..7=Sat"), FieldSpec("start", "HH:mm"), FieldSpec("end", "HH:mm"),
-            FieldSpec("bufferMinutes", "travel before/after, default 10; 0 between periods"),
-            FieldSpec("validFrom", "YYYY-MM-DD"), FieldSpec("validUntil", "YYYY-MM-DD"), FieldSpec("color", colorFormat),
-            FieldSpec("periods", "[{title, start, end, weekdays?}] classes inside this activity, e.g. a school timetable"),
-        ], note: "weekly: school, classes, clubs, jobs. A school timetable is the periods of the School activity, never one-off events."),
-        EntitySpec(name: "event", tier: .data, refPrefix: "e", canDelete: true, fields: [
-            FieldSpec("title", "text"), FieldSpec("date", "YYYY-MM-DD"), FieldSpec("start", "HH:mm"), FieldSpec("end", "HH:mm"),
-            FieldSpec("kind", CommitmentKind.allCases.map(\.rawValue).joined(separator: "|")), FieldSpec("color", colorFormat),
-        ], note: "busy time on one date. Calendar (cal) events are read-only."),
-        EntitySpec(name: "day_change", tier: .data, refPrefix: "d", canDelete: true, fields: [
-            FieldSpec("date", "YYYY-MM-DD"), FieldSpec("activity", "an activity id, or \"school\" for all of school"),
-            FieldSpec("cancelled", "true|false"), FieldSpec("start", "HH:mm"), FieldSpec("end", "HH:mm"),
-            FieldSpec("wake", "HH:mm (alone: sleeping in)"), FieldSpec("note", "text"),
-        ], note: "one date differs from the usual week. \"Didn't go to school\" is a day_change, not a marker."),
-        EntitySpec(name: "situation", tier: .data, refPrefix: "s", canDelete: true, fields: [
-            FieldSpec("said", "their words"), FieldSpec("scope", "a day rule (see Day rules): which days"),
-            FieldSpec("effects", "list of effect JSON strings (see Effects)"),
-            FieldSpec("expires", "YYYY-MM-DD, last day it applies (always give one for something temporary)"),
-        ], note: "overrides for some days (A/B days, sick, a visitor, a trip, exam week). Prefer it to many day_changes. setInput planner.* only with an end date (expires). \"Forever\", \"every Friday\", \"from now on\" is refused: say you can't and that Productium adjusts that from how their weeks go."),
-        EntitySpec(name: "alarm", tier: .data, refPrefix: "r", canDelete: true, fields: [
-            FieldSpec("kind", "clock|before_due|before_blocks|shift|off"), FieldSpec("label", "what it says when it rings"),
-            FieldSpec("time", "clock: HH:mm"), FieldSpec("task", "a task id: before_due, before_blocks (omit for any block); not needed for a plain clock alarm"),
-            FieldSpec("minutes", "before_due/before_blocks: how long before; shift: minutes later (negative: earlier)"),
-            FieldSpec("alarmKind", "shift/off: which of Productium's own alarms: wake|bedtime|leave|missedStart"),
-            FieldSpec("scope", "a day rule: which days (clock with no scope: the next time it's that time)"),
-            FieldSpec("enabled", "true|false (false keeps it but stops it ringing)"), FieldSpec("expires", "YYYY-MM-DD, last day"),
-        ], note: "your own alarms, with or without a task, and changes to Productium's: move the bedtime alarm earlier on Fridays, no leave-by alarm on Wednesdays. Wake-up alarm on/off is the wakeAlarms setting."),
-        EntitySpec(name: "reminder", tier: .data, refPrefix: "n", canDelete: true, fields: [
-            FieldSpec("text", "what it says"), FieldSpec("time", "HH:mm"), FieldSpec("weekdays", "1=Sun..7=Sat; empty = every day"),
-            FieldSpec("task", "a task id, optional"), FieldSpec("trigger", "time|arrive_home"),
-        ], note: "a notification at a time or when they get home (\"remind me to pack my bag at 9pm\"). Not an alarm: it doesn't ring through silent mode."),
-        EntitySpec(name: "day_rule", tier: .data, refPrefix: nil, canDelete: false, fields: [
-            FieldSpec("name", "sequence or label name"), FieldSpec("kind", "sequence|label"),
-            FieldSpec("rule", "sequence: the counted days, e.g. {\"all\":[{\"weekdays\":[2,3,4,5,6]},{\"not\":{\"label\":\"no-school\"}}]}"),
-            FieldSpec("anchor", "sequence: YYYY-MM-DD of an A day"),
-            FieldSpec("dates", "label: YYYY-MM-DD list"), FieldSpec("remove", "true: take them out of the label"),
-        ], note: "a rotation (sequence \"school\" for A/B days) or a set of days (label \"exam-week\") that rules can use."),
-        EntitySpec(name: "gap", tier: .data, refPrefix: nil, canDelete: false, fields: [
-            FieldSpec("said", "their words"), FieldSpec("wanted", "what you'd have done if the app could"),
-        ], note: "only when nothing here can do what they asked; say so in the reply."),
-        EntitySpec(name: "marker", tier: .data, refPrefix: nil, canDelete: false, fields: [
-            FieldSpec("activity", "short key: to_school, from_school, school, study, sleep, wake, get_ready…"),
-            FieldSpec("phase", "start|end"), FieldSpec("at", "YYYY-MM-DDTHH:mm"), FieldSpec("note", "their words"),
-        ], note: "something that happened. \"Woke at 9\" = sleep end 09:00."),
-        EntitySpec(name: "mood", tier: .data, refPrefix: nil, canDelete: false, fields: [
-            FieldSpec("mood", "1-5"), FieldSpec("energy", "1-5"), FieldSpec("note", "their words"),
-        ], note: "only if they say how they feel."),
-        EntitySpec(name: "screen_time", tier: .data, refPrefix: nil, canDelete: false, fields: [
-            FieldSpec("period", "day|week|average: what the screenshot shows (a week view is a daily average)"),
-            FieldSpec("date", "YYYY-MM-DD of the day shown"), FieldSpec("dateLabelShown", "the label on screen: Today, Yesterday, Mon 16 Nov"),
-            FieldSpec("screenMinutes", "the total shown"),
-            FieldSpec("pickups", "Pickups total shown, if any"), FieldSpec("firstPickup", "First Pickup time shown, e.g. 6:42 AM"),
-            FieldSpec("notifications", "Notifications total shown, if any"),
-            FieldSpec("apps", "[{name, minutes, category as shown, pickups?, notifications?}] every app listed"),
-            FieldSpec("partial", "true if the app list is cut off"),
-        ], note: "one per screenshot. Copy the numbers exactly; the app works out scrolling itself. Several screenshots of one day are merged."),
-        EntitySpec(name: "routine", tier: .learned, refPrefix: nil, canDelete: false, fields: [
-            FieldSpec("minutes", "how long it takes, as they said it"), FieldSpec("enabled", "true|false"),
-        ], note: "id is the routine's key (get_ready|to_school|from_school). Only when they state it."),
-    ]
-
-    public static let macros: [MacroSpec] = [
-        MacroSpec(name: "split", entity: "activity", fields: [FieldSpec("parts", "[{title, start, end, weekdays?, color?}]")],
-                  note: "one activity into periods: id of the activity and its parts. Parts keep its days unless given weekdays; days no part covers keep the original. Never add periods next to the original."),
-    ]
 
     public static let knobs: [KnobSpec] = [
         KnobSpec("color.<category>", .data, colorFormat, note: "categories: \(Palette.categories.joined(separator: "|")), subject:<name>, task:<kind>"),
@@ -237,15 +134,6 @@ public enum Registry {
                  note: "how much later than usual to ask again if a block hasn't started"),
     ]
 
-    public static func entity(_ name: String?) -> EntitySpec? {
-        guard let n = name?.lowercased().filter({ $0.isLetter }), !n.isEmpty else { return nil }
-        let aliases = ["item": "task", "assignment": "task", "commitment": "activity", "class": "activity",
-                       "dayexception": "day_change", "exception": "day_change", "day": "day_change",
-                       "checkin": "marker", "log": "marker", "screentime": "screen_time", "screen": "screen_time"]
-        let key = aliases[n] ?? n
-        return entities.first { $0.name.filter(\.isLetter) == key.filter(\.isLetter) }
-    }
-
     public static func knob(_ key: String) -> KnobSpec? {
         let k = key.trimmingCharacters(in: .whitespaces)
         if k.lowercased().hasPrefix("color") || k.lowercased().hasPrefix("colour") { return knobs[0] }
@@ -254,29 +142,6 @@ public enum Registry {
             ?? knobs.first { $0.key.contains(".") && $0.key.split(separator: ".").last.map { $0.lowercased() == p } == true }
     }
 
-    public static func promptText(maxTier: RiskTier = .learned) -> String {
-        var l: [String] = []
-        l.append("Entities (upsert: id to change one, no id to create; fields as below):")
-        for e in entities where e.tier <= maxTier {
-            let ref = e.refPrefix.map { " (\($0)…)" } ?? ""
-            let tier = e.tier == .learned ? " [only when they state it]" : ""
-            l.append("- \(e.name)\(ref)\(tier): \(e.note) Fields: " + e.fields.map { "\($0.name) (\($0.format))" }.joined(separator: ", ")
-                     )
-        }
-        l.append("Only " + entities.filter(\.canDelete).map(\.name).joined(separator: ", ") + " can be deleted (delete: entity, id).")
-        l.append(SituationText.grammar)
-        l.append("setInput paths: " + SituationInputs.promptText)
-        l.append("Macros:")
-        for m in macros { l.append("- \(m.name) (\(m.entity)): \(m.note) Fields: " + m.fields.map { "\($0.name) \($0.format)" }.joined(separator: ", ")) }
-        l.append("Knobs (set: knob, value as text):")
-        for t in RiskTier.allCases where t <= maxTier {
-            let ks = knobs.filter { $0.tier == t }
-            guard !ks.isEmpty else { continue }
-            let head = t == .data ? "- preferences: " : "- values the app learns, only when they state them: "
-            l.append(head + ks.map { "\($0.key) (\($0.format))" + ($0.note.isEmpty ? "" : " \($0.note)") }.joined(separator: ", "))
-        }
-        return l.joined(separator: "\n")
-    }
 }
 
 public enum KnobResult: Hashable, Sendable {

@@ -7,7 +7,7 @@ final class ChangeLogTests: XCTestCase {
     let essay = WorkItem(title: "Waterloo AIF revision", kind: .application, due: Fx.mon(23, plusDays: 10))
 
     func state() -> DumpState {
-        DumpState(items: [essay], commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [], routines: Routine.defaults,
+        DumpState(items: [essay], oneOffs: [], markers: [], routines: Routine.defaults,
                   moods: [], screen: [], prefs: Preferences())
     }
 
@@ -39,22 +39,6 @@ final class ChangeLogTests: XCTestCase {
         XCTAssertTrue(nudges.contains { $0.kind == .intention && $0.at == Fx.mon(15, 30, plusDays: 1) })
     }
 
-    func testSituationIsAdmittedStoredAndReverted() {
-        var s = state()
-        var log = ChangeLog()
-        let sit = Situation(said: "A days run long", scope: .weekdays([2]), effects: [.setInput(path: "planner.maxBlockMinutes", value: 45)])
-        // Nothing to check it against: refused. With an admit check that passes: applied; one that refuses: not.
-        XCTAssertEqual(log.apply(run(), [draft(.situation(sit))], to: &s, now: Fx.mon(9)), ["Situations can't be checked here"])
-        XCTAssertEqual(log.apply(run(), [draft(.situation(sit))], to: &s, now: Fx.mon(9), admitSituation: { _ in "breaks the sleep floor" }),
-                       ["breaks the sleep floor"])
-        XCTAssertTrue(s.situations.isEmpty)
-        XCTAssertTrue(log.apply(run(), [draft(.situation(sit))], to: &s, now: Fx.mon(9), admitSituation: { _ in nil }).isEmpty)
-        XCTAssertEqual(s.situations.count, 1)
-        XCTAssertEqual(s.situations[0].source, .reflection)
-        XCTAssertEqual(log.applied[0].title, "When it applies: A days run long")
-        XCTAssertTrue(log.revert(log.applied[0].id, in: &s, now: Fx.mon(10)))
-        XCTAssertTrue(s.situations.isEmpty)
-    }
 
     func testOncePerWeekRevertNoRetryAndPins() {
         var s = state()

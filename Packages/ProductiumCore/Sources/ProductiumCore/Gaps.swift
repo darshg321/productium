@@ -183,3 +183,18 @@ public enum GapAnswer {
             .sorted { $0.count > $1.count }
     }
 }
+
+public struct GapNote: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID
+    public var at: Date
+    /// What the student said.
+    public var said: String
+    /// What the model wanted to do that the app can't.
+    public var wanted: String
+    public init(id: UUID = UUID(), at: Date, said: String, wanted: String) {
+        self.id = id
+        self.at = at
+        self.said = said
+        self.wanted = wanted
+    }
+}

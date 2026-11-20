@@ -95,21 +95,16 @@ public struct WakePlan: Codable, Hashable, Sendable {
 }
 
 public enum WakePlanner {
-    public static func plan(for day: Date, commitments: [Commitment], events: [FixedEvent], routines: [Routine],
-                            prefs: Preferences, calendar cal: Calendar, exceptions: [DayException] = [],
+    public static func plan(for day: Date, events: [FixedEvent], routines: [Routine],
+                            prefs: Preferences, calendar cal: Calendar,
                             isSchoolDay: Bool? = nil) -> WakePlan {
-        let isSchool = isSchoolDay ?? SchoolDay.isSchoolDay(day, prefs: prefs, commitments: commitments, exceptions: exceptions, calendar: cal)
-        if let w = exceptions.wakeOverride(on: day, calendar: cal) {
-            return WakePlan(day: day, wake: at(day, w, cal), leaveBy: nil, firstCommitment: nil, reason: "You changed this day's wake-up")
-        }
+        let isSchool = isSchoolDay ?? prefs.schoolDays.contains(cal.component(.weekday, from: day))
         let fallback = at(day, isSchool ? prefs.schoolDayWake : prefs.freeDayWake, cal)
         guard prefs.autoWake else {
             return WakePlan(day: day, wake: fallback, leaveBy: nil, firstCommitment: nil, reason: "Your set wake time")
         }
         let noon = at(day, TimeOfDay(12), cal)
-        var firsts: [(Date, CommitmentKind)] = Commitment.occurrences(commitments, on: day, exceptions: exceptions, calendar: cal)
-            .map { ($0.start, $0.commitment.kind) }
-        firsts += events.filter { cal.isDate($0.start, inSameDayAs: day) }.map { ($0.start, $0.kind) }
+        let firsts: [(Date, CommitmentKind)] = events.filter { cal.isDate($0.start, inSameDayAs: day) }.map { ($0.start, $0.kind) }
         guard let first = firsts.filter({ $0.0 < noon }).min(by: { $0.0 < $1.0 }) else {
             return WakePlan(day: day, wake: fallback, leaveBy: nil, firstCommitment: nil,
                             reason: isSchool ? "Your school-day wake time" : "Free day: close to your usual time")

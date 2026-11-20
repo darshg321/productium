@@ -165,6 +165,10 @@ final class AppModel {
         }
     }
 
+    /// The timetable as `Commitment`s, for the readers that haven't moved to entries yet (marker parsing, place offers,
+    /// motion routine learning, calendar twins). Entries are the source of truth.
+    var legacyCommitments: [Commitment] { Timetable.commitments(from: state.entries, tree: state.categories, calendar: cal) }
+
     var itemsById: [UUID: WorkItem] { Dictionary(uniqueKeysWithValues: state.items.map { ($0.id, $0) }) }
 
     func replan() {
@@ -177,7 +181,6 @@ final class AppModel {
         } else if let cur = state.plan.current(at: now), cur.isStudy, !state.outcomes.contains(where: { $0.blockId == cur.id }) {
             locked = [cur]
         }
-        state.dayRules.syncNoSchool(exceptions: state.exceptions, commitments: state.commitments, calendar: cal)
         let input = plannerInput(now: now, locked: locked)
         PlanHistory.record(previous: state.plan, into: &state.planHistory, now: now, calendar: cal)
         PlanHistory.recordBedtimes(plan: state.plan, into: &state.plannedBedtimes, now: now, calendar: cal)
@@ -198,11 +201,11 @@ final class AppModel {
     }
 
     func plannerInput(now: Date, locked: [PlannedBlock] = []) -> PlannerInput {
-        PlannerInput(now: now, calendar: cal, items: state.items, commitments: state.commitments,
+        PlannerInput(now: now, calendar: cal, items: state.items,
                      events: shownEvents + state.oneOffs, preferences: state.prefs, learned: state.learned,
                      health: state.health, moods: state.moods, locked: locked, routines: state.routines,
-                     exceptions: state.exceptions, horizonDays: 14, policy: state.policy, beliefs: state.beliefs,
-                     situations: state.situations, dayRules: state.dayRules,
+                     horizonDays: 14, policy: state.policy, beliefs: state.beliefs,
+                     dayRules: state.dayRules,
                      entries: state.entries, rules: state.rules, categories: state.categories)
     }
 
@@ -414,7 +417,7 @@ final class AppModel {
     }
 
     func logMarker(_ phrase: String, source: MarkerSource = .manual, at: Date = Date()) {
-        let evs = MarkerParser.parse(phrase, at: at, commitments: state.commitments, calendar: cal, source: source)
+        let evs = MarkerParser.parse(phrase, at: at, commitments: legacyCommitments, calendar: cal, source: source)
         guard !evs.isEmpty else { return }
         MarkerLog.add(evs, to: &state.markers)
         learnRoutines(days: 1)
@@ -454,7 +457,7 @@ final class AppModel {
 
     private func offerPlace(after evs: [TimelineEvent]) {
         guard placeOffer == nil, LocationService.shared.status != .denied,
-              let found = PlaceSuggester.offer(after: evs, places: state.places, commitments: state.commitments,
+              let found = PlaceSuggester.offer(after: evs, places: state.places, commitments: legacyCommitments,
                                                declined: state.declinedPlaces) else { return }
         Task {
             guard let fix = await LocationService.shared.currentLocation() else { return }
@@ -529,7 +532,7 @@ final class AppModel {
         for d in 0...1 {
             guard let day = cal.date(byAdding: .day, value: d, to: cal.startOfDay(for: now)) else { continue }
             let wd = cal.component(.weekday, from: day)
-            let school = state.commitments.filter { $0.kind == .school && $0.weekdays.contains(wd) }
+            let school = legacyCommitments.filter { $0.kind == .school && $0.weekdays.contains(wd) }
             guard let first = school.min(by: { $0.start < $1.start }), let last = school.max(by: { $0.end < $1.end }) else { continue }
             let to = state.routines.first { $0.id == "to_school" }
             let from = state.routines.first { $0.id == "from_school" }
@@ -585,18 +588,18 @@ final class AppModel {
         state.motion = MotionTimeline.merge(state.motion, with: fresh, from: samples.map(\.at).min() ?? from)
         for i in 0...7 {
             guard let day = cal.date(byAdding: .day, value: -i, to: cal.startOfDay(for: now)) else { continue }
-            state.routines = MotionTimeline.learnRoutines(state.motion, day: day, commitments: state.commitments,
-                                                          exceptions: state.exceptions, routines: state.routines, calendar: cal)
+            state.routines = MotionTimeline.learnRoutines(state.motion, day: day, commitments: legacyCommitments,
+                                                          routines: state.routines, calendar: cal)
         }
     }
 
     /// Calendar events that are one of your activities (CS club) are shown once, as the activity.
     var shownEvents: [FixedEvent] {
-        EventMatch.withoutActivityTwins(state.events, commitments: state.commitments, exceptions: state.exceptions, calendar: cal)
+        EventMatch.withoutActivityTwins(state.events, commitments: legacyCommitments, calendar: cal)
     }
 
     func isSchoolDay(_ d: Date) -> Bool {
-        SchoolDay.isSchoolDay(d, prefs: state.prefs, commitments: state.commitments, exceptions: state.exceptions, calendar: cal)
+        Days.isSchoolDay(d, entries: state.entries, tree: state.categories, prefs: state.prefs, book: state.dayRules, calendar: cal)
     }
 
     /// The last `n` finished days: planned and done study, and the free time kept after school.
@@ -723,8 +726,8 @@ final class AppModel {
                                  summary: Insights.summarize(dayTotals(last: 7), learned: state.learned), policy: state.policy,
                                  feedback: state.changes.feedback, changes: state.changes.changeSummary(now: now),
                                  conversations: convos, items: state.items, plan: state.plan, moods: state.moods,
-                                 taper: state.taper, learned: state.learned, commitments: state.commitments,
-                                 situations: state.situations, dayRules: state.dayRules, exceptions: state.exceptions,
+                                 taper: state.taper, learned: state.learned,
+                                 dayRules: state.dayRules,
                                  metrics: MetricsExport.summary(metricSeries(), now: now, calendar: cal))
         guard let out = try? await ClaudeClient.shared.structured(
             feature: .review, system: InsightPass.system(), user: InsightPass.request(input), schema: InsightPass.schema,
@@ -734,8 +737,7 @@ final class AppModel {
         state.reviewAt = now
         let model = AIFeature.review.route.model
         let run = InsightRun(at: now, note: out.headline, model: model)
-        var drafts = InsightPass.drafts(out, runId: run.id, items: state.items, now: now, model: model, calendar: cal,
-                                        commitments: state.commitments)
+        var drafts = InsightPass.drafts(out, runId: run.id, items: state.items, now: now, model: model, calendar: cal)
         // F6: with four weeks of data, celebrations that made no difference to the next day's focus are turned down.
         let impact = RewardImpact.evaluate(log: state.rewards, outcomes: state.outcomes, now: now, calendar: cal)
         if let level = RewardImpact.turnDown(impact, settings: state.rewardSettings), let i = impact {
@@ -743,16 +745,7 @@ final class AppModel {
                                        reason: "Focus the day after a celebration was \(Int(i.withMoments.rounded())) min, and \(Int(i.without.rounded())) min after none, over \(i.daysWith + i.daysWithout) days",
                                        evidence: [], model: "code", at: now))
         }
-        let base = plannerInput(now: now)
-        let calendarIds = Set(state.events.map(\.id))
-        editDumpState {
-            state.changes.apply(run, drafts, to: &$0, now: now, admitSituation: { sit in
-                if case .failure(let why) = SituationRules.admit(sit, into: base, writer: .reflection, calendarEventIds: calendarIds) {
-                    return why.reason
-                }
-                return nil
-            })
-        }
+        editDumpState { state.changes.apply(run, drafts, to: &$0, now: now) }
         replan()
     }
 
@@ -769,11 +762,6 @@ final class AppModel {
 
     func removeReminder(_ id: UUID) {
         state.policy.intentions.removeAll { $0.id == id }
-        replan()
-    }
-
-    func removeSituation(_ id: UUID) {
-        state.situations.removeAll { $0.id == id }
         replan()
     }
 
@@ -826,7 +814,7 @@ final class AppModel {
         state.gaps.asked.removeAll { $0.id == asked.id }
         asked.end = gap.end
         asked.answer = text
-        if let markers = GapAnswer.markers(for: text, gap: gap, commitments: state.commitments, known: known, calendar: cal) {
+        if let markers = GapAnswer.markers(for: text, gap: gap, commitments: legacyCommitments, known: known, calendar: cal) {
             MarkerLog.add(markers, to: &state.markers)
             asked.activity = markers.first?.activity
             state.gaps.asked.append(asked)
@@ -841,14 +829,13 @@ final class AppModel {
 
     func dayInputs(_ day: Date) -> DayInputs {
         let next = cal.date(byAdding: .day, value: 1, to: day) ?? day
-        return DayInputs(day: day, events: state.markers, commitments: state.commitments,
+        return DayInputs(day: day, events: state.markers, entries: state.entries, categories: state.categories,
                          fixedEvents: shownEvents + state.oneOffs, routines: state.routines, outcomes: state.outcomes, itemsById: itemsById,
                          health: state.health.first { cal.isDate($0.day, inSameDayAs: day) },
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
                          screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,
-                         exceptions: state.exceptions, motion: state.motion, scrollSessions: Friction.log.sessions,
-                         scrollingApps: state.scrollingApps, progress: state.progress,
-                         situations: state.situations, dayRules: state.dayRules)
+                         motion: state.motion, scrollSessions: Friction.log.sessions,
+                         scrollingApps: state.scrollingApps, progress: state.progress, dayRules: state.dayRules)
     }
 
     func setScrolling(_ app: String, _ on: Bool) {

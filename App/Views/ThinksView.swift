@@ -14,21 +14,6 @@ struct ThinksView: View {
             } footer: {
                 Text("What Productium adjusted about how it plans and reminds you, from how your weeks went. Each one can be undone.")
             }
-            let live = model.state.situations.filter { $0.isActive(on: Date(), calendar: .current) }
-            if !live.isEmpty {
-                Section {
-                    ForEach(live) { s in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(s.said.isEmpty ? s.scope.text(.current) : s.said)
-                            Text(([s.scope.text(.current)] + s.effects.map(\.summary)).joined(separator: " · "))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        .swipeActions { Button("Remove", role: .destructive) { model.removeSituation(s.id) } }
-                    }
-                } header: { Text("Situations") } footer: {
-                    Text("Days that differ from your usual week. Swipe to remove one.")
-                }
-            }
             if !model.state.alarmRules.isEmpty {
                 Section {
                     ForEach(model.state.alarmRules) { r in

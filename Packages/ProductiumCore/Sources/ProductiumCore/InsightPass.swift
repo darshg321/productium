@@ -30,10 +30,7 @@ public struct InsightInput {
     public var moods: [MoodEntry]
     public var taper: ScreenTaper
     public var learned: LearnedModel
-    public var commitments: [Commitment]
-    public var situations: [Situation]
     public var dayRules: DayRuleBook
-    public var exceptions: [DayException]
     /// `MetricsExport.summary` (G6).
     public var metrics: String?
 
@@ -42,13 +39,9 @@ public struct InsightInput {
                 summary: PeriodSummary? = nil, policy: BehaviourPolicy = BehaviourPolicy(), feedback: [String] = [],
                 changes: String? = nil, conversations: [String] = [], items: [WorkItem] = [], plan: Plan = .empty,
                 moods: [MoodEntry] = [], taper: ScreenTaper = ScreenTaper(), learned: LearnedModel = LearnedModel(),
-                commitments: [Commitment] = [], situations: [Situation] = [], dayRules: DayRuleBook = DayRuleBook(),
-                exceptions: [DayException] = [], metrics: String? = nil) {
+                dayRules: DayRuleBook = DayRuleBook(), metrics: String? = nil) {
         self.metrics = metrics
-        self.commitments = commitments
-        self.situations = situations
         self.dayRules = dayRules
-        self.exceptions = exceptions
         self.now = now
         self.calendar = calendar
         self.trigger = trigger
@@ -113,9 +106,7 @@ public enum InsightPass {
         - alarm: your own alarm or a change to the app's: alarm_kind clock (time, scope days) | before_due (task) | before_blocks (task, minutes) \
         | shift (alarm_target wake|bedtime|leave|missedStart, minutes -30..30, scope days) | off (alarm_target, not wake); label. For example an \
         alarm 5 minutes before the blocks of a task they keep missing. Never remove an alarm the student set.
-        - situation: a rule for days that keep coming back: said, scope (day rule), effects, expires (optional). Turn repeated \
-        one-day changes into one rule, or make a behaviour conditional ("planner.capacity 0.8 on Fridays", ranges apply). \
-        \(SituationText.grammar)
+        \(DayRuleText.grammar)
         Each has reason (one sentence of evidence) and evidence (short lines). Don't redo anything under "Undone         before".
         about_me: up to 3 lines, section Inferred ("text — evidence: …, confidence: low|med|high, since YYYY-MM-DD")         or Patterns ("puts off university essays: deferred 3× this week").
         """
@@ -124,7 +115,7 @@ public enum InsightPass {
     public static let schema: JSONValue = {
         let s = Schemas.str, i = Schemas.int, n: JSONValue = .object(["type": .string("number")])
         let change = Schemas.obj([
-            "type": Schemas.strEnum(["knob", "starter_step", "intention", "belief_group", "situation", "alarm"]),
+            "type": Schemas.strEnum(["knob", "starter_step", "intention", "belief_group", "alarm"]),
             "alarm_kind": s, "alarm_target": s, "label": s,
             "said": s, "scope": s, "effects": Schemas.arr(s), "expires": s,
             "knob": s, "value": n, "task": s, "title": s, "minutes": i, "due": s,
@@ -197,14 +188,6 @@ public enum InsightPass {
         }
         l.append("Behaviour knobs now: " + knobs.joined(separator: "; "))
         if let m = x.metrics { l.append(m) }
-        if !x.commitments.isEmpty {
-            l.append("Activity ids: " + x.commitments.map { "\(Ref.activity($0.id)) \"\($0.title)\"" }.joined(separator: "; "))
-        }
-        let rep = repeats(exceptions: x.exceptions, commitments: x.commitments, now: x.now, calendar: cal)
-        if !rep.isEmpty { l.append("Repeated one-day changes: " + rep.joined(separator: "; ")) }
-        if !x.situations.isEmpty {
-            l.append("Rules and situations already: " + x.situations.map { "\"\($0.said)\" (\($0.scope.text(cal)); " + $0.effects.map(\.summary).joined(separator: ", ") + ")" }.joined(separator: "; "))
-        }
         if !x.dayRules.sequences.isEmpty { l.append("Day sequences: " + x.dayRules.sequences.map(\.name).joined(separator: ", ")) }
         if !x.policy.intentions.isEmpty { l.append("Reminders already: " + x.policy.intentions.map(\.text).joined(separator: "; ")) }
         if !x.feedback.isEmpty { l.append("Undone before (don't redo): " + x.feedback.joined(separator: " | ")) }
@@ -212,25 +195,8 @@ public enum InsightPass {
         return l.joined(separator: "\n")
     }
 
-    /// One-day changes that look the same and keep happening: the raw material for a rule.
-    public static func repeats(exceptions: [DayException], commitments: [Commitment], now: Date, calendar cal: Calendar,
-                               days: Int = 60) -> [String] {
-        let since = now.addingTimeInterval(-Double(days) * 86400)
-        let wd = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-        var groups: [String: [Date]] = [:]
-        for e in exceptions where e.day >= since && e.day <= now.addingTimeInterval(14 * 86400) {
-            let what = e.commitmentId.flatMap { id in commitments.first { $0.id == id }?.title } ?? e.kind?.rawValue ?? "day"
-            let how = e.cancelled ? "cancelled" : [e.start.map { "starts \($0.label)" }, e.end.map { "ends \($0.label)" },
-                                                 e.wake.map { "wake \($0.label)" }].compactMap { $0 }.joined(separator: ", ")
-            groups["\(what) \(how)", default: []].append(e.day)
-        }
-        return groups.filter { $0.value.count >= 3 }.sorted { $0.value.count > $1.value.count }.map { k, v in
-            "\(v.count)× \(k) on " + v.sorted().map { wd[cal.component(.weekday, from: $0)] }.joined(separator: ", ")
-        }
-    }
-
     public static func drafts(_ o: Output, runId: UUID, items: [WorkItem], now: Date, model: String,
-                              calendar cal: Calendar, commitments: [Commitment] = []) -> [LoggedChange] {
+                              calendar cal: Calendar) -> [LoggedChange] {
         func make(_ c: InsightChange, _ reason: String, _ ev: [String]) -> LoggedChange {
             LoggedChange(runId: runId, change: c, reason: reason, evidence: ev, model: model, at: now)
         }
@@ -259,17 +225,10 @@ public enum InsightPass {
                                                        "missedstart": .missedStart][$0.lowercased().filter(\.isLetter)] }
                 let rule = AlarmRule(label: p.label ?? "", kind: kind, time: ClockText.timeOfDay(p.time), itemId: task(p.task)?.id,
                                      minutes: p.minutes ?? 0, target: target,
-                                     when: SituationText.rule(p.scope, tz: cal.timeZone, commitments: commitments, items: items),
+                                     when: DayRuleText.rule(p.scope, tz: cal.timeZone, items: items),
                                      expires: p.expires.flatMap { AIMapper.parseDate($0, timeZone: cal.timeZone) }, source: .reflection, createdAt: now)
                 if (kind == .clock && rule.time == nil) || (kind == .beforeDue && rule.itemId == nil) || ((kind == .shift || kind == .suppress) && target == nil) { continue }
                 out.append(make(.alarm(rule), p.reason, ev))
-            case "situation":
-                guard let scope = SituationText.rule(p.scope, tz: cal.timeZone, commitments: commitments, items: items) else { continue }
-                let effects = (p.effects ?? []).compactMap { SituationText.effect($0, tz: cal.timeZone, commitments: commitments, items: items) }
-                guard !effects.isEmpty else { continue }
-                let expires = p.expires.flatMap { AIMapper.parseDate($0, timeZone: cal.timeZone) }
-                out.append(make(.situation(Situation(said: p.said ?? p.reason, scope: scope, effects: effects, expires: expires,
-                                                     source: .reflection, createdAt: now)), p.reason, ev))
             case "beliefgroup":
                 guard let id = p.group_id ?? p.group_title, let title = p.group_title ?? p.group_id else { continue }
                 let slug = id.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "_" }

@@ -77,10 +77,10 @@ public enum MotionTimeline {
             .max { $0.minutes < $1.minutes }
     }
 
-    public static func learnRoutines(_ spans: [MotionSpan], day: Date, commitments: [Commitment], exceptions: [DayException] = [],
+    public static func learnRoutines(_ spans: [MotionSpan], day: Date, commitments: [Commitment],
                                      routines: [Routine], calendar cal: Calendar) -> [Routine] {
         var out = routines
-        let occ = Commitment.occurrences(commitments, on: cal.startOfDay(for: day), exceptions: exceptions, calendar: cal)
+        let occ = Commitment.occurrences(commitments, on: cal.startOfDay(for: day), calendar: cal)
             .filter { $0.commitment.kind == .school }
         guard let first = occ.map(\.start).min(), let last = occ.map(\.end).max() else { return out }
         let todays = spans.filter { $0.isTravel && $0.minutes >= minMinutes && cal.isDate($0.start, inSameDayAs: day) }

@@ -6,7 +6,7 @@ final class GapTests: XCTestCase {
 
     func input(now: Date, markers: [TimelineEvent] = [], phone: [Date] = [Fx.mon(16)], scrolling: [ScrollSession] = [],
                plan: Plan = .empty, log: GapLog = GapLog(), focusing: Bool = false) -> GapInput {
-        GapInput(now: now, day: DayInputs(day: Fx.mon(0), events: markers, commitments: [Fx.school], routines: Routine.defaults,
+        GapInput(now: now, day: DayInputs(day: Fx.mon(0), events: markers, entries: Fx.schoolEntries, routines: Routine.defaults,
                                           outcomes: [], health: nil, screen: nil, prefs: Preferences()),
                  scrolling: scrolling, phoneUse: phone, plan: plan, focusing: focusing, log: log)
     }
@@ -53,7 +53,7 @@ final class GapTests: XCTestCase {
         let g = MysteryGap(start: Fx.mon(15, 20), end: Fx.mon(16, 10), ongoing: false)
         let m = GapAnswer.markers(for: "gym", gap: g, commitments: [Fx.school], known: [], calendar: cal)!
         XCTAssertEqual(m.map(\.activity), ["exercise", "exercise"])
-        let segs = TimelineBuilder.segments(DayInputs(day: Fx.mon(0), events: m, commitments: [Fx.school], routines: Routine.defaults,
+        let segs = TimelineBuilder.segments(DayInputs(day: Fx.mon(0), events: m, entries: Fx.schoolEntries, routines: Routine.defaults,
                                                       outcomes: [], health: nil, screen: nil, prefs: Preferences()),
                                             calendar: cal, now: Fx.mon(17))
         let seg = segs.first { $0.category == .activities }
@@ -71,7 +71,7 @@ final class GapTests: XCTestCase {
 final class GapExplainedTests: XCTestCase {
     let cal = Fx.cal
     func testAVisitOrWorkoutExplainsAGapSoNothingIsAsked() {
-        let day = DayInputs(day: Fx.mon(0), events: [], commitments: [Fx.school], routines: Routine.defaults, outcomes: [],
+        let day = DayInputs(day: Fx.mon(0), events: [], entries: Fx.schoolEntries, routines: Routine.defaults, outcomes: [],
                             health: nil, screen: nil, prefs: Preferences())
         let plain = GapInput(now: Fx.mon(16, 10), day: day, phoneUse: [Fx.mon(16)])
         XCTAssertNotNil(GapDetector.due(plain, calendar: cal))

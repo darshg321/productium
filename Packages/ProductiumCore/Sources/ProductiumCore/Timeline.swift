@@ -223,7 +223,9 @@ public struct Segment: Codable, Hashable, Sendable {
 public struct DayInputs: Sendable {
     public var day: Date
     public var events: [TimelineEvent]
-    public var commitments: [Commitment]
+    /// Your timetable and everything else timed (v1.2): the days' fixed time comes from here.
+    public var entries: [Entry]
+    public var categories: CategoryTree
     public var fixedEvents: [FixedEvent]
     public var routines: [Routine]
     public var outcomes: [BlockOutcome]
@@ -232,30 +234,28 @@ public struct DayInputs: Sendable {
     public var nextHealth: HealthDay?
     public var screen: ScreenDay?
     public var prefs: Preferences
-    public var exceptions: [DayException]
     public var motion: [MotionSpan]
     public var scrollSessions: [ScrollSession]
     public var scrollingApps: [String: Bool]
     public var progress: [ProgressEntry]
-    public var situations: [Situation]
     public var dayRules: DayRuleBook
 
-    public init(day: Date, events: [TimelineEvent], commitments: [Commitment], fixedEvents: [FixedEvent] = [],
+    public init(day: Date, events: [TimelineEvent], entries: [Entry] = [], categories: CategoryTree = CategoryTree(),
+                fixedEvents: [FixedEvent] = [],
                 routines: [Routine], outcomes: [BlockOutcome], itemsById: [UUID: WorkItem] = [:],
                 health: HealthDay?, nextHealth: HealthDay? = nil, screen: ScreenDay?, prefs: Preferences,
-                exceptions: [DayException] = [], motion: [MotionSpan] = [], scrollSessions: [ScrollSession] = [],
+                motion: [MotionSpan] = [], scrollSessions: [ScrollSession] = [],
                 scrollingApps: [String: Bool] = [:], progress: [ProgressEntry] = [],
-                situations: [Situation] = [], dayRules: DayRuleBook = DayRuleBook()) {
-        self.situations = situations
+                dayRules: DayRuleBook = DayRuleBook()) {
         self.dayRules = dayRules
         self.progress = progress
         self.scrollSessions = scrollSessions
         self.scrollingApps = scrollingApps
         self.motion = motion
-        self.exceptions = exceptions
         self.day = day
         self.events = events
-        self.commitments = commitments
+        self.entries = entries
+        self.categories = categories
         self.fixedEvents = fixedEvents
         self.routines = routines
         self.outcomes = outcomes
@@ -283,26 +283,19 @@ public enum TimelineBuilder {
         }
         func at(_ t: TimeOfDay) -> Date { cal.date(bySettingHour: t.hour, minute: t.minute, second: 0, of: dayStart) ?? dayStart }
 
-        let resolver = SituationResolver(situations: d.situations, book: d.dayRules, calendar: cal)
-        let over = resolver.day(dayStart)
-        let occ = Commitment.occurrences(resolver.commitments(d.commitments, on: dayStart), on: dayStart,
-                                         exceptions: d.exceptions, calendar: cal)
-        let todays = occ.map(\.commitment)
-        let weekday = cal.component(.weekday, from: dayStart)
-        for o in occ {
-            paint(o.start, o.end, TimeCategory.from(o.commitment.kind), o.commitment.title, observed: false)
-            for p in o.commitment.periods ?? [] where p.applies(on: weekday) {
-                paint(max(o.start, at(p.start)), min(o.end, at(p.end)), TimeCategory.from(o.commitment.kind), p.title, observed: false)
-            }
-        }
+        struct Fixed { var title: String; var start: Date; var end: Date; var kind: CommitmentKind; var category: TimeCategory; var assumed: Bool }
+        let occ: [Fixed] = Days.on(dayStart, d.entries.filter { $0.source != .plan }, now: now ?? dayEnd, book: d.dayRules, calendar: cal)
+            .filter { cal.isDate($0.start, inSameDayAs: dayStart) && $0.taskId == nil && !$0.running }
+            .map { Fixed(title: $0.title, start: $0.start, end: $0.end, kind: Timetable.kind(of: $0.category, tree: d.categories),
+                         category: d.categories.legacy($0.category), assumed: $0.assumed) }
+            .sorted { $0.start < $1.start }
+        for o in occ { paint(o.start, o.end, o.category, o.title, observed: !o.assumed) }
         for e in d.fixedEvents where cal.isDate(e.start, inSameDayAs: dayStart) {
             paint(e.start, e.end, TimeCategory.from(e.kind), e.title, observed: false)
         }
-        // Busy time from situations ("grandma visiting 10-6") shows like any other fixed event.
-        for b in over.busy { paint(at(b.start), at(b.end), .free, b.title, observed: false) }
         let checkedIn = Set(d.events.filter { cal.isDate($0.at, inSameDayAs: dayStart) }.map(\.activity))
         for r in d.routines where r.enabled && !checkedIn.contains(r.id) {
-            let anchored = occ.filter { r.anchorKind == nil || $0.commitment.kind == r.anchorKind }
+            let anchored = occ.filter { r.anchorKind == nil || $0.kind == r.anchorKind }
             switch r.anchor {
             case .beforeFirstCommitment:
                 if let f = anchored.first {
@@ -328,8 +321,11 @@ public enum TimelineBuilder {
             let bed = h.bedtime ?? wake.addingTimeInterval(-Double(h.sleepMinutes ?? d.prefs.sleepNeedMinutes) * 60)
             paint(max(bed, dayStart), wake, .sleep, "Sleep", observed: h.sleepSource != .motion && h.sleepSource != .plan)
         } else {
-            let w = WakePlanner.plan(for: dayStart, commitments: d.commitments, events: d.fixedEvents, routines: d.routines,
-                                     prefs: d.prefs, calendar: cal, exceptions: d.exceptions).wake
+            let fromEntries = occ.map { FixedEvent(id: "entry", title: $0.title, start: $0.start, end: $0.end, kind: $0.kind) }
+            let w = WakePlanner.plan(for: dayStart, events: d.fixedEvents + fromEntries, routines: d.routines,
+                                     prefs: d.prefs, calendar: cal,
+                                     isSchoolDay: Days.isSchoolDay(dayStart, entries: d.entries, tree: d.categories, prefs: d.prefs,
+                                                                   book: d.dayRules, calendar: cal)).wake
             paint(dayStart, w, .sleep, "Sleep", observed: false)
         }
         if let next = d.nextHealth, let bed = next.bedtime, cal.isDate(bed, inSameDayAs: dayStart) {
@@ -377,8 +373,8 @@ public enum TimelineBuilder {
                     paint(s.at, e.at, e.category, display(e.activity), observed: true)
                 } else if e.activity == "wake" || e.activity == "sleep" {
                     paint(dayStart, e.at, .sleep, "Sleep", observed: true)
-                } else if let scheduled = todays.first(where: { MarkerParser.normalise($0.title) == e.activity }) {
-                    paint(at(scheduled.start), e.at, e.category, scheduled.title, observed: true)
+                } else if let scheduled = occ.first(where: { MarkerParser.normalise($0.title) == e.activity }) {
+                    paint(scheduled.start, e.at, e.category, scheduled.title, observed: true)
                 } else if let r = d.routines.first(where: { $0.id == e.activity }) {
                     paint(e.at.addingTimeInterval(-Double(r.minutes) * 60), e.at, e.category, r.name, observed: true)
                 }
@@ -388,7 +384,7 @@ public enum TimelineBuilder {
         }
         for (_, s) in open {
             var end = s.at.addingTimeInterval(2 * 3600)
-            if let scheduled = todays.first(where: { MarkerParser.normalise($0.title) == s.activity }) { end = at(scheduled.end) }
+            if let scheduled = occ.first(where: { MarkerParser.normalise($0.title) == s.activity }) { end = scheduled.end }
             if let r = d.routines.first(where: { $0.id == s.activity }) { end = s.at.addingTimeInterval(Double(r.minutes) * 60) }
             if s.activity == "sleep" { end = dayEnd }
             if let now, now < end { end = now }

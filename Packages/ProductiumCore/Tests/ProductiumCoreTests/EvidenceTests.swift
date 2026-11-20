@@ -5,7 +5,7 @@ final class EvidenceTests: XCTestCase {
     let cal = Fx.cal
 
     func state(items: [WorkItem] = []) -> DumpState {
-        DumpState(items: items, commitments: [Fx.school], exceptions: [], oneOffs: [], markers: [],
+        DumpState(items: items, oneOffs: [], markers: [],
                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
     }
 
@@ -47,7 +47,7 @@ final class MotionTests: XCTestCase {
         XCTAssertEqual(walk.end, Fx.mon(8, 16), "records of the same kind merge")
         let markers = [TimelineEvent(at: Fx.mon(15), phrase: "left school", activity: "from_school", category: .commute, phase: .start),
                        TimelineEvent(at: Fx.mon(15, 30), phrase: "home", activity: "from_school", category: .commute, phase: .end)]
-        let segs = TimelineBuilder.segments(DayInputs(day: Fx.mon(12), events: markers, commitments: [Fx.school], routines: Routine.defaults,
+        let segs = TimelineBuilder.segments(DayInputs(day: Fx.mon(12), events: markers, entries: Fx.schoolEntries, routines: Routine.defaults,
                                                       outcomes: [], health: nil, screen: nil, prefs: Preferences(), motion: spans),
                                             calendar: cal, now: Fx.mon(18))
         XCTAssertEqual(segs.first { $0.label == "Walk" }?.start, Fx.mon(8, 2))
@@ -132,7 +132,7 @@ final class BeliefTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(CapacityLearner.learn(Beliefs(), days: lazy, now: now, calendar: cal).value("study.schoolDayCapacity"), 30)
         let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 4), estimateMinutes: 900)
         func monday(_ beliefs: Beliefs) -> Int {
-            Planner.plan(PlannerInput(now: Fx.mon(6), calendar: cal, items: [essay], commitments: [Fx.school], beliefs: beliefs))
+            Planner.plan(PlannerInput(now: Fx.mon(6), calendar: cal, items: [essay], beliefs: beliefs, entries: Fx.schoolEntries))
                 .blocks(on: Fx.mon(12), calendar: cal).filter(\.isStudy).reduce(0) { $0 + $1.minutes }
         }
         var low = Beliefs(); _ = low.state("study.schoolDayCapacity", 60, now: now)

@@ -86,7 +86,6 @@ public struct AppState: Codable, Sendable {
     public var telemetry = Telemetry()
     public var prefs = Preferences()
     public var items: [WorkItem] = []
-    public var commitments: [Commitment] = []
     public var routines: [Routine] = Routine.defaults
     public var markers: [TimelineEvent] = []
     public var outcomes: [BlockOutcome] = []
@@ -102,9 +101,6 @@ public struct AppState: Codable, Sendable {
     public var scrollingApps: [String: Bool] = [:]
     public var events: [FixedEvent] = []
     public var oneOffs: [FixedEvent] = []
-    public var exceptions: [DayException] = []
-    /// v1.1 A.2: overrides on the planner's inputs over any span of days.
-    public var situations: [Situation] = []
     /// Named day sequences (A/B rotations) and labels ("exam-week", "no-school").
     public var dayRules = DayRuleBook()
     /// Things the student said that the app couldn't act on (v1.2's backlog).
@@ -145,10 +141,9 @@ public struct AppState: Codable, Sendable {
 
     public var dumpState: DumpState {
         get {
-            var ds = DumpState(items: items, commitments: commitments, exceptions: exceptions, oneOffs: oneOffs, markers: markers,
+            var ds = DumpState(items: items, oneOffs: oneOffs, markers: markers,
                       routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy,
                       progress: progress, beliefs: beliefs, scrollingApps: scrollingApps, screenAverages: screenAverages)
-            ds.situations = situations
             ds.dayRules = dayRules
             ds.gapNotes = gapNotes
             ds.alarmRules = alarmRules
@@ -160,8 +155,6 @@ public struct AppState: Codable, Sendable {
         }
         set {
             items = newValue.items
-            commitments = newValue.commitments
-            exceptions = newValue.exceptions
             oneOffs = newValue.oneOffs
             markers = newValue.markers
             routines = newValue.routines
@@ -173,7 +166,6 @@ public struct AppState: Codable, Sendable {
             beliefs = newValue.beliefs
             scrollingApps = newValue.scrollingApps
             screenAverages = newValue.screenAverages
-            situations = newValue.situations
             dayRules = newValue.dayRules
             gapNotes = newValue.gapNotes
             alarmRules = newValue.alarmRules
@@ -200,7 +192,6 @@ public struct AppState: Codable, Sendable {
         pinnedCharts = v(.pinnedCharts, d.pinnedCharts)
         prefs = v(.prefs, d.prefs)
         items = v(.items, d.items)
-        commitments = v(.commitments, d.commitments)
         routines = v(.routines, d.routines)
         markers = v(.markers, d.markers)
         outcomes = v(.outcomes, d.outcomes)
@@ -215,8 +206,6 @@ public struct AppState: Codable, Sendable {
         scrollingApps = v(.scrollingApps, d.scrollingApps)
         events = v(.events, d.events)
         oneOffs = v(.oneOffs, d.oneOffs)
-        exceptions = v(.exceptions, d.exceptions)
-        situations = v(.situations, d.situations)
         dayRules = v(.dayRules, d.dayRules)
         gapNotes = v(.gapNotes, d.gapNotes)
         alarmRules = v(.alarmRules, d.alarmRules)

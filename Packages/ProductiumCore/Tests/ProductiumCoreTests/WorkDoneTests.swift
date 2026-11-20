@@ -44,7 +44,7 @@ final class WorkDoneTests: XCTestCase {
 
     func testDayTotalsUseTheSameSource() {
         let progress = [ProgressEntry(at: Fx.mon(18), minutes: 90, source: .evidence)]
-        let inputs = DayInputs(day: Fx.mon(0), events: [], commitments: [], routines: [], outcomes: [], health: nil, screen: nil,
+        let inputs = DayInputs(day: Fx.mon(0), events: [], routines: [], outcomes: [], health: nil, screen: nil,
                                prefs: Preferences(), progress: progress)
         let t = Insights.dayTotals(inputs, plannedStudy: 120, moods: [], screenTarget: nil, calendar: cal, now: Fx.mon(21))
         XCTAssertEqual(t.doneStudy, 90)

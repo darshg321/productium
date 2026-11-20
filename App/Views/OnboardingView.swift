@@ -130,7 +130,7 @@ struct OnboardingView: View {
             Text("Write your school hours, your activities and anything coming up. A screenshot of your timetable works too. For example: “school mon–fri 8:30 to 3, soccer mon and wed 4–5:30, chem test thursday, college essay due dec 1”.")
                 .lineSpacing(3)
             DumpBox()
-            let known = model.state.commitments
+            let known = model.legacyCommitments
             if !known.isEmpty || !model.state.items.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("So far").font(.subheadline.weight(.semibold))
@@ -150,8 +150,11 @@ struct OnboardingView: View {
     private var sleep: some View {
         @Bindable var m = model
         let monday = Calendar.current.nextDate(after: Date(), matching: DateComponents(weekday: 2), matchingPolicy: .nextTime) ?? Date()
-        let wake = WakePlanner.plan(for: monday, commitments: model.state.commitments, events: [], routines: model.state.routines,
-                                    prefs: model.state.prefs, calendar: .current, exceptions: model.state.exceptions)
+        let wake = WakePlanner.plan(for: monday, events: model.legacyCommitments.compactMap { c in
+                                        Calendar.current.date(bySettingHour: c.start.hour, minute: c.start.minute, second: 0, of: monday)
+                                            .map { FixedEvent(id: c.id.uuidString, title: c.title, start: $0, end: $0.addingTimeInterval(3600), kind: c.kind) }
+                                    }, routines: model.state.routines,
+                                    prefs: model.state.prefs, calendar: .current)
         return VStack(alignment: .leading, spacing: 18) {
             IconTile(symbol: "bed.double.fill", color: Theme.sleep, size: 56)
             Text("Sleep").font(.largeTitle.weight(.bold))
