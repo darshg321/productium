@@ -14,22 +14,25 @@ struct ReviewView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    EndOfDayCard()
-                    RingSection()
-                    GoalsCard()
-                    ScoreWeekCard()
-                    HowYouWorkCard()
-                    LeaderboardCard()
-                    MetricsSection()
-                    MoodMapCard()
-                    WhereCard()
-                    ForEach(model.state.pinnedCharts) { p in LiveChart(query: p.query, title: p.title, pinnedId: p.id) }
-                    note
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        EndOfDayCard().id("today")
+                        RingSection().id("ring")
+                        GoalsCard().id("goals")
+                        ScoreWeekCard().id("week")
+                        HowYouWorkCard().id("work")
+                        LeaderboardCard().id("leaderboard")
+                        MetricsSection().id("metrics")
+                        MoodMapCard().id("mood")
+                        WhereCard().id("where")
+                        ForEach(model.state.pinnedCharts) { p in LiveChart(query: p.query, title: p.title, pinnedId: p.id) }
+                        note.id("note")
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 32)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 32)
+                .onChange(of: model.scrollTarget) { _, t in if let t { proxy.scrollTo(t, anchor: .top) } }
             }
             .background(Theme.background)
             .refreshable { await model.insightPass(force: true) }
@@ -427,7 +430,7 @@ struct LeaderboardCard: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
-                    if let url = Leaderboard.invite(g) {
+                    if let url = Leaderboard.invite(g, scheme: AppInfo.scheme) {
                         ShareLink(item: url, message: Text("Join \(g.name) on Productium")) { Label("Invite", systemImage: "person.badge.plus") }
                     }
                     Spacer()

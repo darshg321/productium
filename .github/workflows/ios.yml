@@ -21,6 +21,11 @@ on:
 
 env:
   BUNDLE_PREFIX: ${{ vars.BUNDLE_PREFIX || 'com.example' }}
+  # Dev builds are a separate app (own bundle id, name, icon, URL scheme and data) next to the release one.
+  APP_ID: ${{ format('{0}.productium{1}', vars.BUNDLE_PREFIX || 'com.example', github.ref == 'refs/heads/dev' && '.dev' || '') }}
+  APP_NAME: ${{ github.ref == 'refs/heads/dev' && 'Productium Dev' || 'Productium' }}
+  APP_SCHEME: ${{ github.ref == 'refs/heads/dev' && 'productium-dev' || 'productium' }}
+  APP_ICON: ${{ github.ref == 'refs/heads/dev' && 'AppIconDev' || 'AppIcon' }}
   # The leaderboard Worker new groups use (scripts/leaderboard/deploy.sh sets it); empty = groups can only be joined.
   LEADERBOARD_URL: ${{ vars.LEADERBOARD_URL || '' }}
 

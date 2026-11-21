@@ -63,10 +63,12 @@ struct RootView: View {
         .sheet(isPresented: $showPause) { PauseSheet() }
         .onChange(of: model.deepLink) { _, link in open(link) }
         .onAppear { open(model.deepLink) }
+        .task { TestHooks.shared.start(model) }
     }
 
     private func open(_ link: String?) {
         guard let link, model.state.onboarded else { return }
+        showPause = false
         if link.hasPrefix("productium://week") || link.hasPrefix("productium://schedule") { tab = 1 }
         else if link.hasPrefix("productium://tasks") { tab = 2 }
         else if link.hasPrefix("productium://review") { tab = 3 }

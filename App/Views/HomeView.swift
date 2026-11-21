@@ -12,6 +12,7 @@ struct TodayView: View {
     var body: some View {
         NavigationStack {
             TimelineView(.periodic(from: .now, by: 30)) { ctx in
+                ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         Text(ctx.date.formatted(.dateTime.weekday(.wide).month(.wide).day()))
@@ -25,13 +26,15 @@ struct TodayView: View {
                         MoodButtons(now: ctx.date)
                         if let q = model.state.inference.pending.first { QuestionCard(question: q) }
                         if model.screenshotOffer != nil { ScreenshotOfferCard() }
-                        TodayRingCard(now: ctx.date)
-                        UpNextCard(now: ctx.date)
+                        TodayRingCard(now: ctx.date).id("ring")
+                        UpNextCard(now: ctx.date).id("upnext")
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 32)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .onChange(of: model.scrollTarget) { _, t in if let t { proxy.scrollTo(t, anchor: .top) } }
+                }
             }
             .background(Theme.background)
             .refreshable { await model.refresh() }

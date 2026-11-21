@@ -47,7 +47,7 @@ struct RunningLiveActivity: Widget {
             } minimal: {
                 Image(systemName: "record.circle").foregroundStyle(.red)
             }
-            .widgetURL(URL(string: "productium://today"))
+            .widgetURL(AppInfo.url("today"))
         }
     }
 }
@@ -99,7 +99,7 @@ struct StartNextControl: ControlWidget {
 struct OpenBoxControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "app.productium.control.box") {
-            ControlWidgetButton(action: OpenURLIntent(URL(string: "productium://box")!)) {
+            ControlWidgetButton(action: OpenURLIntent(AppInfo.url("box")!)) {
                 Label("Tell Productium", systemImage: "text.bubble")
             }
         }

@@ -1,0 +1,66 @@
+# Every screen in every scenario. Shots in shots/, text in dumps/.
+scenario fresh
+shot 00-onboarding
+
+scenario today
+shot 01-today
+scroll ring
+shot 01-today-ring
+tab schedule
+shot 02-schedule
+tab tasks
+shot 03-tasks
+tab review
+shot 04-review
+tab settings
+shot 05-settings
+dump today
+
+scenario history
+tab review
+shot 10-review
+scroll week
+shot 11-review-week
+scroll work
+shot 12-review-how-you-work
+scroll metrics
+shot 13-review-metrics
+scroll note
+shot 14-review-note
+tab tasks
+shot 15-tasks-warnings
+dump history
+
+scenario evening
+tab review
+shot 20-evening-review
+tab schedule
+shot 21-evening-schedule
+confirm-today
+shot 22-evening-confirmed
+dump evening
+
+scenario alerts
+shot 30-alerts-home
+answer yes
+approve
+shot 31-alerts-answered
+dump alerts
+
+scenario leaderboard
+tab review
+scroll leaderboard
+shot 40-leaderboard
+dump leaderboard
+
+scenario today
+open productium-dev://gap
+shot 50-pause-sheet
+dismiss
+stop
+shot 51-stopped
+start Laundry
+shot 52-laundry-running
+say done
+shot 53-said-done
+dump end

@@ -13,6 +13,8 @@ final class AppModel {
     var toast: String?
     /// A leaderboard invite opened before you picked a name (Review → Leaderboard asks for it).
     var pendingInvite: String?
+    /// Dev test runner: the card id a screen should scroll to (`scroll <card>`).
+    var scrollTarget: String?
     var busy: Set<String> = []
     var serverOnline: Bool?
     var serverUsage: ServerUsage?

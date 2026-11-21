@@ -12,7 +12,7 @@ struct ProductiumApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
-                .onOpenURL { model.deepLink = $0.absoluteString }
+                .onOpenURL { model.deepLink = AppInfo.normalised($0) }
         }
         .onChange(of: phase) { _, p in
             if p == .active { model.foreground() }
