@@ -21,6 +21,14 @@ struct V12Case {
     /// One op list per turn.
     let reference: [[BoxOp]]
     let check: (BoxState) -> [String]
+    /// H2: the track record in the context.
+    var trackRecord: [String] = []
+    /// Checks on the last reply and every op sent (side ops like mood aren't in `BoxState`).
+    var replyCheck: (String, [BoxOp]) -> [String] = { _, _ in [] }
+    /// The reply a correct answer could give, for `--v12-reference`.
+    var referenceReply = ""
+    /// A reference that depends on the state (refs made in an earlier turn).
+    var referenceFor: ((Int, BoxState) -> [BoxOp])?
 }
 
 enum World {
@@ -123,7 +131,9 @@ struct Expect {
 enum V12 {
     typealias W = World
 
-    static let cases: [V12Case] = [
+    static var cases: [V12Case] { real + V12More.everyday + V12More.exceptions }
+
+    static let real: [V12Case] = [
         V12Case(id: "timetable-odd-even",
                 why: "v1.1 needed 3 turns and failed once; the even-date swap has to become its own repeating entries, keeping P-numbers",
                 now: W.at(18, 14, 4), setup: { $0 = W.base(timetable: false) },
@@ -407,6 +417,7 @@ enum V12 {
 
     /// Reference answers that need refs only known once the world exists.
     static func referenceOps(_ c: V12Case, turn: Int, _ s: BoxState) -> [BoxOp] {
+        if let f = c.referenceFor { return f(turn, s) }
         var ops = c.reference[turn]
         switch c.id {
         case "quiz-due-at-its-class" where turn == 1:
@@ -450,6 +461,7 @@ enum V12 {
             c.setup(&s)
             var convo = Conversation(startedAt: c.now)
             var problems: [String] = [], transcript: [String] = []
+            var allOps: [BoxOp] = [], lastReply = reference ? c.referenceReply : ""
             for (i, text) in c.turns.enumerated() {
                 let at = c.now.addingTimeInterval(Double(i) * 20)
                 let ops: [BoxOp]
@@ -460,8 +472,9 @@ enum V12 {
                     ops = referenceOps(c, turn: i, s)
                 } else {
                     let planned = PlanEntries.from(World.plan(s, now: at), items: s.items, now: at)
-                    context = BoxContext.make(BoxContextInput(now: at, calendar: World.cal, state: s, planned: planned,
-                                                              settings: World.settings))
+                    var input = BoxContextInput(now: at, calendar: World.cal, state: s, planned: planned, settings: World.settings)
+                    input.trackRecord = c.trackRecord
+                    context = BoxContext.make(input)
                     if ProcessInfo.processInfo.environment["V12_CTX"] != nil { print("----- context, turn \(i + 1)\n" + context) }
                     let (req, userContent) = BoxTurn.request(convo, context: context, text: text)
                     content = userContent
@@ -481,7 +494,10 @@ enum V12 {
                     ops = result!.ops
                     if !result!.unreadable.isEmpty { problems.append("turn \(i + 1): unreadable ops \(result!.unreadable)") }
                 }
-                let r = BoxApplier.apply(ops, to: &s, now: at, calendar: World.cal)
+                allOps += ops
+                s.planned = PlanEntries.from(World.plan(s, now: at), items: s.items, now: at)
+                let r = BoxApplier.apply(BoxSideOps.split(ops).box, to: &s, now: at, calendar: World.cal)
+                if let result { lastReply = result.reply }
                 if let result, let response {
                     // What was really applied, so the next turn starts with it.
                     BoxTurn.record(&convo, at: at, text: text, content: content, response: response, result: result, receipt: r,
@@ -491,7 +507,7 @@ enum V12 {
                 problems += r.problems.map { "turn \(i + 1): \($0)" }
                 if !r.held.isEmpty { problems.append("turn \(i + 1) held: \(r.held.map(\.why))") }
             }
-            let fails = problems + c.check(s)
+            let fails = problems + c.check(s) + c.replyCheck(lastReply, allOps)
             print(fails.isEmpty ? "PASS" : "FAIL", c.id, fails.isEmpty ? "" : "\n   " + fails.joined(separator: "\n   "))
             if !fails.isEmpty || verbose { transcript.forEach { print($0) } }
             if fails.isEmpty { passed += 1 }

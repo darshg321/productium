@@ -68,3 +68,23 @@ final class BoxNounTests: XCTestCase {
         XCTAssertTrue(BoxContext.make(c).contains("Track record: reading: dropped 4 of 5"))
     }
 }
+
+final class BoxFixTests: XCTestCase {
+    func testStartedAtCorrectsAPastEntryButMovesAFutureOne() {
+        let cal = Fx.cal
+        var s = BoxState()
+        let past = Entry(title: "Volleyball", start: Fx.mon(15), end: Fx.mon(17), category: CategoryTree.extracurricular, source: .you, createdAt: Fx.mon(17))
+        let later = Entry(title: "Study", start: Fx.mon(19), end: Fx.mon(20), category: CategoryTree.studying, source: .you, createdAt: Fx.mon(12))
+        s.entries = [past, later]
+        BoxApplier.apply([BoxOp(.entry, .change, ref: EntryRef.entry(past.id), BoxFields(start: "15:30")),
+                          BoxOp(.entry, .change, ref: EntryRef.entry(later.id), BoxFields(start: "19:30"))], to: &s, now: Fx.mon(18), calendar: cal)
+        XCTAssertEqual(s.entries.first { $0.title == "Volleyball" }?.end, Fx.mon(17))
+        XCTAssertEqual(s.entries.first { $0.title == "Study" }?.end, Fx.mon(20, 30))
+    }
+
+    func testTimesWrittenAsTextDecode() throws {
+        let l = try JSONDecoder().decode(PlannerLimits.self, from: Data(#"{"noStudyAfter":"22:00","wake":{"hour":7,"minute":5}}"#.utf8))
+        XCTAssertEqual(l.noStudyAfter, TimeOfDay(22))
+        XCTAssertEqual(l.wake, TimeOfDay(7, 5))
+    }
+}

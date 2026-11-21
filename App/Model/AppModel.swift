@@ -1099,13 +1099,21 @@ final class AppModel {
     }
 
     private func boxState(entries: [Entry]) -> BoxState {
-        BoxState(entries: entries, rules: state.rules, items: state.items, categories: state.categories,
-                 dayRules: state.dayRules, sleepFloorMinutes: state.prefs.sleepFloorMinutes)
+        var b = BoxState(entries: entries.filter { $0.source != .plan }, rules: state.rules, items: state.items, categories: state.categories,
+                         dayRules: state.dayRules, sleepFloorMinutes: state.prefs.sleepFloorMinutes)
+        b.planned = entries.filter { $0.source == .plan }
+        b.goals = state.goals
+        b.places = state.placeBook
+        if let v = state.visits.last, v.departure == nil { b.here = v }
+        return b
     }
 
-    /// Writes the box's changes back. Plan entries aren't the box's: they're kept as they were and a replan renews them.
-    private func absorb(_ b: BoxState, plan: [Entry]) {
-        state.entries = b.entries + plan
+    /// Writes the box's changes back. Plan entries it didn't touch stay as they were (a replan renews them); one it
+    /// edited is yours now.
+    private func absorb(_ b: BoxState, plan _: [Entry]) {
+        state.entries = b.entries + b.planned
+        state.goals = b.goals
+        state.placeBook = b.places
         state.items = b.items
         state.rules = b.rules
         state.categories = b.categories
@@ -1121,7 +1129,7 @@ final class AppModel {
         let now = Date()
         let plan = state.entries.filter { $0.source == .plan }
         let mine = state.entries.filter { $0.source != .plan }
-        let context = BoxContext.make(BoxContextInput(now: now, calendar: cal, state: boxState(entries: mine), planned: plan,
+        let context = BoxContext.make(BoxContextInput(now: now, calendar: cal, state: boxState(entries: state.entries), planned: plan,
                                                       aboutMe: aboutMe.markdown, settings: settingsLine))
         let route = AIFeature.box.route
         let (req, content) = BoxTurn.request(state.conversation, context: context, text: text, images: images,
@@ -1137,7 +1145,7 @@ final class AppModel {
             let itemsBefore = state.items
             let beforeIds = Set(state.items.map(\.id))
             let ops = BoxSideOps.split(result.ops)
-            var bs = boxState(entries: mine)
+            var bs = boxState(entries: state.entries)
             var receipt = BoxApplier.apply(ops.box, to: &bs, now: now, calendar: cal)
             absorb(bs, plan: plan)
             var me = aboutMe
@@ -1259,7 +1267,7 @@ final class AppModel {
                                 scrollingApps: state.scrollingApps, prefs: state.prefs, policy: state.policy, aboutMe: aboutMe)
         let ops = BoxSideOps.split(q.ops)
         let plan = state.entries.filter { $0.source == .plan }
-        var bs = boxState(entries: state.entries.filter { $0.source != .plan })
+        var bs = boxState(entries: state.entries)
         var receipt = BoxApplier.apply(ops.box, to: &bs, now: now, calendar: cal)
         absorb(bs, plan: plan)
         var me = aboutMe
@@ -1351,7 +1359,7 @@ final class AppModel {
         state.approvals.removeAll { $0.id == id }
         let now = Date()
         let plan = state.entries.filter { $0.source == .plan }
-        var bs = boxState(entries: state.entries.filter { $0.source != .plan })
+        var bs = boxState(entries: state.entries)
         let receipt = BoxApplier.apply(a.ops, to: &bs, now: now, calendar: cal, approved: true)
         absorb(bs, plan: plan)
         if a.addsAlarm {
@@ -1377,7 +1385,7 @@ final class AppModel {
     func undo() {
         guard let receipt = undoReceipt, let id = undoTurnId else { return }
         let plan = state.entries.filter { $0.source == .plan }
-        var bs = boxState(entries: state.entries.filter { $0.source != .plan })
+        var bs = boxState(entries: state.entries)
         BoxApplier.undo(receipt, in: &bs)
         absorb(bs, plan: plan)
         if let s = undoSide {

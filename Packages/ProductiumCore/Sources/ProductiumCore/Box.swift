@@ -109,7 +109,7 @@ public enum BoxSchema {
         "repeats": anyObject, "from": str, "until": str, "open": bool, "alert": str, "task": str,
         "due": str, "minutes": int, "kind": Schemas.strEnum(TaskKind.allCases.map(\.rawValue)), "difficulty": int,
         "importance": int, "maxMinutesPerDay": int, "firstStep": str, "notBefore": str,
-        "text": str, "said": str, "limits": anyObject, "mood": int, "energy": int, "target": int, "period": str, "atMost": bool,
+        "text": str, "said": str, "limits": anyObject, "mood": int, "energy": int, "target": int, "period": str, "atMost": bool, "colour": str,
         "screen": open([
             "minutes": int, "period": str, "dateLabelShown": str, "date": str, "partial": bool, "pickups": int,
             "firstPickup": str, "notifications": int,
@@ -320,7 +320,7 @@ public enum BoxPrompt {
         mood add: mood 1-5, energy, note. screen_time add: screen {minutes, apps, date…} read off a screenshot.
         - goal add: category (or "tasks"), target (min or count), period day|week, atMost; change/remove. place add: title \
         (names where they are); change title / remove. category add (title, category=parent) / change (ref=id; title, \
-        category=parent) / remove (ref; category=merge into).
+        category=parent, colour) / remove (ref; category=merge into).
         Formats: start / end / due "HH:mm" with day "yyyy-MM-dd" (or "yyyy-MM-dd HH:mm", or "now"); dates \
         "yyyy-MM-dd". category: an id from the list, or a path "Work › Extracurricular › Volleyball" (missing levels \
         are created, at most 3 deep). repeats is a day rule: {"weekdays":[2,3,4,5,6]} (1=Sun..7=Sat), \
@@ -350,7 +350,7 @@ public enum BoxPrompt {
         - What happens on the side (music, babysitting) goes in note; one active entry at a time. \
         Scrolling is Unproductive › Scrolling whatever the app.
         - A standing preference ("spares are for easy work") becomes fields (open time, task difficulty), not a rule.
-        - A task like ones the track record says they drop: one line with those facts, and a small firstStep.
+        - A task like ones the track record says they drop: say so with its numbers; set a small firstStep.
 
         queries (optional), when asked about their time: {id "q1", range {last "28d" | preset "this week" | from, to}, \
         filter {categories, groups, topics, tasks, titles, weekdays, hours, confirmedOnly}, groupBy, measure, compare \

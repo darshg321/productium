@@ -54,6 +54,8 @@ public struct BoxFields: Codable, Hashable, Sendable {
     public var target: Int?
     public var period: String?
     public var atMost: Bool?
+    /// A category's colour (K1: "make volleyball green"), a `CategoryPalette` name.
+    public var colour: String?
 
     public init(title: String? = nil, start: String? = nil, end: String? = nil, day: String? = nil, category: String? = nil,
                 topics: [String]? = nil, note: String? = nil, repeats: DayRule? = nil, from: String? = nil,
@@ -61,7 +63,8 @@ public struct BoxFields: Codable, Hashable, Sendable {
                 minutes: Int? = nil, kind: String? = nil, difficulty: Int? = nil, importance: Int? = nil,
                 maxMinutesPerDay: Int? = nil, firstStep: String? = nil, notBefore: String? = nil, text: String? = nil,
                 said: String? = nil, limits: PlannerLimits? = nil, mood: Int? = nil, energy: Int? = nil, screen: BoxScreen? = nil,
-                target: Int? = nil, period: String? = nil, atMost: Bool? = nil) {
+                target: Int? = nil, period: String? = nil, atMost: Bool? = nil, colour: String? = nil) {
+        self.colour = colour
         self.target = target
         self.period = period
         self.atMost = atMost
@@ -135,6 +138,8 @@ public struct BoxReceipt: Hashable, Sendable {
     public var dayRulesBefore: DayRuleBook?
     public var goalsBefore: [Goal]?
     public var placesBefore: PlaceBook?
+    /// Planned entries this turn made yours (Undo puts them back in the plan).
+    public var plannedAdopted: [Entry] = []
     public init() {}
 }
 
@@ -150,6 +155,8 @@ public struct BoxState: Sendable {
     public var goals: [Goal] = []
     public var places = PlaceBook()
     public var here: PlaceVisit?
+    /// The planner's future entries (shown in the context with refs). Editing or removing one makes it yours.
+    public var planned: [Entry] = []
 
     public init(entries: [Entry] = [], rules: [Rule] = [], items: [WorkItem] = [], categories: CategoryTree = CategoryTree(),
                 dayRules: DayRuleBook = DayRuleBook(), sleepFloorMinutes: Int = 420) {
@@ -221,6 +228,7 @@ public enum BoxApplier {
         if let t = r.categoriesBefore { s.categories = t }
         if let b = r.dayRulesBefore { s.dayRules = b }
         if let g = r.goalsBefore { s.goals = g }
+        for e in r.plannedAdopted { var p = e; p.source = .plan; s.planned.append(p) }
         if let p = r.placesBefore { s.places = p }
     }
 
@@ -354,8 +362,23 @@ public enum BoxApplier {
             return (hit.index, hit.occurrence)
         }
 
+        /// A ref, adopting a planned entry first if that's what it names (it's yours from now on).
+        mutating func find(_ ref: String?, _ s: inout BoxState) -> (Int, DayKey?)? {
+            if let hit = find(ref, s) { return hit }
+            guard let ref, let p = EntryRef.parse(ref), p.kind == .entry else { return nil }
+            let hits = s.planned.indices.filter { EntryRef.matches(p, s.planned[$0].id) }
+            guard hits.count == 1 else { return nil }
+            var e = s.planned.remove(at: hits[0])
+            e.source = .you
+            e.createdAt = now
+            r.before[e.id] = .some(nil)
+            r.plannedAdopted.append(e)
+            s.entries.append(e)
+            return (s.entries.count - 1, p.occurrence)
+        }
+
         mutating func changeEntry(_ op: BoxOp, _ s: inout BoxState) {
-            guard var (i, occ) = find(op.ref, s) else { return problem("Couldn't find entry \(op.ref ?? "?")") }
+            guard var (i, occ) = find(op.ref, &s) else { return problem("Couldn't find entry \(op.ref ?? "?")") }
             var f = op.fields
             // A bare "09:53" in a change means that time on the entry's own day (or the occurrence's), not today.
             if f.day == nil { f.day = occ ?? DayKeys.key(s.entries[i].start, cal) }
@@ -381,10 +404,12 @@ public enum BoxApplier {
             var e = s.entries[i]
             if let t = f.title { e.title = String(t.prefix(120)) }
             if let st = time(f.start, f) {
-                // Moving keeps the length unless an end is given.
+                // Moving keeps the length unless an end is given. Something that already happened keeps its end:
+                // "actually it started at 3:30" corrects the start, it doesn't move the whole stretch.
                 let len = (e.end ?? st).timeIntervalSince(e.start)
+                let happened = (e.end ?? .distantFuture) <= now && e.repeats == nil && occ == nil
                 e.start = st
-                if e.end != nil { e.end = st.addingTimeInterval(len) }
+                if e.end != nil && !happened { e.end = st.addingTimeInterval(len) }
             }
             if let en = time(f.end, f) { e.end = en }
             if let end = e.end, end <= e.start { s.entries = old; return problem("“\(e.title)” would end before it starts") }
@@ -409,7 +434,7 @@ public enum BoxApplier {
         }
 
         mutating func removeEntry(_ op: BoxOp, _ s: inout BoxState) {
-            guard let (i, occ) = find(op.ref, s) else { return problem("Couldn't find entry \(op.ref ?? "?")") }
+            guard let (i, occ) = find(op.ref, &s) else { return problem("Couldn't find entry \(op.ref ?? "?")") }
             let e = s.entries[i]
             let old = s.entries
             if e.source == .calendar || (occ != nil && e.repeats != nil) {
@@ -428,7 +453,7 @@ public enum BoxApplier {
             let f = op.fields
             let old = s.entries
             if let ref = op.ref {
-                guard let (i, occ) = find(ref, s) else { return problem("Couldn't find entry \(ref)") }
+                guard let (i, occ) = find(ref, &s) else { return problem("Couldn't find entry \(ref)") }
                 let key = occ ?? Days.key(s.entries[i], on: dayDate(f), cal)
                 s.entries[i].marks[key] = .skipped
                 snapAll(old, s.entries)
@@ -653,6 +678,7 @@ public enum BoxApplier {
                 guard let id = op.ref.flatMap({ s.categories.node($0)?.id ?? s.categories.find($0)?.id }),
                       let i = s.categories.nodes.firstIndex(where: { $0.id == id }) else { return problem("Couldn't find category \(op.ref ?? "?")") }
                 if let t = f.title?.trimmingCharacters(in: .whitespaces), !t.isEmpty { s.categories.nodes[i].name = t }
+                if let c = f.colour?.lowercased().trimmingCharacters(in: .whitespaces), !c.isEmpty { s.categories.nodes[i].colour = c }
                 if let p = f.category {
                     let parent = category(p, fallback: CategoryTree.other, &s)
                     guard !s.categories.isUnder(parent, id), s.categories.depth(parent) + 1 <= CategoryTree.maxDepth else {

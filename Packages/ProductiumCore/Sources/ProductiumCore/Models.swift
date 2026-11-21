@@ -44,6 +44,21 @@ public struct TimeOfDay: Codable, Hashable, Comparable, Sendable {
     public static func < (a: TimeOfDay, b: TimeOfDay) -> Bool { a.minutesFromMidnight < b.minutesFromMidnight }
 
     public var label: String { String(format: "%d:%02d", hour, minute) }
+
+    enum CodingKeys: String, CodingKey { case hour, minute }
+
+    /// `{hour, minute}`, or "HH:mm" / "9pm" as the model sometimes writes it.
+    public init(from decoder: Decoder) throws {
+        if let s = try? decoder.singleValueContainer().decode(String.self) {
+            guard let t = ClockText.timeOfDay(s) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "not a time: \(s)"))
+            }
+            self = t
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(try c.decode(Int.self, forKey: .hour), (try? c.decode(Int.self, forKey: .minute)) ?? 0)
+    }
 }
 
 public enum TaskKind: String, Codable, CaseIterable, Sendable {
