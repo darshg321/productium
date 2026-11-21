@@ -77,7 +77,11 @@ jobs:
           cp -R "$data/Documents/test/." out/
           xcrun simctl io "$udid" screenshot out/system-final.png || true
           xcrun simctl spawn "$udid" log show --last 30m --style compact --predicate 'process == "Productium"' > out/app.log 2>/dev/null || true
-          cp ~/Library/Logs/DiagnosticReports/Productium* out/ 2>/dev/null || true
+          sleep 8   # crash reports are written a few seconds after the crash
+          find ~/Library/Logs/DiagnosticReports -name '*.ips' -newer build.log 2>/dev/null | while read -r f; do
+            grep -q 'Productium' "$f" && cp "$f" out/
+          done
+          ls out/*.ips >/dev/null 2>&1 && { echo "--- crash"; head -c 6000 out/*.ips | tail -c 5000; }
           grep -q '^DONE' out/results.txt
       - name: Upload what the run saw
         if: always()
