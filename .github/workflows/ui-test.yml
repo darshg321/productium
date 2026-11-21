@@ -1,0 +1,89 @@
+# Drives the dev build on an iOS simulator with a test script (App/Model/TestHooks.swift) and uploads what it saw:
+# screenshots, text dumps of the state, results, the app's log and any crash report. Run it with
+# scripts/test/sim.sh (or: gh workflow run ui-test.yml --ref dev -f file=scripts/test/smoke.txt).
+name: ui-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: Command file in the repo
+        default: scripts/test/smoke.txt
+      commands:
+        description: Commands (one per line); used instead of the file when set
+        default: ""
+      tz:
+        description: The app's time zone
+        default: America/Toronto
+
+env:
+  BUNDLE_PREFIX: ${{ vars.BUNDLE_PREFIX || 'com.example' }}
+  APP_ID: ${{ format('{0}.productium.dev', vars.BUNDLE_PREFIX || 'com.example') }}
+  APP_NAME: Productium Dev
+  APP_SCHEME: productium-dev
+  APP_ICON: AppIconDev
+  LEADERBOARD_URL: ${{ vars.LEADERBOARD_URL || '' }}
+
+jobs:
+  simulator:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Pick and boot an iPhone simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys
+          d=json.load(sys.stdin)["devices"]
+          ios=[(k,v) for k,v in d.items() if "iOS" in k]
+          ios.sort(key=lambda kv: [int(x) for x in kv[0].split("iOS-")[-1].split("-")])
+          phones=[x for x in ios[-1][1] if x["name"].startswith("iPhone") and "Pro" in x["name"]] or [x for x in ios[-1][1] if x["name"].startswith("iPhone")]
+          print(phones[0]["udid"])')
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+      - name: Build for the simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project Productium.xcodeproj -scheme Productium -configuration Debug \
+            -destination "id=${{ steps.sim.outputs.udid }}" -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+      - name: Install and run the script
+        env:
+          INPUT_COMMANDS: ${{ inputs.commands }}
+          INPUT_FILE: ${{ inputs.file }}
+        run: |
+          udid=${{ steps.sim.outputs.udid }}
+          xcrun simctl install "$udid" build/Build/Products/Debug-iphonesimulator/Productium.app
+          data=$(xcrun simctl get_app_container "$udid" "$APP_ID" data)
+          mkdir -p "$data/Documents/test"
+          if [ -n "$INPUT_COMMANDS" ]; then printf '%s\n' "$INPUT_COMMANDS" > "$data/Documents/test/commands.txt"
+          else cp "$INPUT_FILE" "$data/Documents/test/commands.txt"; fi
+          echo "--- commands"; cat "$data/Documents/test/commands.txt"
+          SIMCTL_CHILD_TZ="${{ inputs.tz }}" xcrun simctl launch "$udid" "$APP_ID"
+          for i in $(seq 1 600); do
+            grep -q '^DONE' "$data/Documents/test/results.txt" 2>/dev/null && break
+            if ! xcrun simctl spawn "$udid" launchctl list 2>/dev/null | grep -q "$APP_ID"; then echo "the app isn't running (crashed?)"; break; fi
+            sleep 1
+          done
+          echo "--- results"; cat "$data/Documents/test/results.txt" 2>/dev/null || echo "(no results)"
+          mkdir -p out
+          cp -R "$data/Documents/test/." out/
+          xcrun simctl io "$udid" screenshot out/system-final.png || true
+          xcrun simctl spawn "$udid" log show --last 30m --style compact --predicate 'process == "Productium"' > out/app.log 2>/dev/null || true
+          cp ~/Library/Logs/DiagnosticReports/Productium* out/ 2>/dev/null || true
+          grep -q '^DONE' out/results.txt
+      - name: Upload what the run saw
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test
+          path: |
+            out/
+            build.log
