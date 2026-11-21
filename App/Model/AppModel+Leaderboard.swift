@@ -108,7 +108,8 @@ extension AppModel {
                     log(.lifecycle, "leaderboard_post_failed", level: .warn, ["group": g.name, "error": "\(error)"])
                 }
             }
-            if let b = try? await LeaderboardClient.board(g) { state.leaderboard.boards[g.id] = b }
+            let fetched = (try? await LeaderboardClient.board(g)) ?? state.leaderboard.boards[g.id] ?? Board(members: [])
+            state.leaderboard.boards[g.id] = Leaderboard.withYou(fetched, you: g.memberId, post: state.leaderboard.lastPost[g.id])
         }
         save()
     }

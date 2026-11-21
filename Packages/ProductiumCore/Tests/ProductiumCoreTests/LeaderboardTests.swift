@@ -32,6 +32,14 @@ final class LeaderboardTests: XCTestCase {
                        ["Ana", "Me", "Ben"])
     }
 
+    func testYourRowIsWhatYouLastSent() {
+        let p = BoardPost(name: "Me 2", usual: 61, days: [day(0, score: 90)])
+        let b = Leaderboard.withYou(board, you: "me", post: p)
+        XCTAssertEqual(b.members.count, 4)
+        XCTAssertEqual(b.members.first { $0.id == "me" }?.name, "Me 2")
+        XCTAssertEqual(Leaderboard.withYou(Board(members: []), you: "me", post: p).members.map(\.id), ["me"], "shown before the list catches up")
+    }
+
     func testInviteRoundTripsAndRejectsJunk() {
         let g = BoardGroup(id: Leaderboard.randomId(), name: "Study crew", server: "https://lb.example.workers.dev",
                            memberId: Leaderboard.randomId(), memberKey: Leaderboard.randomId(), joinedAt: Fx.mon(0))

@@ -140,6 +140,16 @@ public enum Leaderboard {
         return rows
     }
 
+    /// Your own row is always what you last sent (the Worker's list can lag a write by up to a minute).
+    public static func withYou(_ board: Board, you: String, post: BoardPost?) -> Board {
+        guard let post else { return board }
+        var b = board
+        let at = b.members.first { $0.id == you }?.at
+        b.members.removeAll { $0.id == you }
+        b.members.append(BoardMember(id: you, name: post.name, usual: post.usual, days: post.days, at: at))
+        return b
+    }
+
     // MARK: Ids, keys and invites
 
     /// 128 random bits, URL-safe (the Worker accepts [A-Za-z0-9_-]{8,64}).
