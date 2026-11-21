@@ -16,8 +16,12 @@ if ! grep -q 'binding = "BOARD"' wrangler.toml; then
   echo "KV namespace $id"
 fi
 node test.mjs
-out=$($W deploy 2>&1 | tee /dev/stderr)
-url=$(echo "$out" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -1)
+# Under `script` so wrangler still has a terminal (it asks to register a workers.dev subdomain on the first deploy)
+# while the output is kept for the URL.
+log=$(mktemp)
+script -qec "$W deploy" "$log"
+url=$(grep -aoE 'https://[a-z0-9.-]+\.workers\.dev' "$log" | head -1)
+rm -f "$log"
 [ -n "$url" ] || { echo "deployed, but no workers.dev URL found in the output"; exit 1; }
 echo "Leaderboard: $url"
 if command -v gh >/dev/null; then gh variable set LEADERBOARD_URL --body "$url" && echo "repo variable LEADERBOARD_URL set"; fi
