@@ -291,12 +291,12 @@ struct MoodMapCard: View {
         if !map.cells.isEmpty {
             Card {
                 CardHeader(title: "Mood by Time of Day", symbol: "face.smiling", color: .pink, detail: "Last 30 days")
-                let cells = map.cells.flatMap { wd, hs in hs.map { (wd, $0.key, $0.value) } }
-                Chart(cells, id: \.0.description) { wd, h, v in
-                    RectangleMark(x: .value("Hour", h), y: .value("Day", cal.shortWeekdaySymbols[wd - 1]))
-                        .foregroundStyle(by: .value("Mood", v))
+                let cells = map.cells.flatMap { wd, hs in hs.map { MoodCell(weekday: wd, hour: $0.key, mood: $0.value) } }
+                Chart(cells) { c in
+                    RectangleMark(x: .value("Hour", c.hour), y: .value("Day", cal.shortWeekdaySymbols[c.weekday - 1]))
+                        .foregroundStyle(by: .value("Mood", c.mood))
                 }
-                .chartForegroundStyleScale(range: [Color.red.opacity(0.6), Color.yellow, Color.green])
+                .chartForegroundStyleScale(range: Gradient(colors: [Color.red.opacity(0.6), Color.yellow, Color.green]))
                 .chartXScale(domain: 6...23)
                 .frame(height: 170)
                 if let n = map.noticed { Text(n).font(.subheadline) }
@@ -336,4 +336,9 @@ struct WhereCard: View {
             }
         }
     }
+}
+
+struct MoodCell: Identifiable {
+    let weekday: Int, hour: Int, mood: Double
+    var id: Int { weekday * 100 + hour }
 }

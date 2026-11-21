@@ -153,7 +153,7 @@ final class ScreenshotWatcher: NSObject, PHPhotoLibraryChangeObserver {
 enum OnDeviceModel {
     static var available: Bool {
         #if canImport(FoundationModels)
-        if #available(iOS 26.0, *) { return SystemLanguageModel.default.availability == .available }
+        if #available(iOS 26.0, *), case .available = SystemLanguageModel.default.availability { return true }
         #endif
         return false
     }

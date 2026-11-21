@@ -440,6 +440,7 @@ public struct InferenceState: Codable, Hashable, Sendable {
         public var kind: Inference.Kind
         public var answer: String
         public var at: Date
+        public init(id: String, kind: Inference.Kind, answer: String, at: Date) { self.id = id; self.kind = kind; self.answer = answer; self.at = at }
     }
     public var learner = InferenceLearner()
     /// Inference ids already asked, applied or answered, with when (pruned after 3 days).

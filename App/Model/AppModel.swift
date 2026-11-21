@@ -285,9 +285,8 @@ final class AppModel {
 
     /// One tap: starts it with no AI call (the same path as "starting X" typed).
     func start(_ b: QuickStart) {
-        applyQuick(QuickParsed(kind: .start, ops: [BoxOp(.entry, .start, BoxFields(title: b.title, category: b.category,
-                                                                                    topics: b.topics.isEmpty ? nil : b.topics))]),
-                   text: "▶︎ \(b.title)")
+        applyUI([BoxOp(.entry, .start, BoxFields(title: b.title, category: b.category, topics: b.topics.isEmpty ? nil : b.topics))],
+                what: "button \(b.title)", quiet: true)
         Haptics.start()
     }
 
@@ -298,21 +297,21 @@ final class AppModel {
             f.category = b.category
             f.topics = b.topics.isEmpty ? nil : b.topics
         } else if let task = QuickParse.task(named: title, quickContext) {
-            applyQuick(QuickParsed(kind: .start, ops: [BoxOp(.task, .start, ref: Ref.task(task.id))]), text: "▶︎ \(task.title)")
+            applyUI([BoxOp(.task, .start, ref: Ref.task(task.id))], what: "start \(task.title) (\(source))", quiet: true)
             return
         } else {
             f.category = state.categoryRules.category(for: title, tree: state.categories, scrollingApps: state.scrollingApps)
         }
         if let at { f.start = QuickParse.stamp(at, cal) }
         log(.intent, "start", ["title": title, "source": source])
-        applyQuick(QuickParsed(kind: .start, ops: [BoxOp(.entry, .start, f)]), text: "▶︎ \(title)")
+        applyUI([BoxOp(.entry, .start, f)], what: "start \(title) (\(source))", quiet: true)
     }
 
     /// Stops the running entry (a notification's Done, Siri, a Shortcut, the Stop button).
     func stopRunning(source: String) {
         guard running != nil else { return }
         log(.intent, "stop", ["source": source])
-        applyQuick(QuickParsed(kind: .stop, ops: [BoxOp(.entry, .stop)]), text: "■ Stop")
+        applyUI([BoxOp(.entry, .stop)], what: "stop (\(source))", quiet: true)
         Haptics.stop()
     }
 
@@ -321,7 +320,7 @@ final class AppModel {
         let f = BoxFields(title: title, start: QuickParse.stamp(window.start, cal), end: QuickParse.stamp(min(window.end, Date()), cal),
                           category: state.quickStarts.buttons.first { $0.key == CategoryRules.key(title) }?.category
                               ?? state.categoryRules.category(for: title, tree: state.categories, scrollingApps: state.scrollingApps))
-        applyQuick(QuickParsed(kind: .log, ops: [BoxOp(.entry, .add, f)]), text: "\(title), \(window.start.hm)–\(window.end.hm)")
+        applyUI([BoxOp(.entry, .add, f)], what: "stretch \(title)")
     }
 
     /// The place you're at now (the last open visit's place), for ranking buttons and filing entries.
@@ -342,7 +341,7 @@ final class AppModel {
         state.prompts.sleepAnswered.insert(DayKeys.key(window.end, cal))
         let f = BoxFields(title: "Sleep", start: QuickParse.stamp(window.start, cal), end: QuickParse.stamp(window.end, cal),
                           category: CategoryTree.sleep)
-        applyQuick(QuickParsed(kind: .log, ops: [BoxOp(.entry, .add, f)]), text: "Slept \(window.start.hm)–\(window.end.hm)")
+        applyUI([BoxOp(.entry, .add, f)], what: "slept")
     }
 
     /// Both alarm toggles feed one wanted list; an off toggle means its alarms are cancelled, not left behind.

@@ -8,6 +8,7 @@ public struct QuickParsed: Hashable, Sendable {
     public enum Kind: String, Sendable { case start, stop, taskDone, log, mood, confirm }
     public var kind: Kind
     public var ops: [BoxOp]
+    public init(kind: Kind, ops: [BoxOp]) { self.kind = kind; self.ops = ops }
 }
 
 public struct QuickContext: Sendable {
