@@ -12,7 +12,7 @@ Dev builds (`dev` branch → `dev-build` pre-release, "Productium Dev", bundle i
 | `scroll <card>` | Review: `today ring goals week work leaderboard metrics mood where note`; Today: `ring upnext` |
 | `open <url>` | any link, e.g. `productium-dev://gap` (pause sheet), an invite link |
 | `say <text>` | the box (local phrases work offline; anything else needs the Claude server) |
-| `start <title>` · `stop` · `mood <1-5>` · `confirm-today` | the log |
+| `start <title>` · `start-next` (what the pause sheet / Control Center do) · `stop` · `mood <1-5>` · `confirm-today` | the log |
 | `approve` · `decline` · `answer <yes\|no\|skipped\|sick\|no-school>` · `dismiss` | cards and sheets |
 | `refresh` · `replan` · `learn` · `leaderboard` | background work, on demand |
 | `wait <s>` · `shot <name>` · `dump <name>` | timing, a screenshot (`shots/`), the state as text + JSON (`dumps/`) |

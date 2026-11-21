@@ -1,0 +1,12 @@
+# The pause sheet offers the next study session; Start next starts it. Then the mood map.
+scenario history
+stop
+open productium-dev://gap
+shot pause
+dismiss
+start-next
+shot started
+tab review
+scroll mood
+shot mood
+dump after

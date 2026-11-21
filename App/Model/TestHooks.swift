@@ -7,7 +7,7 @@ import ProductiumCore
 /// `Documents/test/results.txt` (ending in `DONE`), screenshots to `shots/` and state dumps to `dumps/`.
 /// Commands (one per line, `#` comments):
 ///   scenario <fresh|today|history|evening|alerts|leaderboard>   reset   tab <today|schedule|tasks|review|settings>
-///   open <productium://…>   say <text>   start <title>   stop   mood <1-5>   confirm-today   approve   decline
+///   open <productium://…>   say <text>   start <title>   start-next   stop   mood <1-5>   confirm-today   approve   decline
 ///   answer <yes|no|skipped|sick|no-school>   dismiss   scroll <card>   refresh   replan   learn   leaderboard
 ///   wait <seconds>   shot <name>   dump <name>
 @MainActor
@@ -91,6 +91,10 @@ final class TestHooks {
             m.start(title: arg, source: "test")
             await settle(0.8)
             return m.running.map { "ok: running \($0.title)" } ?? "error: nothing running"
+        case "start-next":
+            m.startNowOrNext()
+            await settle(0.8)
+            return m.running.map { "ok: running \($0.title)" } ?? "error: nothing started"
         case "stop":
             m.stopRunning(source: "test")
             await settle(0.8)

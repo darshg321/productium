@@ -418,7 +418,7 @@ struct PauseSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if let b = model.state.plan.current(at: Date()) ?? model.state.plan.next(after: Date()), b.isStudy {
+                if let b = model.state.plan.blocks.first(where: { $0.isStudy && $0.end > Date() && $0.itemId != nil }) {
                     Section {
                         Button {
                             model.startNowOrNext()

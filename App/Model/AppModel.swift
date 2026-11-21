@@ -411,10 +411,10 @@ final class AppModel {
         guard running?.taskId == nil else { return }
         let now = Date()
         if let b = state.plan.current(at: now), b.isStudy { startFocus(b); return }
-        if let n = state.plan.next(after: now), n.isStudy, n.start.timeIntervalSince(now) < 90 * 60 { startFocus(n); return }
-        if let n = state.plan.next(after: now), n.isStudy, let item = n.itemId.flatMap({ id in state.items.first { $0.id == id } }) {
-            focusNow(on: item)
-        }
+        // The next study session, not just the next block (that's often dinner or wind-down).
+        guard let n = state.plan.blocks.first(where: { $0.isStudy && $0.start > now }) else { return }
+        if n.start.timeIntervalSince(now) < 90 * 60 { startFocus(n); return }
+        if let item = n.itemId.flatMap({ id in state.items.first { $0.id == id } }) { focusNow(on: item) }
     }
 
     func startFocus(blockId: UUID) {
