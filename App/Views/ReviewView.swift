@@ -298,12 +298,15 @@ struct MoodMapCard: View {
             Card {
                 CardHeader(title: "Mood by Time of Day", symbol: "face.smiling", color: .pink, detail: "Last 30 days")
                 let cells = map.cells.flatMap { wd, hs in hs.map { MoodCell(weekday: wd, hour: $0.key, mood: $0.value) } }
-                Chart(cells) { c in
-                    RectangleMark(x: .value("Hour", c.hour), y: .value("Day", cal.shortWeekdaySymbols[c.weekday - 1]))
+                // Each cell spans its hour explicitly: with an automatic width, two cells at the same hour (any two days)
+                // make Charts divide by a zero spacing and crash.
+                Chart(cells.filter { (6...23).contains($0.hour) }) { c in
+                    RectangleMark(xStart: .value("Hour", c.hour), xEnd: .value("Hour", c.hour + 1),
+                                  y: .value("Day", cal.shortWeekdaySymbols[c.weekday - 1]))
                         .foregroundStyle(by: .value("Mood", c.mood))
                 }
-                .chartForegroundStyleScale(range: Gradient(colors: [Color.red.opacity(0.6), Color.yellow, Color.green]))
-                .chartXScale(domain: 6...23)
+                .chartForegroundStyleScale(domain: 1.0...5.0, range: Gradient(colors: [Color.red.opacity(0.6), Color.yellow, Color.green]))
+                .chartXScale(domain: 6...24)
                 .frame(height: 170)
                 if let n = map.noticed { Text(n).font(.subheadline) }
             }

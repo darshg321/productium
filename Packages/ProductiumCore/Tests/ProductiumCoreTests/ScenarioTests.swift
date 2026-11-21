@@ -34,6 +34,8 @@ final class ScenarioTests: XCTestCase {
                                           now: now, calendar: cal)
         XCTAssertGreaterThan(read.count, 20)
         XCTAssertGreaterThan(learned.hourReliability(16), learned.hourReliability(19), "16:30 is kept, 19:00 moves")
+        XCTAssertGreaterThan(learned.hourReliability(21), learned.hourReliability(19), "the 19:00 reading happens at 21:10")
+        XCTAssertEqual(learned.goodHours(), [16, 21], "19:00 has the evidence but not the record")
         XCTAssertNotNil(h.taskHistory.warning(for: h.items.first { $0.id == Scenarios.reading }!), "readings usually get dropped")
     }
 

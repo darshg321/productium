@@ -94,6 +94,10 @@ struct MetricTile: View {
     var body: some View {
         let def = series.def
         let spark = Metrics.daily(series, last: 14, now: Date(), calendar: .current)
+        let values = spark.compactMap(\.1).filter(\.isFinite)
+        // A flat line still needs a non-empty scale.
+        let lo = values.min() ?? 0, hi = values.max() ?? 1
+        let domain = lo == hi ? (lo - 1)...(hi + 1) : lo...hi
         VStack(alignment: .leading, spacing: 6) {
             Label(def.title, systemImage: def.symbol)
                 .font(.footnote.weight(.semibold)).foregroundStyle(metricSymbolColor(def.id)).lineLimit(1)
@@ -112,11 +116,11 @@ struct MetricTile: View {
             }
             Chart {
                 ForEach(Array(spark.enumerated()), id: \.offset) { _, p in
-                    if let v = p.1 { LineMark(x: .value("Day", p.0, unit: .day), y: .value("Value", v)) }
+                    if let v = p.1, v.isFinite { LineMark(x: .value("Day", p.0, unit: .day), y: .value("Value", v)) }
                 }
             }
             .chartXAxis(.hidden).chartYAxis(.hidden)
-            .chartYScale(domain: .automatic(includesZero: false))
+            .chartYScale(domain: domain)
             .foregroundStyle(metricSymbolColor(def.id))
             .frame(height: 28)
             .accessibilityHidden(true)
