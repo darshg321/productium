@@ -11,6 +11,10 @@ struct ThinksView: View {
                 NavigationLink { ChangesView() } label: {
                     LabeledContent("Changes", value: "\(model.state.changes.applied.count)")
                 }
+                NavigationLink("Study Settings") { StudySettings() }
+                NavigationLink { TaxonomyRunsView() } label: {
+                    LabeledContent("Category Tidy-Ups", value: "\(model.state.taxonomy.runs.filter { !$0.reverted }.count)")
+                }
             } footer: {
                 Text("What Productium adjusted about how it plans and reminds you, from how your weeks went. Each one can be undone.")
             }
@@ -56,8 +60,9 @@ struct ThinksView: View {
                 }
             }
             Section("Places") {
-                if model.state.places.isEmpty { Text("None saved yet.").foregroundStyle(.secondary) }
-                ForEach(model.state.places) { p in LabeledContent(p.name, value: "\(Int(p.radius)) m") }
+                let named = model.state.placeBook.places.filter { $0.name != nil }
+                if named.isEmpty { Text("None named yet. Tell the box where you are: “this is the library”.").foregroundStyle(.secondary) }
+                ForEach(named) { p in LabeledContent(p.title, value: p.named?.rawValue ?? "") }
             }
             Section("Scrolling") {
                 let log = Friction.log

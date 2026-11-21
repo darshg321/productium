@@ -127,8 +127,12 @@ final class AppModel {
             }
         }
         LocationService.shared.onVisit = { [weak self] visit in
-            Task { @MainActor in self?.recordVisit(visit) }
+            Task { @MainActor in self?.noteVisit(visit) }
         }
+        LocationService.shared.onPoint = { [weak self] point in
+            Task { @MainActor in if self?.state.trace.add(point) == true { self?.save() } }
+        }
+        if state.integrations.photos { ScreenshotWatcher.shared.start() }
         if state.integrations.location {
             LocationService.shared.monitor(state.places)
             LocationService.shared.visitsWanted = true
@@ -157,6 +161,7 @@ final class AppModel {
         estimateSleep()
         syncCalendar()
         syncScreen()
+        await refreshLog()
         learnCapacities()
         if let note = state.taper.update(days: state.screen, now: Date(), calendar: cal) {
             toast = note
@@ -168,6 +173,7 @@ final class AppModel {
         if full {
             serverOnline = await ClaudeClient.shared.ping()
             await insightPass()
+            await taxonomyPass()
             await refreshServerUsage()
             await refreshSubscription()
         }
@@ -221,6 +227,8 @@ final class AppModel {
             "warningText": state.plan.warnings.map(\.message).joined(separator: " | "),
             "shortfalls": state.plan.shortfalls.map { "\(Ref.task($0.key)) \($0.value)m" }.sorted().joined(separator: ", "),
         ].filter { !$0.value.isEmpty })
+        checkGoalMoments()
+        LocationService.shared.tracking(running != nil)
         save()
         applyPlanEffects()
     }
@@ -232,9 +240,11 @@ final class AppModel {
                      horizonDays: 14, policy: state.policy, beliefs: state.beliefs,
                      dayRules: state.dayRules,
                      entries: state.entries, rules: state.rules, categories: state.categories)
+            .with(habits: Habits.detect(state.entries, tree: state.categories, now: now, calendar: cal),
+                  atRisk: Set(state.items.filter { $0.isOpen && state.taskHistory.atRisk($0) }.map(\.id)))
     }
 
-    private func applyPlanEffects() {
+    func applyPlanEffects() {
         let plan = state.plan
         let now = Date()
         let nudges = nudgeInput(now: now)
@@ -396,26 +406,9 @@ final class AppModel {
         replan()
     }
 
-    // MARK: Focus: a running entry on a task
-
-    /// What the full-screen focus view shows: the running entry that's on a task, and the block it's for.
-    struct FocusInfo {
-        var entry: Entry
-        var block: PlannedBlock?
-        var plannedEnd: Date
-        var title: String { entry.title }
-        var startedAt: Date { entry.start }
-    }
+    // MARK: Running entry (D3: starting a task is starting an entry with its id)
 
     var running: Entry? { TimeLog.running(state.entries) }
-
-    var focus: FocusInfo? {
-        guard let e = running, e.taskId != nil else { return nil }
-        let block = Sessions.block(for: e, in: state.plan, now: Date())
-        let planned = block.map { max($0.end, e.start.addingTimeInterval(Double($0.minutes) * 60)) }
-            ?? e.start.addingTimeInterval(state.learned.focusMinutes * 60)
-        return FocusInfo(entry: e, block: block, plannedEnd: planned)
-    }
 
     func startFocus(_ b: PlannedBlock) {
         let now = Date()
@@ -428,12 +421,12 @@ final class AppModel {
         state.snoozed[b.id] = nil
         NotificationService.cancel(blockId: b.id)
         log(.log, "focus_start", ["block": b.title])
-        syncAlarms()
-        save()
+        afterLogChange()
+        replan()
     }
 
     func startNowOrNext() {
-        guard focus == nil else { return }
+        guard running?.taskId == nil else { return }
         let now = Date()
         if let b = state.plan.current(at: now), b.isStudy { startFocus(b); return }
         if let n = state.plan.next(after: now), n.isStudy, n.start.timeIntervalSince(now) < 90 * 60 { startFocus(n); return }
@@ -443,7 +436,7 @@ final class AppModel {
     }
 
     func startFocus(blockId: UUID) {
-        guard focus == nil else { return }
+        guard running?.taskId == nil else { return }
         if let b = state.plan.blocks.first(where: { $0.id == blockId }), b.isStudy, b.end > Date() { startFocus(b) }
         else { startNowOrNext() }
     }
@@ -473,56 +466,7 @@ final class AppModel {
         replan()
     }
 
-    func focusNow(on item: WorkItem) {
-        let mins = Int(state.learned.focusMinutes.rounded())
-        let b = PlannedBlock(kind: item.kind.isMemoryBased ? .review : .work, start: Date(), end: Date().addingTimeInterval(Double(mins) * 60),
-                             title: item.title, itemId: item.id, hint: "Started on your own. Nice.")
-        state.plan.blocks.append(b)
-        state.plan.blocks.sort { $0.start < $1.start }
-        startFocus(b)
-    }
-
-    func endFocus(_ status: OutcomeStatus) {
-        guard let f = focus else { return }
-        let now = Date()
-        let elapsed = max(1, Int(now.timeIntervalSince(f.startedAt) / 60))
-        let item = f.entry.taskId.flatMap { id in state.items.first { $0.id == id } }
-        func percent(_ done: Int) -> Int? { item.flatMap { $0.estimateMinutes > 0 ? min(100, done * 100 / $0.estimateMinutes) : nil } }
-        let before = percent(item?.completedMinutes ?? 0)
-        let totalBefore = state.entries.filter { $0.taskId != nil && $0.source != .plan && !$0.isRunning }
-            .reduce(0) { $0 + $1.minutes(now: now) }
-        var entries = state.entries
-        if status == .skipped {
-            // Couldn't focus: nothing was done, so nothing is logged.
-            entries.removeAll { $0.id == f.entry.id }
-        } else {
-            TimeLog.stop(at: now, entries: &entries, calendar: cal)
-        }
-        state.entries = entries
-        let idx = item.flatMap { it in state.items.firstIndex { $0.id == it.id } }
-        let result = SessionResult(itemId: item?.id, kind: item?.kind, plannedStart: f.startedAt,
-                                   plannedMinutes: f.block?.minutes ?? elapsed, actualMinutes: status == .skipped ? 0 : elapsed, status: status)
-        state.learned.record(session: result, calendar: cal)
-        if status != .skipped, let i = idx { state.items[i].completedMinutes += elapsed }
-        if let b = f.block {
-            NotificationService.cancel(blockId: b.id)
-            if status == .skipped {
-                state.snoozed[b.id] = now.addingTimeInterval(40 * 3600)
-                Avoidance.record(.skipped, itemId: b.itemId, in: &state.items, at: now, reason: nil, blockId: b.id)
-                toast = "No problem. It's been moved to a better slot."
-            }
-        }
-        log(.log, "focus_end", ["status": status.rawValue, "minutes": "\(elapsed)"])
-        replan()
-        let after = percent(state.items.first { $0.id == item?.id }?.completedMinutes ?? 0)
-        celebrate(.focusEnded(status: status, minutes: elapsed, title: item?.title, percentBefore: before, percentAfter: after,
-                              freeAfterMinutes: nil, totalFocusMinutesBefore: totalBefore))
-        let today = state.plan.blocks(on: now, calendar: cal).filter(\.isStudy)
-        let worked = Sessions.worked(plan: state.plan, entries: state.entries, now: now)
-        if status != .skipped, !today.isEmpty, today.allSatisfy({ worked.contains($0.id) }) {
-            celebrate(.planFinished(freeMinutesLeft: nil))
-        }
-    }
+    func focusNow(on item: WorkItem) { startTask(item) }
 
     /// A moment for something the student did toward their goals (never for opening the app). `Rewards.respond`
     /// decides whether there is one, how big, and keeps the budget. Shown by `RootView`, and Off means nothing.
@@ -569,6 +513,7 @@ final class AppModel {
         state.items[i].isDone = true
         state.items[i].doneAt = Date()
         let it = state.items[i]
+        state.taskHistory.add(TaskHistory.record(it, cleared: false, entries: state.entries, now: Date(), calendar: cal))
         let stepsLeft = it.parentId.map { p in state.items.filter { $0.parentId == p && $0.isOpen }.count } ?? 0
         let daysEarly = max(0, cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: cal.startOfDay(for: it.due)).day ?? 0)
         celebrate(.itemDone(title: it.title, isStep: it.parentId != nil, stepsLeft: stepsLeft, daysEarly: daysEarly))
@@ -584,60 +529,12 @@ final class AppModel {
         replan()
     }
 
-    func logMarker(_ phrase: String, source: MarkerSource = .manual, at: Date = Date()) {
-        let evs = MarkerParser.parse(phrase, at: at, commitments: legacyCommitments, calendar: cal, source: source)
-        guard !evs.isEmpty else { return }
-        var entries = state.entries, tree = state.categories
-        CheckIns.apply(evs, to: &entries, tree: &tree, now: Date(), calendar: cal)
-        state.entries = entries
-        state.categories = tree
-        log(.log, "check_in", ["phrase": phrase, "source": source.rawValue, "events": "\(evs.count)"])
-        if source != .geofence { offerPlace(after: evs) }
-        if evs.contains(where: { $0.category == .sleep }) { estimateSleep(); replan() } else { save() }
-    }
-
     // Places that learn themselves: ask to save a place you've just said you're at, or keep returning to.
     var placeOffer: PlaceOffer?
+    /// M5: a screenshot that looks like homework, waiting for Add.
+    var screenshotOffer: AIImage?
     /// The celebration being shown now (cleared by `RootView` after a few seconds).
     var rewardMoment: RewardMoment?
-
-    func recordVisit(_ v: PlaceVisit) {
-        log(.sensor, "visit", ["arrival": "\(v.arrival)", "departure": v.departure.map { "\($0)" } ?? "open"])
-        guard let i = state.visits.firstIndex(where: { $0.arrival == v.arrival }) else {
-            state.visits = Array((state.visits + [v]).suffix(120))
-            offerFrequentPlace()
-            return
-        }
-        state.visits[i] = v
-        offerFrequentPlace()
-    }
-
-    private func offerFrequentPlace() {
-        save()
-        guard placeOffer == nil else { return }
-        let declined = state.declinedPlaces.compactMap { id -> (Double, Double)? in
-            let p = id.split(separator: "_")
-            guard p.count == 3, p[0] == "visit", let a = Double(p[1]), let b = Double(p[2]) else { return nil }
-            return (a / 1000, b / 1000)
-        }
-        if let offer = PlaceSuggester.frequent(state.visits, places: state.places, declinedSpots: declined, calendar: cal),
-           !state.declinedPlaces.contains(offer.id) {
-            placeOffer = offer
-        }
-    }
-
-    private func offerPlace(after evs: [CheckIn]) {
-        guard placeOffer == nil, LocationService.shared.status != .denied,
-              let found = PlaceSuggester.offer(after: evs, places: state.places, commitments: legacyCommitments,
-                                               declined: state.declinedPlaces) else { return }
-        Task {
-            guard let fix = await LocationService.shared.currentLocation() else { return }
-            var offer = found
-            offer.latitude = fix.coordinate.latitude
-            offer.longitude = fix.coordinate.longitude
-            placeOffer = offer
-        }
-    }
 
     func acceptPlaceOffer(name: String? = nil) {
         guard let o = placeOffer, let lat = o.latitude, let lon = o.longitude else { placeOffer = nil; return }
@@ -661,19 +558,20 @@ final class AppModel {
         save()
     }
 
+    /// A saved region's enter / exit is a visit's arrival / departure (Part E: places are visits, not check-ins).
     private func handleGeofence(_ place: String, entered: Bool) {
         log(.sensor, "geofence", ["place": place, "entered": "\(entered)"])
-        let name = state.places.first { $0.id == place }?.name ?? place
-        let phrase: String
-        switch (place, entered) {
-        case ("home", false): phrase = "left home"
-        case ("home", true): phrase = "home"
-        case ("school", true): phrase = "at school"
-        case ("school", false): phrase = "left school"
-        default: phrase = entered ? "at \(name)" : "finished \(name)"
+        guard let p = state.places.first(where: { $0.id == place }) else { return }
+        if entered {
+            noteVisit(PlaceVisit(latitude: p.latitude, longitude: p.longitude, arrival: Date()))
+        } else if let v = state.trace.visits.last(where: { $0.departure == nil
+            && PlaceSuggester.meters($0.latitude, $0.longitude, p.latitude, p.longitude) < max(150, p.radius) }) {
+            var closed = v
+            closed.departure = Date()
+            noteVisit(closed)
         }
-        logMarker(phrase, source: .geofence)
         if place == "home" && entered { arrivedHome() }
+        Task { await runInferences(); replan() }
     }
 
     private func arrivedHome() {
@@ -684,7 +582,7 @@ final class AppModel {
             return
         }
         guard state.integrations.notifications, state.prefs.nudges.arrivingHome, state.prefs.nudges.level != .gentle,
-              focus == nil else { return }
+              running == nil else { return }
         let now = Date()
         if let b = state.plan.current(at: now), b.isStudy, !Sessions.isWorked(b, entries: state.entries, now: now) {
             NotificationService.notify("Welcome home", "\(b.title) is on now, until \(b.end.hm). Start when you're in the door.",
@@ -876,8 +774,15 @@ final class AppModel {
                                  taper: state.taper, learned: state.learned,
                                  dayRules: state.dayRules,
                                  metrics: MetricsExport.summary(metricSeries(), now: now, calendar: cal))
+        var x = input
+        let candidates = PatternFinder.find(entries: state.entries, tree: state.categories, now: now, book: state.dayRules, calendar: cal)
+        x.patterns = candidates
+        x.trackRecord = state.taskHistory.summary()
+        x.goals = goalsAll.map { progress($0).line }
+        x.aiGoals = state.goals.filter { $0.origin == .ai }
+        x.answers = state.inference.answers.suffix(8).map { "\($0.answer) (\($0.kind.rawValue), \($0.at.formatted(.dateTime.weekday(.abbreviated))))" }
         guard let out = try? await ClaudeClient.shared.structured(
-            feature: .review, system: InsightPass.system(), user: InsightPass.request(input), schema: InsightPass.schema,
+            feature: .review, system: InsightPass.system(), user: InsightPass.request(x), schema: InsightPass.schema,
             as: InsightPass.Output.self, maxTokens: 1500, accept: { !$0.headline.isEmpty }) else { return }
         state.insightAt = now
         state.review = out.review
@@ -893,6 +798,9 @@ final class AppModel {
                                        evidence: [], model: "code", at: now))
         }
         editDumpState { state.changes.apply(run, drafts, to: &$0, now: now) }
+        // P2: the patterns it chose (code's numbers); I2: its own goals moved ±10%.
+        state.patterns = InsightPass.patterns(out, candidates: candidates)
+        for line in InsightPass.goalChanges(out, goals: &state.goals) { log(.ai, "goal_nudged", ["change": line]) }
         // J4: alarms are only proposed; they wait in Review and Settings → Alarms for Allow.
         let proposed = InsightPass.proposals(out, items: state.items, now: now, calendar: cal)
         state.approvals += proposed
@@ -1039,33 +947,6 @@ final class AppModel {
         replan()
     }
 
-    func makeCards(for item: WorkItem) async {
-        guard aiAllowed(.flashcards), !item.topics.isEmpty else { return }
-        guard let batch = try? await ClaudeClient.shared.structured(
-            feature: .flashcards, system: Prompts.flashcards(),
-            user: Prompts.flashcardsRequest(subject: item.subject, topics: item.topics, count: 8),
-            schema: Schemas.cards, as: CardBatch.self, maxTokens: 900, cacheTTL: 86400,
-            accept: { !$0.usable.isEmpty }) else { return }
-        state.flashcards += batch.usable.map { Flashcard(itemId: item.id, subject: item.subject, front: $0.front, back: $0.back) }
-        save()
-    }
-
-    func ensureGapContent() async {
-        for t in state.items where t.kind.isMemoryBased && t.isOpen && !t.topics.isEmpty && t.due.timeIntervalSinceNow < 14 * 86400
-            && !state.flashcards.contains(where: { $0.itemId == t.id }) {
-            await makeCards(for: t)
-        }
-        guard aiAllowed(.reads), state.reads.filter({ $0.readAt == nil }).count < 2 else { return }
-        let subjects = Array(Set(state.items.compactMap(\.subject))).sorted().prefix(4)
-        guard let batch = try? await ClaudeClient.shared.structured(
-            feature: .reads, system: Prompts.reads(),
-            user: Prompts.readsRequest(interests: state.prefs.interests, subjects: Array(subjects), count: 3),
-            schema: Schemas.reads, as: ReadBatch.self, maxTokens: 1100,
-            accept: { !$0.usable.isEmpty }) else { return }
-        state.reads += batch.usable.map { ReadPiece(title: $0.title, body: $0.body, subject: $0.subject, question: $0.question, source: "Claude") }
-        save()
-    }
-
     // MARK: The box (O6)
 
     var undoTurnId: UUID?
@@ -1098,7 +979,7 @@ final class AppModel {
             + "wake \(p.schoolDayWake.hour):\(String(format: "%02d", p.schoolDayWake.minute)) on school days, notifications \(p.nudges.level.rawValue)"
     }
 
-    private func boxState(entries: [Entry]) -> BoxState {
+    func boxState(entries: [Entry]) -> BoxState {
         var b = BoxState(entries: entries.filter { $0.source != .plan }, rules: state.rules, items: state.items, categories: state.categories,
                          dayRules: state.dayRules, sleepFloorMinutes: state.prefs.sleepFloorMinutes)
         b.planned = entries.filter { $0.source == .plan }
@@ -1110,7 +991,7 @@ final class AppModel {
 
     /// Writes the box's changes back. Plan entries it didn't touch stay as they were (a replan renews them); one it
     /// edited is yours now.
-    private func absorb(_ b: BoxState, plan _: [Entry]) {
+    func absorb(_ b: BoxState, plan _: [Entry]) {
         state.entries = b.entries + b.planned
         state.goals = b.goals
         state.placeBook = b.places
@@ -1427,22 +1308,10 @@ final class AppModel {
         if [.application, .essay, .project].contains(item.kind), item.due.timeIntervalSinceNow > 10 * 86400, item.parentId == nil {
             Task { await decompose(item.id) }
         }
-        if item.kind.isMemoryBased, !item.topics.isEmpty { Task { await makeCards(for: item) } }
     }
 
     func saveAboutMe(editedText: String) {
         aboutMe = AboutMe.studentEdited(old: aboutMe.markdown, new: editedText)
-    }
-
-    func reviewCard(_ id: UUID, correct: Bool) {
-        guard let i = state.flashcards.firstIndex(where: { $0.id == id }) else { return }
-        let test = state.flashcards[i].itemId.flatMap { itemsById[$0]?.due }
-        state.flashcards[i] = Leitner.review(state.flashcards[i], correct: correct, now: Date(), testDate: test)
-        save()
-    }
-
-    func markRead(_ id: UUID) {
-        if let i = state.reads.firstIndex(where: { $0.id == id }) { state.reads[i].readAt = Date(); save() }
     }
 
     func exportFiles() throws -> [URL] {
@@ -1459,6 +1328,7 @@ final class AppModel {
             ("timeline.csv", Data(Exporter.segmentsCSV(segs).utf8)),
             ("tasks.csv", Data(Exporter.itemsCSV(state.items).utf8)),
             ("entries.csv", Data(Exporter.entriesCSV(state.entries, tree: state.categories).utf8)),
+            ("locations.csv", Data(Where.csv(state.trace, book: state.placeBook).utf8)),
             ("moods.csv", Data(Exporter.moodsCSV(state.moods).utf8)),
             ("metrics.csv", Data(MetricsExport.csv(metricSeries(days: 365), calendar: cal).utf8)),
             ("plan.ics", Data(Exporter.ics(state.plan).utf8)),

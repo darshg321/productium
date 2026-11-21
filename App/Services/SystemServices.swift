@@ -119,7 +119,9 @@ actor AlarmScheduler {
         }
         let attrs = AlarmAttributes<Metadata>(presentation: AlarmPresentation(alert: alert), metadata: Metadata(), tintColor: tint)
         let secondary: (any LiveActivityIntent)? = a.kind == .missedStart ? StartFocusIntent() : nil
-        return .alarm(schedule: .fixed(a.at), attributes: attrs, stopIntent: nil, secondaryIntent: secondary, sound: .default)
+        // N4: the stop button records when it was pressed (and when it first rang): the wake signal and the snooze metric.
+        let stop: (any LiveActivityIntent)? = a.kind == .entry || a.kind == .wake ? AlarmStoppedIntent(ringAt: a.at) : nil
+        return .alarm(schedule: .fixed(a.at), attributes: attrs, stopIntent: stop, secondaryIntent: secondary, sound: .default)
     }
     #endif
 
@@ -127,7 +129,7 @@ actor AlarmScheduler {
     /// kinds already have a notification from `NudgePlanner.plan`, so they are not duplicated here.
     private func applyNotifications(_ desired: [PlannedAlarm], now: Date) async {
         let center = UNUserNotificationCenter.current()
-        let wakes = desired.filter { $0.kind == .wake && $0.at > now }
+        let wakes = desired.filter { ($0.kind == .wake || $0.kind == .entry) && $0.at > now }
         let wanted = Set(wakes.map { "alarm.\($0.key)" })
         let pending = await center.pendingNotificationRequests().map(\.identifier)
         let stale = pending.filter { ($0.hasPrefix("alarm.") || $0.hasPrefix("wake.")) && !wanted.contains($0) }

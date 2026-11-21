@@ -52,16 +52,18 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIRequiresFullScreen: true
-        UIBackgroundModes: [fetch, processing]
+        UIBackgroundModes: [fetch, processing, location]
         BGTaskSchedulerPermittedIdentifiers: [app.productium.refresh]
         NSHealthShareUsageDescription: Productium reads sleep, wake time, steps and daylight to plan around how rested you are and when you wake up.
-        NSHealthUpdateUsageDescription: Productium logs breathing breaks as Mindful Minutes.
+        NSHealthUpdateUsageDescription: Productium logs breathing breaks as Mindful Minutes and exercise you log as workouts.
         NSCalendarsFullAccessUsageDescription: Productium reads your calendar so it never plans over events, and can add your study plan to a Productium calendar.
-        NSLocationWhenInUseUsageDescription: Productium saves your home and school so it can check you in automatically.
-        NSLocationAlwaysAndWhenInUseUsageDescription: Productium notices when you leave home or arrive at school to learn your commute. It keeps no location history.
-        NSMotionUsageDescription: Productium notices walks and rides to learn your commute and fill in your day. Only how long you moved is kept, never where.
+        NSLocationWhenInUseUsageDescription: Productium notes where each part of your day happened, so it can fill in your day and show where your time goes.
+        NSLocationAlwaysAndWhenInUseUsageDescription: Productium keeps a location history on this phone (in your backups, never sent anywhere) so each entry knows where it happened, places name themselves, and it can notice when your day differs from the plan. You can forget it in Settings → Privacy.
+        NSMotionUsageDescription: Productium notices walks and rides to log your commute and fill in your day.
         NSAlarmKitUsageDescription: Productium sets your wake-up alarm based on when your first class starts and your usual commute.
-        NSUserActivityTypes: [TellProductiumIntent, CheckInIntent, LogMoodIntent, StartFocusIntent]
+        NSUserActivityTypes: [TellProductiumIntent, LogMoodIntent, StartFocusIntent, StartActivityIntent, StopActivityIntent, ToggleActivityIntent]
+        NSRemindersFullAccessUsageDescription: Productium keeps your open tasks in a "Productium" list, so Reminders, its widgets and Siri show them, and ticking one off there finishes it here.
+        NSPhotoLibraryUsageDescription: Productium reads new Screen Time screenshots on the phone (nothing else is looked at) so you don't have to send them yourself.
         CFBundleURLTypes:
           - CFBundleURLName: productium
             CFBundleURLSchemes: [productium]

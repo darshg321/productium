@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import MapKit
 import Observation
 import ProductiumCore
 
@@ -9,6 +10,10 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     @ObservationIgnored private let manager = CLLocationManager()
     @ObservationIgnored var onTransition: ((String, Bool) -> Void)?
     @ObservationIgnored var onVisit: ((PlaceVisit) -> Void)?
+    /// E1: a coarse point while moving (significant changes, fixes), for the location history.
+    @ObservationIgnored var onPoint: ((TracePoint) -> Void)?
+    /// E1: kept while an entry runs, so updates keep coming and the entry's place is right (iOS 17+).
+    @ObservationIgnored private var session: AnyObject?
     @ObservationIgnored private var pendingFix: CheckedContinuation<CLLocation?, Never>?
     private(set) var status: CLAuthorizationStatus = .notDetermined
 
@@ -84,7 +89,39 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     /// Visits need Always. They find the places you keep returning to without a location history.
     func monitorVisits(_ on: Bool) {
-        if on, manager.authorizationStatus == .authorizedAlways { manager.startMonitoringVisits() } else { manager.stopMonitoringVisits() }
+        if on, manager.authorizationStatus == .authorizedAlways {
+            manager.startMonitoringVisits()
+            // E1: significant changes too (cheap, works with the app closed), for the points between visits.
+            if CLLocationManager.significantLocationChangeMonitoringAvailable() { manager.startMonitoringSignificantLocationChanges() }
+            manager.allowsBackgroundLocationUpdates = true
+            manager.pausesLocationUpdatesAutomatically = true
+        } else {
+            manager.stopMonitoringVisits()
+            manager.stopMonitoringSignificantLocationChanges()
+        }
+    }
+
+    /// E1: while something is being tracked live, keep a background activity session so its place is known.
+    func tracking(_ on: Bool) {
+        guard #available(iOS 17.0, *), manager.authorizationStatus == .authorizedAlways else { return }
+        if on, session == nil {
+            session = CLBackgroundActivitySession()
+            manager.startUpdatingLocation()
+        } else if !on, let s = session as? CLBackgroundActivitySession {
+            s.invalidate()
+            session = nil
+            manager.stopUpdatingLocation()
+        }
+    }
+
+    /// E2: the nearest point of interest (a café, a school, a gym) to name a new place.
+    func pointOfInterest(latitude: Double, longitude: Double) async -> String? {
+        let req = MKLocalPointsOfInterestRequest(center: CLLocationCoordinate2D(latitude: latitude, longitude: longitude), radius: 80)
+        guard let res = try? await MKLocalSearch(request: req).start() else { return nil }
+        let here = CLLocation(latitude: latitude, longitude: longitude)
+        return res.mapItems.min {
+            ($0.placemark.location?.distance(from: here) ?? .infinity) < ($1.placemark.location?.distance(from: here) ?? .infinity)
+        }?.name
     }
 
     func locationManager(_ m: CLLocationManager, didVisit visit: CLVisit) {
@@ -101,6 +138,9 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     func locationManager(_ m: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         pendingFix?.resume(returning: locations.last)
         pendingFix = nil
+        for l in locations where l.horizontalAccuracy >= 0 && l.horizontalAccuracy < 500 {
+            onPoint?(TracePoint(at: l.timestamp, latitude: l.coordinate.latitude, longitude: l.coordinate.longitude, accuracy: l.horizontalAccuracy))
+        }
     }
 
     func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {

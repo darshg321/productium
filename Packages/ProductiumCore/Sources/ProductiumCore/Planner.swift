@@ -836,3 +836,13 @@ public func minutesLabel(_ m: Int) -> String {
     if m < 60 { return "\(m)m" }
     return m % 60 == 0 ? "\(m / 60)h" : "\(m / 60)h \(m % 60)m"
 }
+
+extension PlannerInput {
+    /// The same input with D7's habits and H3's at-risk tasks.
+    public func with(habits: [Habit], atRisk: Set<UUID>) -> PlannerInput {
+        var x = self
+        x.habits = habits
+        x.atRisk = atRisk
+        return x
+    }
+}

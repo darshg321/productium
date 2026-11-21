@@ -18,7 +18,7 @@ struct ScheduleView: View {
             VStack(spacing: 0) {
                 WeekStrip(selected: $day, weekStart: $weekStart)
                 Divider()
-                AgendaList(day: day)
+                DayEntryList(day: day)
             }
             .background(Theme.background)
             .navigationTitle(title)
@@ -231,5 +231,107 @@ struct AgendaRowView: View {
             Spacer()
             Text(detail).font(.subheadline.monospacedDigit())
         }
+    }
+}
+
+
+// MARK: - v1.2 O11 / B7: a day is its entries, rendered one way
+
+/// Past (solid), assumed (with a dashed mark until you say yes or no), running (live), planned (outlined). Every row
+/// opens the same entry sheet. Swipe right = yes, it happened; left = no. "All to Here" confirms the morning at once.
+struct DayEntryList: View {
+    @Environment(AppModel.self) private var model
+    let day: Date
+    @State private var editing: DayEntry?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { ctx in
+            let now = ctx.date
+            let cal = Calendar.current
+            let rows = model.dayEntries(day).filter { cal.isDate($0.start, inSameDayAs: day) || $0.start < cal.startOfDay(for: day) }
+            let untracked = cal.isDate(day, inSameDayAs: now) || day < now
+                ? Goals.gaps(TimeLog.past(model.state.entries, in: Days.dayInterval(day, cal), now: now, book: model.state.dayRules, calendar: cal))
+                : []
+            let due = model.state.items.filter { $0.isOpen && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: day) }
+            List {
+                if rows.isEmpty && due.isEmpty { Text("Nothing on this day yet.").foregroundStyle(.secondary) }
+                ForEach(due) { t in
+                    Label("Due \(t.due.hm): \(t.title)", systemImage: "flag.fill").font(.subheadline.weight(.semibold))
+                }
+                ForEach(untracked, id: \.start) { g in
+                    Label("Untracked \(g.start.hm)–\(g.end.hm) · \(durationLabel(g.minutes))", systemImage: "questionmark.circle")
+                        .font(.subheadline).foregroundStyle(.orange)
+                }
+                ForEach(rows) { d in
+                    DayEntryRow(entry: d, now: now)
+                        .contentShape(Rectangle())
+                        .onTapGesture { editing = d }
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            if d.assumed && d.end <= now {
+                                Button { model.confirm(d) } label: { Label("Yes", systemImage: "checkmark") }.tint(.green)
+                                Button { model.confirmAll(in: DateInterval(start: cal.startOfDay(for: day), end: d.end)) } label: {
+                                    Label("All to Here", systemImage: "checkmark.circle")
+                                }.tint(.teal)
+                            } else if d.isPlannedSession, let t = d.taskId, let item = model.state.items.first(where: { $0.id == t }) {
+                                Button { model.startTask(item) } label: { Label("Start", systemImage: "play.fill") }.tint(Theme.focus)
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            if d.end <= now && !d.running {
+                                Button(role: .destructive) { model.reject(d) } label: { Label("No", systemImage: "xmark") }
+                            } else {
+                                Button(role: .destructive) { model.remove(d) } label: { Label("Remove", systemImage: "trash") }
+                            }
+                        }
+                }
+            }
+            .listStyle(.plain)
+            .sheet(item: $editing) { EntrySheet(day: $0) }
+        }
+    }
+}
+
+struct DayEntryRow: View {
+    @Environment(AppModel.self) private var model
+    let entry: DayEntry
+    let now: Date
+
+    var body: some View {
+        let tree = model.state.categories
+        let colour = Theme.color(category: entry.category, tree: tree)
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(entry.isPlannedSession || entry.start > now ? colour.opacity(0.3) : colour)
+                .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: entry.assumed ? [3, 2] : [])))
+                .frame(width: 6)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Image(systemName: Theme.symbol(category: entry.category, tree: tree)).foregroundStyle(colour).font(.caption)
+                    Text(entry.title).font(.subheadline.weight(entry.taskId != nil ? .semibold : .regular)).lineLimit(1)
+                }
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            if entry.running {
+                Text(timerInterval: entry.start...Date.distantFuture, countsDown: false).font(.caption.monospacedDigit()).foregroundStyle(Theme.focus)
+            } else {
+                Text("\(entry.start.hm)–\(entry.end.hm)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+        }
+        .opacity(entry.mark == .skipped ? 0.4 : 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(entry.assumed ? "Assumed. Swipe right if it happened, left if it didn't." : "")
+    }
+
+    private var detail: String {
+        var parts = [model.state.categories.pathText(entry.category)]
+        if entry.running { parts.append("now") }
+        else if entry.isPlannedSession { parts.append(entry.end < now ? "not started" : "planned") }
+        else if entry.mark == .confirmed { parts.append("confirmed") }
+        else if entry.assumed && entry.end <= now { parts.append("assumed") }
+        else if entry.source == .plan { parts.append("planned") }
+        if entry.entry.open { parts.append("open time") }
+        if let p = model.placeName(entry.entry.placeId) { parts.append(p) }
+        return parts.joined(separator: " · ")
     }
 }

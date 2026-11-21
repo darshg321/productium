@@ -25,6 +25,10 @@ public struct Integrations: Codable, Hashable, Sendable {
     public var notifications = false
     public var motion = false
     public var healthNeedsRequest = false
+    /// v1.2 M9: open tasks mirrored into a "Productium" list in Reminders.
+    public var reminders = false
+    /// v1.2 M5: new Screen Time screenshots read on the phone.
+    public var photos = false
 
     public init() {}
 
@@ -35,6 +39,7 @@ public struct Integrations: Codable, Hashable, Sendable {
         location = v(.location, false); alarms = v(.alarms, false)
         notifications = v(.notifications, false); motion = v(.motion, false)
         healthNeedsRequest = v(.healthNeedsRequest, false)
+        reminders = v(.reminders, false); photos = v(.photos, false)
     }
 }
 
@@ -68,6 +73,8 @@ public struct AppState: Codable, Sendable {
     public var pinnedCharts: [PinnedChart] = []
     /// v1.2 C5: the taxonomy pass's runs (each can be reverted).
     public var taxonomy = TaxonomyLog()
+    /// v1.2 P2: the patterns the last insight pass chose (shown in Review → Today and the Weekly Note).
+    public var patterns: [Pattern] = []
     /// v1.2 Part N: what the phone noticed, asked and learned.
     public var inference = InferenceState()
     /// v1.2 Part H: how every task ended (kept after the task is deleted).
@@ -180,6 +187,7 @@ public struct AppState: Codable, Sendable {
         taskHistory = v(.taskHistory, d.taskHistory)
         inference = v(.inference, d.inference)
         taxonomy = v(.taxonomy, d.taxonomy)
+        patterns = v(.patterns, d.patterns)
         quickStarts = v(.quickStarts, d.quickStarts)
         categoryRules = v(.categoryRules, d.categoryRules)
         pinnedCharts = v(.pinnedCharts, d.pinnedCharts)

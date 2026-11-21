@@ -17,7 +17,7 @@ final class HealthService {
     }
 
     private var shareTypes: Set<HKSampleType> {
-        var types: Set<HKSampleType> = [HKCategoryType(.mindfulSession)]
+        var types: Set<HKSampleType> = [HKCategoryType(.mindfulSession), HKObjectType.workoutType()]
         if #available(iOS 18.0, *) { types.insert(HKObjectType.stateOfMindType()) }
         return types
     }
@@ -92,6 +92,47 @@ final class HealthService {
             if let v = value(stats) { out[cal.startOfDay(for: stats.startDate)] = v }
         }
         return out
+    }
+
+    /// Workouts with their type (M8), for exact Extracurricular / Exercise entries.
+    func workouts(since: Date) async -> [WorkoutSample] {
+        guard available else { return [] }
+        let q = HKSampleQueryDescriptor(predicates: [.workout(HKQuery.predicateForSamples(withStart: since, end: Date()))],
+                                        sortDescriptors: [SortDescriptor(\.startDate)])
+        guard let ws = try? await q.result(for: store) else { return [] }
+        return ws.map { WorkoutSample(start: $0.startDate, end: $0.endDate, type: Self.name($0.workoutActivityType)) }
+    }
+
+    static func name(_ t: HKWorkoutActivityType) -> String {
+        switch t {
+        case .running: return "Running"
+        case .walking: return "Walking"
+        case .cycling: return "Cycling"
+        case .basketball: return "Basketball"
+        case .volleyball: return "Volleyball"
+        case .soccer: return "Soccer"
+        case .swimming: return "Swimming"
+        case .tennis: return "Tennis"
+        case .traditionalStrengthTraining, .functionalStrengthTraining: return "Strength training"
+        case .yoga: return "Yoga"
+        case .dance, .cardioDance, .socialDance: return "Dance"
+        case .hiking: return "Hiking"
+        default: return "Workout"
+        }
+    }
+
+    /// M8: an exercise entry you logged goes into Health as a workout (closes the Fitness rings).
+    func saveWorkout(_ title: String, start: Date, end: Date) {
+        guard available else { return }
+        let config = HKWorkoutConfiguration()
+        config.activityType = .other
+        let builder = HKWorkoutBuilder(healthStore: store, configuration: config, device: .local())
+        builder.beginCollection(withStart: start) { ok, _ in
+            guard ok else { return }
+            builder.addMetadata([HKMetadataKeyWorkoutBrandName: title]) { _, _ in
+                builder.endCollection(withEnd: end) { _, _ in builder.finishWorkout { _, _ in } }
+            }
+        }
     }
 
     /// Minutes of logged workouts per day.
