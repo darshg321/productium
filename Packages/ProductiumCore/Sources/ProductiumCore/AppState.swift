@@ -107,6 +107,9 @@ public struct AppState: Codable, Sendable {
     public var plan: Plan = .empty
     public var places: [SavedPlace] = []
     public var visits: [PlaceVisit] = []
+    /// v1.2 Part E: places that name themselves, and the location history (180 days).
+    public var placeBook = PlaceBook()
+    public var trace = LocationTrace()
     @SortedSet public var declinedPlaces: Set<String> = []
     public var integrations = Integrations()
     public var review: WeeklyReview?
@@ -200,6 +203,8 @@ public struct AppState: Codable, Sendable {
         plan = v(.plan, d.plan)
         places = v(.places, d.places)
         visits = v(.visits, d.visits)
+        placeBook = v(.placeBook, d.placeBook)
+        trace = v(.trace, d.trace)
         declinedPlaces = v(.declinedPlaces, d.declinedPlaces)
         integrations = v(.integrations, d.integrations)
         review = v(.review, d.review)
@@ -224,6 +229,7 @@ public struct AppState: Codable, Sendable {
         telemetry.prune(now: now)
         outbox.prune(now: now)
         prompts.prune(now: now)
+        trace.prune(now: now)
         approvals = Approvals.live(approvals, now: now)
     }
 
