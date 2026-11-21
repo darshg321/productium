@@ -12,6 +12,12 @@ public enum RewardIntensity: Int, Codable, Comparable, Sendable {
 
 public enum RewardKind: String, Codable, Sendable {
     case focusDone, itemDone, planFinished, bedtimeKept, scrollClosedEarly, metricImproved, milestone, personalBest
+    /// v1.2 I4: a goal closed; a weekly one; an upper limit kept through the day.
+    case goalClosed, weeklyGoal, limitKept
+    /// v1.2 G1b: the day beat your usual similar day.
+    case beatUsual
+    /// v1.2 I0: a whole day with no untracked stretch over 30 minutes.
+    case trackedDay
 }
 
 public enum RewardEvent: Sendable {
@@ -30,6 +36,14 @@ public enum RewardEvent: Sendable {
     case metricImproved(MetricID, MetricPeriod, String)
     /// A personal best for a finished week ("lowest scrolling week").
     case personalBest(String)
+    /// v1.2 I4: a goal reached ("Studying 2h") — `daysThisMonth` counts, never a streak.
+    case goalClosed(title: String, weekly: Bool, daysThisMonth: Int?)
+    /// v1.2 I4: an at-most goal kept for the day (checked at bedtime).
+    case limitKept(title: String, minutes: Int, limit: Int)
+    /// v1.2 G1b: at bedtime, the day's score beat your usual similar day's.
+    case beatUsual(score: Int, usual: Int, label: String, differences: [String])
+    /// v1.2 I0: no untracked stretch over 30 minutes all day. `daysThisMonth` counts, never a streak.
+    case trackedDay(daysThisMonth: Int)
     /// Never rewarded, listed so the rule is tested: using Productium is not the goal.
     case appOpened, tabChanged, timeInApp(minutes: Int)
 }
@@ -103,6 +117,9 @@ public enum Rewards {
         if m.kind == .scrollClosedEarly, today.filter({ $0.kind == .scrollClosedEarly }).count >= scrollNotesPerDay { return nil }
         // At most one "day's plan finished" a day, however often the plan is edited and re-finished.
         if m.kind == .planFinished, today.contains(where: { $0.kind == .planFinished }) { return nil }
+        // One of each a day: closing the same goal twice, or beating your usual twice, isn't news.
+        if [.goalClosed, .weeklyGoal, .limitKept, .beatUsual, .trackedDay].contains(m.kind),
+           today.contains(where: { $0.kind == m.kind && $0.title == m.title }) { return nil }
 
         if m.intensity == .small, m.kind != .scrollClosedEarly,
            unit(seed: "\(AlarmPlanner.dayKey(now, cal))|\(today.count)|\(m.kind.rawValue)") < settings.surpriseRate {
@@ -163,6 +180,18 @@ public enum Rewards {
             return moment(.metricImproved, .medium, text, period == .week ? "Better than last week" : nil)
         case .personalBest(let text):
             return moment(.personalBest, .big, text, "Your best week so far")
+        case let .goalClosed(title, weekly, days):
+            return moment(weekly ? .weeklyGoal : .goalClosed, weekly ? .big : .medium, "\(title) goal reached",
+                          days.flatMap { $0 > 1 ? "\($0) days this month" : nil })
+        case let .limitKept(title, minutes, limit):
+            return moment(.limitKept, .medium, "\(title) kept under \(minutesLabel(limit))", "\(minutesLabel(minutes)) today")
+        case let .beatUsual(score, usual, label, diffs):
+            guard score > usual else { return nil }
+            return moment(.beatUsual, .medium, "You beat your \(label.lowercased()): \(score) vs \(usual)",
+                          diffs.isEmpty ? nil : diffs.prefix(2).joined(separator: ", "))
+        case .trackedDay(let days):
+            return moment(.trackedDay, .medium, "Every stretch of today accounted for",
+                          days > 1 ? "\(days) days like this this month" : nil)
         }
     }
 

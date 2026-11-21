@@ -66,6 +66,8 @@ public struct AppState: Codable, Sendable {
     public var dayPlans: [DayKey: [UUID: Int]] = [:]
     /// v1.2 F3: charts pinned to Review. Only the query is kept; the numbers are computed live from the log.
     public var pinnedCharts: [PinnedChart] = []
+    /// v1.2 Part I: your goals and the AI's (the built-in tracking goal is `Goal.trackingGaps`, not stored).
+    public var goals: [Goal] = []
     /// v1.2 D4 / A7: what the tracking prompts asked and when you answered.
     public var prompts = PromptLog()
     /// v1.2 D2: start buttons.
@@ -168,6 +170,7 @@ public struct AppState: Codable, Sendable {
         telemetry = v(.telemetry, d.telemetry)
         outbox = v(.outbox, d.outbox)
         prompts = v(.prompts, d.prompts)
+        goals = v(.goals, d.goals)
         quickStarts = v(.quickStarts, d.quickStarts)
         categoryRules = v(.categoryRules, d.categoryRules)
         pinnedCharts = v(.pinnedCharts, d.pinnedCharts)
