@@ -164,6 +164,7 @@ final class AppModel {
         state.prune(now: Date())
         recordMissedBlocks()
         replan()
+        if !state.outbox.items.isEmpty { await flushOutbox() }
         if full {
             serverOnline = await ClaudeClient.shared.ping()
             await insightPass()
@@ -237,11 +238,23 @@ final class AppModel {
         let plan = state.plan
         let now = Date()
         let nudges = nudgeInput(now: now)
-        dueGap = GapDetector.due(gapInput(now: now), calendar: cal)
-        if state.integrations.notifications { scheduleGapQuestion(now: now) }
         if state.integrations.notifications {
-            let planned = NudgePlanner.plan(nudges)
-            log(.notification, "scheduled", ["count": "\(planned.count)", "next": planned.first.map { "\($0.title) at \($0.at)" } ?? "none"])
+            state.prompts.roll(now: now)
+            let buttons = startButtons(now: now).row.map(\.title)
+            NotificationService.register(buttons: buttons)
+            var planned = NudgePlanner.plan(nudges)
+            // D4: "What are you up to?" timed by the 30-minute goal; A7: the morning sleep check; D6: the running entry.
+            let prompts = TrackPrompts.plan(TrackPromptInput(now: now, calendar: cal, entries: state.entries, plan: plan,
+                                                             book: state.dayRules, log: state.prompts, buttons: buttons))
+            state.prompts.scheduled = prompts.map {
+                PromptLog.Asked(at: $0.at, stretchStart: $0.window?.start ?? $0.at, past: $0.id == "track.past")
+            }
+            planned += prompts
+            if let q = TrackPrompts.sleepQuestion(entries: state.entries, now: now, log: state.prompts, calendar: cal) { planned.append(q) }
+            planned += TrackPrompts.running(running, tree: state.categories, goalLine: goalLine(for: running), now: now)
+            planned += questionNudges(now: now)
+            log(.notification, "scheduled", ["count": "\(planned.count)", "prompts": "\(prompts.count)",
+                                             "next": planned.filter { $0.kind != .running }.min { $0.at < $1.at }.map { "\($0.title) at \($0.at)" } ?? "none"])
             NotificationService.schedule(planned)
             NotificationService.scheduleHousekeeping(expiry: signatureExpiry)
         }
@@ -250,6 +263,76 @@ final class AppModel {
                                   forKey: LocalStore.Key.scrollCheckIns)
         syncAlarms(nudges)
         if state.integrations.calendarExport { CalendarService.shared.export(plan: plan) }
+    }
+
+    // MARK: Start buttons (D2)
+
+    func startButtons(now: Date = Date()) -> QuickStarts.Ranked {
+        let covered = QuickStarts.covered(today: now, items: state.items, planned: state.entries.filter { $0.source == .plan }, calendar: cal)
+        return state.quickStarts.ranked(entries: state.entries, now: now, place: currentPlaceId, covered: covered,
+                                        book: state.dayRules, calendar: cal)
+    }
+
+    /// One tap: starts it with no AI call (the same path as "starting X" typed).
+    func start(_ b: QuickStart) {
+        applyQuick(QuickParsed(kind: .start, ops: [BoxOp(.entry, .start, BoxFields(title: b.title, category: b.category,
+                                                                                    topics: b.topics.isEmpty ? nil : b.topics))]),
+                   text: "▶︎ \(b.title)")
+        Haptics.start()
+    }
+
+    /// Starts something by name (a notification's start button, Siri, a Shortcut): the button's filing if there's one.
+    func start(title: String, at: Date? = nil, source: String) {
+        var f = BoxFields(title: title)
+        if let b = state.quickStarts.buttons.first(where: { $0.key == CategoryRules.key(title) }) {
+            f.category = b.category
+            f.topics = b.topics.isEmpty ? nil : b.topics
+        } else if let task = QuickParse.task(named: title, quickContext) {
+            applyQuick(QuickParsed(kind: .start, ops: [BoxOp(.task, .start, ref: Ref.task(task.id))]), text: "▶︎ \(task.title)")
+            return
+        } else {
+            f.category = state.categoryRules.category(for: title, tree: state.categories, scrollingApps: state.scrollingApps)
+        }
+        if let at { f.start = QuickParse.stamp(at, cal) }
+        log(.intent, "start", ["title": title, "source": source])
+        applyQuick(QuickParsed(kind: .start, ops: [BoxOp(.entry, .start, f)]), text: "▶︎ \(title)")
+    }
+
+    /// Stops the running entry (a notification's Done, Siri, a Shortcut, the Stop button).
+    func stopRunning(source: String) {
+        guard running != nil else { return }
+        log(.intent, "stop", ["source": source])
+        applyQuick(QuickParsed(kind: .stop, ops: [BoxOp(.entry, .stop)]), text: "■ Stop")
+        Haptics.stop()
+    }
+
+    /// "What were you doing 3:10–4:30?" answered with a button: that stretch becomes a told entry.
+    func logStretch(_ title: String, _ window: DateInterval) {
+        let f = BoxFields(title: title, start: QuickParse.stamp(window.start, cal), end: QuickParse.stamp(min(window.end, Date()), cal),
+                          category: state.quickStarts.buttons.first { $0.key == CategoryRules.key(title) }?.category
+                              ?? state.categoryRules.category(for: title, tree: state.categories, scrollingApps: state.scrollingApps))
+        applyQuick(QuickParsed(kind: .log, ops: [BoxOp(.entry, .add, f)]), text: "\(title), \(window.start.hm)–\(window.end.hm)")
+    }
+
+    /// The place you're at now (the last open visit's place), for ranking buttons and filing entries.
+    var currentPlaceId: UUID? {
+        guard let v = state.visits.last, v.departure == nil else { return nil }
+        return state.placeBook.place(for: v)?.id
+    }
+
+    /// "Study 1h 10 of 2h" for the running entry's notification (I3), when a goal covers it.
+    func goalLine(for e: Entry?) -> String? {
+        guard let e else { return nil }
+        return Goals.line(for: e, goals: state.goals, entries: state.entries, tree: state.categories, items: state.items,
+                          now: Date(), book: state.dayRules, calendar: cal)
+    }
+
+    /// Answers to "Slept about …?" (A7): yes confirms the estimate as yours.
+    func confirmSleep(_ window: DateInterval) {
+        state.prompts.sleepAnswered.insert(DayKeys.key(window.end, cal))
+        let f = BoxFields(title: "Sleep", start: QuickParse.stamp(window.start, cal), end: QuickParse.stamp(window.end, cal),
+                          category: CategoryTree.sleep)
+        applyQuick(QuickParsed(kind: .log, ops: [BoxOp(.entry, .add, f)]), text: "Slept \(window.start.hm)–\(window.end.hm)")
     }
 
     /// Both alarm toggles feed one wanted list; an off toggle means its alarms are cancelled, not left behind.
@@ -265,7 +348,7 @@ final class AppModel {
         let snoozed = Set(state.snoozed.filter { $0.value > now }.map(\.key))
         return NudgeInput(now: now, calendar: cal, plan: state.plan, items: state.items, settings: state.prefs.nudges,
                           startedBlockId: Sessions.block(for: running, in: state.plan, now: now)?.id, answeredBlockIds: answered, snoozedBlockIds: snoozed,
-                          markerPrompts: markerPrompts(), timeLabel: { $0.formatted(date: .omitted, time: .shortened) },
+                          running: running, timeLabel: { $0.formatted(date: .omitted, time: .shortened) },
                           policy: state.policy, dayRules: state.dayRules)
     }
 
@@ -376,6 +459,18 @@ final class AppModel {
         NotificationService.snooze(blockId: blockId, title: b.title, minutes: minutes)
         syncAlarms()
         save()
+    }
+
+    /// "Not Today" on a task notification (H.1): not before tomorrow (it keeps its due), counted as put off.
+    func notToday(blockId: UUID) {
+        guard let b = state.plan.blocks.first(where: { $0.id == blockId }), let id = b.itemId,
+              let i = state.items.firstIndex(where: { $0.id == id }) else { return }
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        if state.items[i].due > tomorrow { state.items[i].notBefore = tomorrow }
+        Avoidance.record(.cantToday, itemId: id, in: &state.items, at: Date(), reason: "Not today", blockId: blockId)
+        NotificationService.cancel(blockId: blockId)
+        log(.notification, "not_today", ["task": state.items[i].title])
+        replan()
     }
 
     func focusNow(on item: WorkItem) {
@@ -599,28 +694,6 @@ final class AppModel {
             NotificationService.notify("Welcome home", "\(mins) minutes free, then \(n.title) at \(n.start.hm). Snack, change, then start.",
                                        deeplink: "productium://now", blockId: n.id)
         }
-    }
-
-    private func markerPrompts() -> [(Date, String)] {
-        guard !state.integrations.location else { return [] }
-        var out: [(Date, String)] = []
-        let now = Date()
-        for d in 0...1 {
-            guard let day = cal.date(byAdding: .day, value: d, to: cal.startOfDay(for: now)) else { continue }
-            let wd = cal.component(.weekday, from: day)
-            let school = legacyCommitments.filter { $0.kind == .school && $0.weekdays.contains(wd) }
-            guard let first = school.min(by: { $0.start < $1.start }), let last = school.max(by: { $0.end < $1.end }) else { continue }
-            let rs = routines
-            let to = rs.first { $0.id == "to_school" }
-            let from = rs.first { $0.id == "from_school" }
-            if let to, to.samples.count < 5, let s = cal.date(bySettingHour: first.start.hour, minute: first.start.minute, second: 0, of: day) {
-                out.append((s.addingTimeInterval(-Double(to.minutes + 5) * 60), "Left home"))
-            }
-            if let from, from.samples.count < 5, let e = cal.date(bySettingHour: last.end.hour, minute: last.end.minute, second: 0, of: day) {
-                out.append((e.addingTimeInterval(Double(from.minutes) * 60), "Home"))
-            }
-        }
-        return out.filter { $0.0 > now }
     }
 
     var signatureExpiry: Date? { Signature.expiry }
@@ -847,54 +920,6 @@ final class AppModel {
     func unpin(_ target: String) {
         state.changes.unpin(target)
         save()
-    }
-
-    var dueGap: MysteryGap?
-
-    func gapInput(now: Date = Date()) -> GapInput {
-        GapInput(now: now, day: dayInputs(cal.startOfDay(for: now)), scrolling: Friction.log.sessions, phoneUse: phoneUse,
-                 plan: state.plan, focusing: focus != nil, log: state.gaps,
-                 explained: state.visits.map { v in DateInterval(start: v.arrival, end: max(v.arrival, v.departure ?? now)) })
-    }
-
-    private func scheduleGapQuestion(now: Date) {
-        state.gaps.asked.removeAll { $0.answer == nil && $0.askedAt > now }
-        guard let next = GapDetector.nextAsk(gapInput(now: now), calendar: cal) else {
-            NotificationService.cancelGapQuestion()
-            return
-        }
-        NotificationService.scheduleGapQuestion(GapDetector.question(next.gap, calendar: cal), start: next.gap.start,
-                                                end: next.gap.end, at: next.at)
-        state.gaps.asked.append(AskedGap(start: next.gap.start, end: next.gap.end, askedAt: next.at))
-    }
-
-    func dismissGap(_ gap: MysteryGap) {
-        state.gaps.asked.append(AskedGap(start: gap.start, end: gap.end, askedAt: Date(), answer: ""))
-        dueGap = nil
-        save()
-    }
-
-    func answerGap(_ text: String, gap: MysteryGap) async {
-        let known = state.gaps.asked
-        var asked = state.gaps.asked.first { abs($0.start.timeIntervalSince(gap.start)) < 60 }
-            ?? AskedGap(start: gap.start, end: gap.end, askedAt: Date())
-        state.gaps.asked.removeAll { $0.id == asked.id }
-        asked.end = gap.end
-        asked.answer = text
-        if let markers = GapAnswer.markers(for: text, gap: gap, commitments: legacyCommitments, known: known, calendar: cal) {
-            var entries = state.entries, tree = state.categories
-            CheckIns.apply(markers, to: &entries, tree: &tree, now: Date(), calendar: cal)
-            state.entries = entries
-            state.categories = tree
-            asked.activity = markers.first?.activity
-            state.gaps.asked.append(asked)
-            dueGap = nil
-            replan()
-        } else {
-            state.gaps.asked.append(asked)
-            dueGap = nil
-            await dump(GapAnswer.boxText(text, gap: gap, calendar: cal))
-        }
     }
 
     func dayInputs(_ day: Date) -> DayInputs {
@@ -1175,6 +1200,119 @@ final class AppModel {
             }
             return false
         }
+    }
+
+    // MARK: Everyday lane (O7) and the outbox (A9)
+
+    var quickContext: QuickContext {
+        QuickContext(now: Date(), calendar: cal, entries: state.entries, items: state.items, tree: state.categories,
+                     rules: state.categoryRules, scrollingApps: state.scrollingApps, book: state.dayRules)
+    }
+
+    /// Everything said to Productium goes through here: the box, notification replies, Siri and Shortcuts.
+    /// 1. Saved to the outbox first (and to disk), so it's never lost. 2. The local fast path, no network.
+    /// 3. Only then Sonnet, inside a background task. A reply from a notification always gets an answer back.
+    @discardableResult
+    func submit(_ raw: String, images: [AIImage] = [], source: OutboxItem.Source = .app, context: String? = nil) async -> Bool {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !images.isEmpty else { return false }
+        let now = Date()
+        var outboxId: UUID?
+        if images.isEmpty {
+            outboxId = state.outbox.add(text, source: source, context: context, at: now)
+            if let e = Persistence.save(state) { log(.storage, "save_failed", level: .error, ["error": e]) }
+        }
+        if images.isEmpty, context == nil, let q = QuickParse.parse(text, quickContext) {
+            let receipt = applyQuick(q, text: text)
+            if let id = outboxId { state.outbox.sent(id) }
+            save()
+            if source != .app { NotificationService.receipt(receipt.lines.last ?? "Done", body: receipt.problems.first) }
+            return true
+        }
+        let bg = UIApplication.shared.beginBackgroundTask(withName: "box") { }
+        defer { UIApplication.shared.endBackgroundTask(bg) }
+        let item = outboxId.flatMap { id in state.outbox.items.first { $0.id == id } }
+        let ok = await dump(item?.boxText(now: Date(), calendar: cal) ?? text, images: images)
+        if let id = outboxId {
+            if ok { state.outbox.sent(id) } else { state.outbox.failed(id, error: "unreachable", at: Date()) }
+            save()
+        }
+        if source != .app {
+            if ok {
+                let t = state.conversation.turns.last
+                NotificationService.receipt(t?.applied.changes.last ?? "Done", body: t?.reply)
+            } else {
+                NotificationService.receipt("Saved", body: "I'll handle it when you open Productium.")
+            }
+        }
+        log(.box, "submitted", ["source": source.rawValue, "ok": "\(ok)", "outbox": "\(state.outbox.items.count)"])
+        return ok
+    }
+
+    /// A message the local fast path took: applied through the box's own applier, shown as a turn (with Undo), but
+    /// never sent to the server (no assistant content, so it isn't in the conversation's history).
+    @discardableResult
+    func applyQuick(_ q: QuickParsed, text: String) -> BoxReceipt {
+        let now = Date()
+        clearUndo()
+        let side = SideSnapshot(moods: state.moods, screen: state.screen, screenAverages: state.screenAverages,
+                                scrollingApps: state.scrollingApps, prefs: state.prefs, policy: state.policy, aboutMe: aboutMe)
+        let ops = BoxSideOps.split(q.ops)
+        let plan = state.entries.filter { $0.source == .plan }
+        var bs = boxState(entries: state.entries.filter { $0.source != .plan })
+        var receipt = BoxApplier.apply(ops.box, to: &bs, now: now, calendar: cal)
+        absorb(bs, plan: plan)
+        var me = aboutMe
+        let sr = BoxSideOps.apply(ops.side, to: &state, aboutMe: &me, now: now, calendar: cal)
+        receipt.lines += sr.lines
+        receipt.problems += sr.problems
+        if q.kind == .mood, let m = q.ops.first?.fields.mood, state.integrations.health { HealthService.shared.logStateOfMind(m) }
+        let turnId = UUID()
+        let reply = receipt.problems.isEmpty ? (receipt.lines.last ?? "Done.") : receipt.problems.joined(separator: " ")
+        state.conversation.add(ConversationTurn(id: turnId, at: now, text: text, userContent: .array([]), reply: reply,
+                                                applied: AppliedReport(changes: receipt.lines, problems: receipt.problems)))
+        state.telemetry.boxTurn(receipt, turnId: turnId, message: text, ops: q.ops, at: now)
+        log(.box, "local", ["kind": q.kind.rawValue, "turn": turnId.uuidString])
+        state.approvals += Approvals.from(receipt.held, turnId: turnId, at: now)
+        undoTurnId = turnId
+        undoReceipt = receipt
+        undoSide = side
+        afterLogChange()
+        replan()
+        return receipt
+    }
+
+    /// Something was started, stopped or logged: it answers any tracking prompt, the start gets a button (D2), and
+    /// iOS learns the pattern (M4 donations). The running notification is renewed by the replan that follows.
+    func afterLogChange() {
+        state.prompts.answered.append(Date())
+        NotificationService.clearDelivered(prefixes: ["track.", "running."])
+        if let r = running {
+            state.quickStarts.noteStart(r, at: Date())
+            Donations.started(r.title)
+        } else {
+            Donations.stopped()
+        }
+    }
+
+    /// Replies saved while offline go out now (launch, foreground, background refresh).
+    func flushOutbox() async {
+        for item in state.outbox.due(now: Date()) {
+            guard state.outbox.items.contains(where: { $0.id == item.id }) else { continue }
+            log(.box, "outbox_retry", ["attempts": "\(item.attempts)", "age": "\(Int(Date().timeIntervalSince(item.at) / 60))m"])
+            if let q = QuickParse.parse(item.text, quickContext), item.context == nil {
+                applyQuick(q, text: item.text)
+                state.outbox.sent(item.id)
+                continue
+            }
+            if await dump(item.boxText(now: Date(), calendar: cal)) {
+                state.outbox.sent(item.id)
+            } else {
+                state.outbox.failed(item.id, error: "unreachable", at: Date())
+                break
+            }
+        }
+        save()
     }
 
     /// The student has an alarm of their own: make sure iOS has been asked to allow alarms.

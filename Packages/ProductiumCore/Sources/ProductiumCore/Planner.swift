@@ -20,6 +20,8 @@ public struct PlannerInput: Sendable {
     /// v1.2: rules whose `limits` change the planner on their days.
     public var rules: [Rule]
     public var categories: CategoryTree
+    /// v1.2 D7: things done on most days at a similar time get their slot (`Habits.detect`).
+    public var habits: [Habit] = []
 
     public init(now: Date, calendar: Calendar = .current, items: [WorkItem],
                 preferences: Preferences = Preferences(),
@@ -271,6 +273,15 @@ public enum Planner {
                         fixed.append(PlannedBlock(id: stableId("m", "dinner", day), kind: .meal,
                                                   start: s, end: e, title: "Dinner"))
                     }
+                }
+
+                // D7: habits keep their usual slot when it's free (planned and assumed, like any routine).
+                for h in input.habits {
+                    let s = at(day, h.start), e = s.addingTimeInterval(Double(h.minutes) * 60)
+                    guard s >= wakeT, e <= bedtime, !busy.contains(where: { $0.start < e && s < $0.end }) else { continue }
+                    busy.append(Interval(start: s, end: e))
+                    fixed.append(PlannedBlock(id: stableId("h", h.key, day), kind: .routine, start: s, end: e, title: h.title,
+                                              hint: Habits.note, sourceId: "habit:\(h.category)"))
                 }
 
                 let studyFrom = windowStart

@@ -9,7 +9,7 @@ struct TellProductiumIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         AppModel.shared.log(.intent, "TellProductiumIntent")
-        await AppModel.shared.dump(text)
+        await AppModel.shared.submit(text, source: .shortcut)
         let reply = AppModel.shared.state.conversation.turns.last?.reply ?? "Got it."
         return .result(dialog: "\(reply)")
     }

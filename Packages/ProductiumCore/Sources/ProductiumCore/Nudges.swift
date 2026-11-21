@@ -103,9 +103,53 @@ extension Plan {
     }
 }
 
-public enum NudgeKind: String, Codable, Sendable {
-    case leadUp, start, followUp, end, windDown, bedtime, stillUp, leaveSoon, leaveNow, deadline, checkIn, morning, marker, intention
+public enum NudgeKind: String, Codable, CaseIterable, Sendable {
+    case leadUp, start, followUp, windDown, bedtime, stillUp, leaveSoon, leaveNow, deadline, checkIn, morning, intention
     case movement, daylight
+    /// v1.2 D4: "What are you up to?" (live) or "Nothing logged 3:10–4:30" (past).
+    case untracked
+    /// v1.2 A7: "Slept about 11:20–7:05?"
+    case sleepConfirm
+    /// v1.2 N7: a question from what the phone noticed ("You're home, but school's on until 3").
+    case question
+    /// v1.2 D6: the running entry, passive.
+    case running
+
+    /// v1.2 A8: the notification category each kind uses. Only these have actions; the text-input ones say so.
+    public var category: NotificationCategory? {
+        switch self {
+        case .start, .followUp: return .start
+        case .leadUp: return .lead
+        case .checkIn: return .checkIn
+        case .deadline: return .deadline
+        case .untracked: return .untracked
+        case .sleepConfirm: return .sleepConfirm
+        case .question: return .question
+        case .running: return .running
+        default: return nil
+        }
+    }
+}
+
+/// v1.2 A8: notification categories. Copy may invite a reply only when its category takes text.
+public enum NotificationCategory: String, CaseIterable, Sendable {
+    case start = "BLOCK_START", lead = "LEAD_UP", checkIn = "CHECK_IN", deadline = "DEADLINE", scroll = "SCROLL"
+    case untracked = "UNTRACKED", sleepConfirm = "SLEEP_CONFIRM", question = "QUESTION", running = "RUNNING"
+
+    public var takesText: Bool {
+        switch self {
+        case .checkIn, .untracked, .sleepConfirm, .question, .running: return true
+        default: return false
+        }
+    }
+
+    /// Words that invite typing an answer. A body with any of them needs a text field (`takesText`).
+    public static let replyWords = ["reply", "answer", "type", "tell me", "say", "write"]
+
+    public static func invitesReply(_ text: String) -> Bool {
+        let words = Set(text.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+        return replyWords.contains { w in w.contains(" ") ? text.lowercased().contains(w) : words.contains(w) }
+    }
 }
 
 public struct PlannedNudge: Hashable, Sendable {
@@ -116,12 +160,18 @@ public struct PlannedNudge: Hashable, Sendable {
     public var body: String
     public var blockId: UUID?
     public var itemId: UUID?
-    public var marker: String?
     public var deeplink: String?
     public var urgent: Bool
+    /// One-tap answers shown as actions (start buttons for "What are you up to?").
+    public var actions: [String]
+    /// The stretch a question is about (an untracked stretch, a night).
+    public var window: DateInterval?
 
     public init(id: String, kind: NudgeKind, at: Date, title: String, body: String, blockId: UUID? = nil,
-                itemId: UUID? = nil, marker: String? = nil, deeplink: String? = nil, urgent: Bool = false) {
+                itemId: UUID? = nil, deeplink: String? = nil, urgent: Bool = false, actions: [String] = [],
+                window: DateInterval? = nil) {
+        self.actions = actions
+        self.window = window
         self.id = id
         self.kind = kind
         self.at = at
@@ -129,7 +179,6 @@ public struct PlannedNudge: Hashable, Sendable {
         self.body = body
         self.blockId = blockId
         self.itemId = itemId
-        self.marker = marker
         self.deeplink = deeplink
         self.urgent = urgent
     }
@@ -165,7 +214,8 @@ public struct NudgeInput {
     public var startedBlockId: UUID?
     public var answeredBlockIds: Set<UUID>
     public var snoozedBlockIds: Set<UUID>
-    public var markerPrompts: [(Date, String)]
+    /// What's running now (H4: no "hasn't started" follow-up while you're tracking something else).
+    public var running: Entry?
     public var limit: Int
     public var timeLabel: ((Date) -> String)?
     public var policy: BehaviourPolicy
@@ -173,7 +223,7 @@ public struct NudgeInput {
 
     public init(now: Date, calendar: Calendar, plan: Plan, items: [WorkItem], settings: NudgeSettings,
                 startedBlockId: UUID? = nil, answeredBlockIds: Set<UUID> = [], snoozedBlockIds: Set<UUID> = [],
-                markerPrompts: [(Date, String)] = [], limit: Int = 52, timeLabel: ((Date) -> String)? = nil,
+                running: Entry? = nil, limit: Int = 52, timeLabel: ((Date) -> String)? = nil,
                 policy: BehaviourPolicy = BehaviourPolicy(), dayRules: DayRuleBook = DayRuleBook()) {
         self.dayRules = dayRules
         self.policy = policy
@@ -185,9 +235,52 @@ public struct NudgeInput {
         self.startedBlockId = startedBlockId
         self.answeredBlockIds = answeredBlockIds
         self.snoozedBlockIds = snoozedBlockIds
-        self.markerPrompts = markerPrompts
+        self.running = running
         self.limit = limit
         self.timeLabel = timeLabel
+    }
+}
+
+/// v1.2 H4: what every task notification says: the first concrete step, how long, what it leads to, how far along.
+public struct TaskCopy: Hashable, Sendable {
+    /// "Chapter 3's first 5 pages · 20 min"
+    public var first: String
+    /// The first line plus progress and what it leads to.
+    public var body: String
+
+    /// "Reading · 2 of 5" → "Reading".
+    public static func plainTitle(_ t: String) -> String {
+        guard let r = t.range(of: #"\s*·\s*\d+\s+of\s+\d+$"#, options: .regularExpression) else { return t }
+        return String(t[..<r.lowerBound])
+    }
+
+    /// "Reading · 2 of 5" → (2, 5).
+    public static func session(_ t: String) -> (Int, Int)? {
+        guard let r = t.range(of: #"\d+\s+of\s+\d+$"#, options: .regularExpression) else { return nil }
+        let p = t[r].split(separator: " ").compactMap { Int($0) }
+        return p.count == 2 ? (p[0], p[1]) : nil
+    }
+
+    public static func make(_ b: PlannedBlock, item: WorkItem?, plan: Plan, calendar cal: Calendar, time: (Date) -> String) -> TaskCopy {
+        let step = item?.firstStep.flatMap { $0.isEmpty ? nil : $0 } ?? b.hint ?? "Open it and do the first small part"
+        let first = "\(step.trimmingCharacters(in: CharacterSet(charactersIn: ". "))) · \(minutesLabel(b.minutes))"
+        var parts = [first + "."]
+        if let (n, m) = session(b.title), n > 1 { parts.append("\(n - 1) of \(m) sessions done.") }
+        let day = plan.blocks(on: b.start, calendar: cal)
+        let studyToday = day.filter(\.isStudy)
+        let total = studyToday.reduce(0) { $0 + $1.minutes }
+        let through = studyToday.filter { $0.start <= b.start }.reduce(0) { $0 + $1.minutes }
+        let next = day.filter { $0.start >= b.end && $0.kind != .free && $0.kind != .gap && $0.kind != .breakTime }.min { $0.start < $1.start }
+        if let n = next, n.start.timeIntervalSince(b.end) >= 20 * 60 {
+            parts.append("Then you're free until \(time(n.start)).")
+        } else if next == nil || next?.kind == .windDown || next?.kind == .sleep {
+            parts.append(studyToday.last == b ? "Then you're done for today." : "Then you're free.")
+        } else if total > b.minutes {
+            parts.append("That's \(minutesLabel(through)) of today's \(minutesLabel(total)).")
+        } else {
+            parts.append("Next: \(plainTitle(next!.title)) at \(time(next!.start)).")
+        }
+        return TaskCopy(first: first, body: parts.joined(separator: " "))
     }
 }
 
@@ -207,32 +300,28 @@ public enum NudgePlanner {
         for (i, b) in study.enumerated() {
             let started = b.id == input.startedBlockId
             let snoozed = input.snoozedBlockIds.contains(b.id)
+            // H4: no "hasn't started" while you're tracking something else; you're busy, not avoiding it.
+            let elsewhere = input.running != nil && !started
             let backToBack = i > 0 && study[i - 1].end >= b.start.addingTimeInterval(-15 * 60)
+            let item = b.itemId.flatMap { id in input.items.first { $0.id == id } }
+            let copy = TaskCopy.make(b, item: item, plan: plan, calendar: input.calendar, time: time)
             if !started && !snoozed {
-                if level != .gentle && !backToBack && b.minutes >= 20 {
+                if level != .gentle && !backToBack && b.minutes >= 20 && !elsewhere {
                     add(PlannedNudge(id: "plan.lead.\(b.id)", kind: .leadUp, at: b.start.addingTimeInterval(-10 * 60),
-                              title: "In 10 minutes: \(b.title)",
-                              body: "Get water and open what you need. Pick the first small step now. Starts at \(time(b.start)).",
+                              title: "In 10 minutes: \(TaskCopy.plainTitle(b.title))", body: copy.first,
                               blockId: b.id, itemId: b.itemId))
                 }
-                add(PlannedNudge(id: "plan.start.\(b.id)", kind: .start, at: b.start, title: b.title,
-                          body: b.hint ?? "Starting now. Tap Start Focus, or snooze it 10 minutes.",
-                          blockId: b.id, itemId: b.itemId, deeplink: "productium://now", urgent: true))
-                let followUps = level.followUps.map { max(2, $0 + input.policy.followUpShiftMinutes) }
-                for (k, m) in followUps.enumerated() where Double(m) * 60 < b.end.timeIntervalSince(b.start) - 5 * 60 {
+                add(PlannedNudge(id: "plan.start.\(b.id)", kind: .start, at: b.start, title: TaskCopy.plainTitle(b.title),
+                          body: copy.body, blockId: b.id, itemId: b.itemId, deeplink: "productium://now", urgent: true))
+                let followUps = Array(level.followUps.map { max(2, $0 + input.policy.followUpShiftMinutes) }.prefix(level == .persistent ? 2 : 1))
+                for (k, m) in followUps.enumerated() where !elsewhere && Double(m) * 60 < b.end.timeIntervalSince(b.start) - 5 * 60 {
                     let left = b.minutes - m
-                    let body = k == 0
-                        ? "Not started yet. Even 10 minutes of it counts. \(left) minutes left in this block."
-                        : k == followUps.count - 1
-                            ? "Last nudge for this one. Start now, or tap Can't Today and it moves to a better slot."
-                            : "Still time: \(left) minutes left. Open it and do the first small step."
                     add(PlannedNudge(id: "plan.follow.\(b.id).\(k)", kind: .followUp, at: b.start.addingTimeInterval(Double(m) * 60),
-                              title: "\(b.title) hasn't started", body: body,
+                              title: "\(TaskCopy.plainTitle(b.title)): \(left) min left",
+                              body: "Even 10 minutes counts. \(copy.first)",
                               blockId: b.id, itemId: b.itemId, deeplink: "productium://now", urgent: level == .persistent))
                 }
             }
-            add(PlannedNudge(id: "plan.end.\(b.id)", kind: .end, at: b.end, title: "How did it go?", body: b.title,
-                      blockId: b.id, itemId: b.itemId))
         }
 
         for b in plan.blocks where b.kind == .event && b.itemId != nil && b.end > now && b.start < end {
@@ -243,7 +332,7 @@ public enum NudgePlanner {
         if let wind = plan.blocks.first(where: { $0.kind == .windDown && $0.start > now.addingTimeInterval(30 * 60) && $0.start < end }) {
             add(PlannedNudge(id: "plan.checkin", kind: .checkIn, at: wind.start.addingTimeInterval(-30 * 60),
                       title: "20-second check-in",
-                      body: "How was today? Anything new due? Reply here, no need to open the app."))
+                      body: "How was today? Anything new due? Press and hold to reply, no need to open the app."))
         }
         for w in plan.blocks where w.kind == .windDown && w.end > now && w.start < end {
             add(PlannedNudge(id: "plan.wind.\(w.id)", kind: .windDown, at: w.start, title: "Wind-down",
@@ -317,11 +406,6 @@ public enum NudgePlanner {
             }
         }
 
-        for (i, s) in input.markerPrompts.prefix(4).enumerated() {
-            add(PlannedNudge(id: "plan.marker.\(i)", kind: .marker, at: s.0, title: s.1 + "?",
-                      body: "Tap Yes when it happens. A few of these and Productium learns your routine.", marker: s.1))
-        }
-
         for intent in input.policy.intentions where intent.trigger == .time {
             guard let t = intent.time else { continue }
             for d in 0...1 {
@@ -359,10 +443,7 @@ public enum NudgePlanner {
         for n in xs { byMinute[Int(n.at.timeIntervalSince1970 / 60), default: []].append(n) }
         var out: [PlannedNudge] = []
         for (_, group) in byMinute {
-            let ends = group.filter { $0.kind == .end }
-            let others = group.filter { $0.kind != .end }.sorted { rank($0.kind) < rank($1.kind) }
-            out += ends
-            if let best = others.first { out.append(best) }
+            if let best = group.sorted(by: { rank($0.kind) < rank($1.kind) }).first { out.append(best) }
         }
         return out
     }
@@ -377,11 +458,10 @@ public enum NudgePlanner {
         case .deadline: return 5
         case .leadUp: return 6
         case .windDown: return 7
-        case .end: return 8
         case .checkIn: return 9
         case .morning: return 10
         case .stillUp: return 11
-        case .marker: return 12
+        case .untracked, .sleepConfirm, .question, .running: return 12
         case .intention: return 6
         case .movement: return 9
         case .daylight: return 10

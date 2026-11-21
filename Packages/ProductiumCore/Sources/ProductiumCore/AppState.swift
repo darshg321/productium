@@ -66,6 +66,14 @@ public struct AppState: Codable, Sendable {
     public var dayPlans: [DayKey: [UUID: Int]] = [:]
     /// v1.2 F3: charts pinned to Review. Only the query is kept; the numbers are computed live from the log.
     public var pinnedCharts: [PinnedChart] = []
+    /// v1.2 D4 / A7: what the tracking prompts asked and when you answered.
+    public var prompts = PromptLog()
+    /// v1.2 D2: start buttons.
+    public var quickStarts = QuickStarts()
+    /// v1.2 A9: replies saved before they're sent; removed once applied.
+    public var outbox = Outbox()
+    /// v1.2 C2: learned title → category rules and your corrections.
+    public var categoryRules = CategoryRules()
     /// v1.2 Part T: the development log, in every backup.
     public var telemetry = Telemetry()
     public var prefs = Preferences()
@@ -158,6 +166,10 @@ public struct AppState: Codable, Sendable {
         categories = v(.categories, d.categories)
         dayPlans = v(.dayPlans, d.dayPlans)
         telemetry = v(.telemetry, d.telemetry)
+        outbox = v(.outbox, d.outbox)
+        prompts = v(.prompts, d.prompts)
+        quickStarts = v(.quickStarts, d.quickStarts)
+        categoryRules = v(.categoryRules, d.categoryRules)
         pinnedCharts = v(.pinnedCharts, d.pinnedCharts)
         prefs = v(.prefs, d.prefs)
         items = v(.items, d.items)
@@ -204,6 +216,9 @@ public struct AppState: Codable, Sendable {
     public mutating func prune(now: Date) {
         snoozed = snoozed.filter { $0.value > now.addingTimeInterval(-3600) }
         telemetry.prune(now: now)
+        outbox.prune(now: now)
+        prompts.prune(now: now)
+        approvals = Approvals.live(approvals, now: now)
     }
 
     public mutating func restore(full s: AppState, keepingDevice: Bool = true) {

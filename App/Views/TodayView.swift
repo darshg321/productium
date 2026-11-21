@@ -110,7 +110,7 @@ struct DumpBox: View {
         let t = model.draftText, imgs = model.draftImages.map(\.ai)
         focused = false
         Task {
-            if await model.dump(t, images: imgs) {
+            if await model.submit(t, images: imgs, source: .app) {
                 model.clearDraft()
                 picks = []
             }

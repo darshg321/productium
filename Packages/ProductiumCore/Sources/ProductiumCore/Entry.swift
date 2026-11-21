@@ -293,7 +293,9 @@ public enum PlanEntries {
             case .sleep: category = CategoryTree.sleep
             case .windDown: category = CategoryTree.windDown
             case .meal: category = CategoryTree.meals
-            case .routine: category = b.sourceId?.hasSuffix("school") == true ? CategoryTree.travel : CategoryTree.gettingReady
+            case .routine:
+                if let s = b.sourceId, s.hasPrefix("habit:") { category = String(s.dropFirst(6)) }
+                else { category = b.sourceId?.hasSuffix("school") == true ? CategoryTree.travel : CategoryTree.gettingReady }
             case .commitment, .event: category = CategoryTree.other
             case .free, .gap, .breakTime: return nil
             }
