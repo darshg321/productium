@@ -22,6 +22,8 @@ public struct PlannerInput: Sendable {
     public var categories: CategoryTree
     /// v1.2 D7: things done on most days at a similar time get their slot (`Habits.detect`).
     public var habits: [Habit] = []
+    /// v1.2 H3: tasks like ones you usually drop (`TaskHistory.atRisk`): a starter session first, early, and weighted up.
+    public var atRisk: Set<UUID> = []
 
     public init(now: Date, calendar: Calendar = .current, items: [WorkItem],
                 preferences: Preferences = Preferences(),
@@ -371,6 +373,21 @@ public enum Planner {
                         if ds[k].latest <= ds[k].earliest { ds[k].latest = item.due }
                         if ds[k].preferredDay.map({ $0 < dayIndex(of: nb) }) == true { ds[k].preferredDay = dayIndex(of: nb) }
                     }
+                }
+                // H3: a kind you usually drop gets a short starter as soon as possible (the first step named), and
+                // the rest of it weighs more when slots are handed out.
+                if input.atRisk.contains(item.id), !item.kind.isMemoryBased, let first = ds.first {
+                    var boosted = item
+                    boosted.importance = min(5, item.importance + 1)
+                    for k in ds.indices { ds[k].item = boosted }
+                    if ds[0].minutes >= Planner.minChunk * 2 { ds[0].minutes -= Planner.minChunk } else { ds.removeFirst() }
+                    let from = max(input.now, item.notBefore ?? input.now)
+                    let endOfTomorrow = cal.date(byAdding: .day, value: 2, to: cal.startOfDay(for: from)) ?? item.due
+                    let starter = Demand(item: boosted, minutes: Planner.minChunk, earliest: from, latest: min(item.due, endOfTomorrow),
+                                         preferredDay: dayIndex(of: from), isReview: false, title: item.title,
+                                         hint: "Starter: " + (item.firstStep ?? "just open it and do the first small part"))
+                    _ = first
+                    ds.insert(starter, at: 0)
                 }
                 out += ds
             }

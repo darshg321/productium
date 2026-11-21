@@ -52,6 +52,8 @@ public struct LoggedChange: Codable, Hashable, Identifiable, Sendable {
     public var created: UUID?
     /// The knob's value before (restored on revert).
     public var previous: Double?
+    /// The task's first step before (restored on revert).
+    public var previousText: String?
 
     public init(id: UUID = UUID(), runId: UUID, change: InsightChange, from: String = "", to: String = "", reason: String,
                 evidence: [String] = [], model: String, at: Date, status: ChangeStatus = .applied) {
@@ -70,7 +72,7 @@ public struct LoggedChange: Codable, Hashable, Identifiable, Sendable {
     public var title: String {
         switch change {
         case .knob(let k, _): return "\(Registry.knob(k)?.note.capitalizedFirst ?? k): \(from) → \(to)"
-        case .starterStep(_, let t, let m, _): return "Added a \(m)-minute first step: \(t)"
+        case .starterStep(_, let t, _, _): return "Named a first step: \(t)"
         case .intention(let i): return "Reminds you: \(i.text)"
         case .beliefGroup(let g, _): return "Started noticing: \(g.title)"
         case .aboutMe(let s, let t): return "About You (\(s.rawValue)): \(t)"
@@ -214,12 +216,11 @@ public struct ChangeLog: Codable, Hashable, Sendable {
         case .knob(let key, let to):
             p.previous = Knobs.value(key, in: s.policy)
             guard case .changed = Knobs.set(key, String(to), by: .reflection, in: &s) else { return "\(key) couldn't be set" }
-        case .starterStep(let parent, let title, let minutes, let due):
-            guard let task = s.items.first(where: { $0.id == parent }) else { return "No task" }
-            let step = WorkItem(title: title, kind: .chore, subject: task.subject, due: min(due, task.due), estimateMinutes: minutes,
-                                importance: task.importance, difficulty: 1, parentId: parent, source: .ai, createdAt: now)
-            s.items.append(step)
-            p.created = step.id
+        case .starterStep(let parent, let title, _, _):
+            // v1.2 H4: the first step is named on the task itself (reminders say it), not added as another task.
+            guard let i = s.items.firstIndex(where: { $0.id == parent }) else { return "No task" }
+            p.previousText = s.items[i].firstStep
+            s.items[i].firstStep = title
         case .intention(let intent):
             s.policy.intentions.append(intent)
         case .beliefGroup(let g, let ev):
@@ -245,8 +246,8 @@ public struct ChangeLog: Codable, Hashable, Sendable {
         case .knob(let key, _):
             guard let prev = p.previous else { return false }
             Knobs.write(key, prev, in: &s.policy)
-        case .starterStep:
-            if let c = p.created { s.items.removeAll { $0.id == c && !$0.isDone } }
+        case .starterStep(let parent, let title, _, _):
+            if let i = s.items.firstIndex(where: { $0.id == parent }), s.items[i].firstStep == title { s.items[i].firstStep = p.previousText }
         case .intention(let intent):
             s.policy.intentions.removeAll { $0.id == intent.id }
         case .beliefGroup(let g, _):

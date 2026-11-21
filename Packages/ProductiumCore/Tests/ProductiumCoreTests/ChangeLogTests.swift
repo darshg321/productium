@@ -77,14 +77,14 @@ final class ChangeLogTests: XCTestCase {
             draft(.aboutMe(section: .patterns, text: "puts off university essays")),
         ], to: &s, now: Fx.mon(9))
         XCTAssertEqual(problems, ["A new group needs 3 pieces of evidence"])
-        let step = s.items.first { $0.parentId == essay.id }
-        XCTAssertEqual(step?.estimateMinutes, 15)
-        XCTAssertEqual(s.items.first { $0.id == essay.id }?.title, essay.title, "their task is untouched")
+        XCTAssertFalse(s.items.contains { $0.parentId == essay.id }, "no extra task (v1.2 H4)")
+        XCTAssertEqual(s.items.first { $0.id == essay.id }?.firstStep, "Open the doc and fix one paragraph")
+        XCTAssertEqual(s.items.first { $0.id == essay.id }?.title, essay.title, "their task is otherwise untouched")
         log.apply(run(1), [draft(.beliefGroup(BeliefGroup(id: "slump", title: "After-school slump 3–4 pm"), evidence: ["Mon", "Tue", "Thu"]))],
                   to: &s, now: Fx.mon(9, plusDays: 1))
         XCTAssertEqual(s.beliefs.groups.last?.createdBy, "reflection")
         for c in log.applied { XCTAssertTrue(log.revert(c.id, in: &s, now: Fx.mon(12, plusDays: 1)), c.title) }
-        XCTAssertFalse(s.items.contains { $0.parentId == essay.id }, "the step it added is gone")
+        XCTAssertNil(s.items.first { $0.id == essay.id }?.firstStep, "the first step it named is gone")
         XCTAssertFalse(s.beliefs.groups.contains { $0.id == "slump" })
         XCTAssertTrue(s.aboutMe[.patterns].isEmpty)
     }
