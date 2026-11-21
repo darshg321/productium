@@ -163,7 +163,8 @@ enum V12More {
                                                         firstStep: "Read the first 5 pages of chapter 7"))]],
                 check: { s in s.items.contains { $0.title.lowercased().contains("gatsby") && $0.firstStep != nil } ? [] : ["Gatsby task with a first step"] },
                 trackRecord: ["reading: dropped 4 of 5, put off 2× on average, worked on after 21:00", "essay: dropped 0 of 4"],
-                replyCheck: { reply, _ in has(reply, ["dropped", "4 of", "4 out of", "usually"]) ? [] : ["the reply says they usually drop readings: \(reply)"] },
+                // The numbers are the app's (`TaskHistory.note`); the model only has to flag it.
+                replyCheck: { reply, _ in has(reply, ["dropped", "4 of", "4 out of", "usually", "often", "put off", "slip"]) ? [] : ["the reply flags that readings usually get dropped: \(reply)"] },
                 referenceReply: "Added. You've dropped 4 of your last 5 readings, so I named a small first step."),
         V12Case(id: "h2-no-warn-essay", why: "H2: a kind they usually finish gets nothing extra", now: W.at(18, 16), setup: { $0 = W.base() },
                 turns: ["add a history essay due next friday, maybe 3 hours"],

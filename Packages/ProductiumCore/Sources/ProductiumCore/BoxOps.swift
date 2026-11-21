@@ -198,7 +198,8 @@ public enum BoxApplier {
             return "Removes “\(gone.title)” every time it repeats"
         }
         func ownPast(_ es: [Entry], only ids: Set<UUID>) -> Int {
-            es.filter { $0.source == .you && $0.repeats == nil && ids.contains($0.id) && $0.marks.isEmpty }
+            // Skipped is gone; confirmed is still there (a "yes" must never look like a removal).
+            es.filter { $0.source == .you && $0.repeats == nil && ids.contains($0.id) && !$0.marks.values.contains(.skipped) }
                 .reduce(0) { $0 + max(0, Int((min($1.end ?? now, now).timeIntervalSince($1.start)) / 60)) }
         }
         let existing = Set(before.entries.map(\.id))

@@ -434,6 +434,24 @@ extension AppModel {
         Task { await runInferences(); replan() }
     }
 
+    // MARK: M7: filing with Apple's on-device model when no rule fits
+
+    func fileOnDevice(_ id: UUID) async {
+        guard let e = state.entries.first(where: { $0.id == id }) else { return }
+        let tree = state.categories
+        let paths = tree.nodes.filter { !tree.isUnder($0.id, CategoryTree.school) }.map { tree.pathText($0.id) }
+        guard let path = await OnDeviceModel.categorise(e.title, paths: paths),
+              let node = tree.nodes.first(where: { tree.pathText($0.id) == path }),
+              let i = state.entries.firstIndex(where: { $0.id == id }), state.entries[i].category == CategoryTree.other else { return }
+        state.entries[i].category = node.id
+        state.categoryRules.learn(e.title, node.id, byYou: false, at: Date())
+        if let b = state.quickStarts.buttons.first(where: { $0.key == CategoryRules.key(e.title) }) {
+            state.quickStarts.recategorise(b.id, to: node.id)
+        }
+        log(.ai, "on_device_filed", ["title": e.title, "path": path])
+        save()
+    }
+
     // MARK: Screenshots (M5 / M6)
 
     /// A new screenshot, read on the phone. Screen Time: applied here, one receipt line; unreadable Screen Time: the box

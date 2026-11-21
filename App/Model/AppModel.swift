@@ -1049,6 +1049,9 @@ final class AppModel {
                 reply = QueryText.fill(reply, results)
                 receipt.problems += results.flatMap(\.problems)
             }
+            // H2: the facts for a kind they usually drop are the app's own numbers.
+            let added = state.items.filter { !itemsBefore.map(\.id).contains($0.id) }
+            if let note = state.taskHistory.note(for: added, reply: reply) { reply += (reply.isEmpty ? "" : " ") + note }
             if reply.isEmpty {
                 reply = receipt.lines.isEmpty && receipt.held.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done."
             }
@@ -1178,6 +1181,7 @@ final class AppModel {
         if let r = running {
             state.quickStarts.noteStart(r, at: Date())
             Donations.started(r.title)
+            if r.category == CategoryTree.other, !r.filedByYou, OnDeviceModel.available { Task { await fileOnDevice(r.id) } }
         } else {
             Donations.stopped()
         }

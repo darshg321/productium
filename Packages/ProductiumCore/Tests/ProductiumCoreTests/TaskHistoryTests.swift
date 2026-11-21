@@ -50,6 +50,10 @@ final class TaskHistoryTests: XCTestCase {
         XCTAssertFalse(h.atRisk(essay))
         XCTAssertNil(h.warning(for: essay))
         XCTAssertEqual(h.summary().first, "reading: dropped 4 of 5, put off 2× on average, worked on after 21:00")
+        XCTAssertEqual(h.note(for: [next], reply: "Added. Readings often slip, so here's a first step."),
+                       "You've dropped 4 of the last 5 reading tasks; they're usually put off to after 9 pm.")
+        XCTAssertNil(h.note(for: [next], reply: "You've dropped 4 of your last 5 readings, usually after 9 pm."), "already said")
+        XCTAssertNil(h.note(for: [essay], reply: "Added."))
     }
 
     func testAtRiskTaskGetsAStarterFirst() {

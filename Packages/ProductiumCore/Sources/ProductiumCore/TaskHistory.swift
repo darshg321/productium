@@ -118,6 +118,16 @@ public struct TaskHistory: Codable, Hashable, Sendable {
         return line
     }
 
+    /// H2: the facts for new tasks of a kind you usually drop, unless the reply already gives them (code writes the
+    /// numbers; the model only says it). nil when there's nothing to add.
+    public func note(for newItems: [WorkItem], reply: String) -> String? {
+        let lines = newItems.compactMap { warning(for: $0) }.filter { w in
+            let nums = w.split(whereSeparator: { !$0.isNumber }).map(String.init)
+            return !nums.allSatisfy { reply.contains($0) }
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: ". ") + "."
+    }
+
     /// One line per kind and category with enough history, for the box's context (H2) and the insight pass (H6):
     /// "reading: dropped 4 of 5, put off 2× on average, worked on after 21:00".
     public func summary(limit: Int = 6) -> [String] {

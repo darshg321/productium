@@ -2,6 +2,19 @@ import XCTest
 @testable import ProductiumCore
 
 // v1.2 O6 / O8: the box's operations, approval instead of refusal, and Undo.
+final class BoxRiskTests: XCTestCase {
+    func testConfirmingYourOwnTimeIsNeverHeld() {
+        let e = Entry(title: "Reviews", start: Fx.mon(15), end: Fx.mon(16, 5), category: CategoryTree.other, source: .you, createdAt: Fx.mon(16, 5))
+        var s = BoxState(entries: [e])
+        let r = BoxApplier.apply([BoxOp(.entry, .change, ref: EntryRef.entry(e.id), BoxFields(end: "16:12")),
+                                  BoxOp(.entry, .confirm, ref: EntryRef.entry(e.id, occurrence: "2026-11-16"))], to: &s, now: Fx.mon(16, 12), calendar: Fx.cal)
+        XCTAssertTrue(r.held.isEmpty, "\(r.held.map(\.why))")
+        XCTAssertEqual(s.entries[0].marks["2026-11-16"], .confirmed)
+        let gone = BoxApplier.apply([BoxOp(.entry, .skip, ref: EntryRef.entry(e.id))], to: &s, now: Fx.mon(16, 12), calendar: Fx.cal)
+        XCTAssertEqual(gone.held.count, 1, "skipping over an hour you logged still asks")
+    }
+}
+
 final class BoxOpsTests: XCTestCase {
     let cal = Fx.cal
     let now = Fx.mon(18)
