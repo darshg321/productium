@@ -33,6 +33,15 @@ public struct InsightInput {
     public var dayRules: DayRuleBook
     /// `MetricsExport.summary` (G6).
     public var metrics: String?
+    /// v1.2 P1: candidate patterns from the log, with their evidence (the pass picks ≤2 and words them).
+    public var patterns: [Pattern] = []
+    /// v1.2 H6: how tasks of each kind and hour ended (`TaskHistory.summary`).
+    public var trackRecord: [String] = []
+    /// v1.2 I5: goals with this week's progress, first in the note. `aiGoals` may be moved ±10%.
+    public var goals: [String] = []
+    public var aiGoals: [Goal] = []
+    /// v1.2 N3: what the student answered when plan and reality disagreed ("No school today" Tue).
+    public var answers: [String] = []
 
     public init(now: Date, calendar: Calendar, trigger: InsightTrigger, question: String? = nil, aboutMe: AboutMe = .empty,
                 beliefs: Beliefs = Beliefs(), routines: [Routine] = Routine.defaults, deferrals: [Deferral] = [], days: [DayRecord] = [],
@@ -92,7 +101,7 @@ public enum InsightPass {
     }
 
     public static func system() -> String {
-        Prompts.persona + """
+        (Prompts.persona + """
 
         You read the student's week and do two things.
 
@@ -107,8 +116,12 @@ public enum InsightPass {
         before_due (task, minutes before). For example an alarm 5 minutes before the time they keep missing. At most one.
         \(DayRuleText.grammar)
         Each has reason (one sentence of evidence) and evidence (short lines). Don't redo anything under "Undone         before".
+        Goals come first in the note: which closed, which moved, one suggestion. goal_changes: you may move a goal marked \
+        [ai] by at most 10% (goal id, target minutes); never one of theirs.
+        patterns: from "Patterns found", pick at most 2 that matter and word each in one plain sentence (keep its numbers \
+        exactly). Shown in Review; none is fine.
         about_me: up to 3 lines, section Inferred ("text — evidence: …, confidence: low|med|high, since YYYY-MM-DD")         or Patterns ("puts off university essays: deferred 3× this week").
-        """
+        """).replacingOccurrences(of: #" {2,}"#, with: " ", options: .regularExpression)
     }
 
     public static let schema: JSONValue = {
@@ -123,6 +136,8 @@ public enum InsightPass {
         ], required: ["type", "reason"])
         return Schemas.obj(["headline": s, "wins": Schemas.arr(s), "suggestions": Schemas.arr(s),
                             "changes": Schemas.arr(change),
+                            "patterns": Schemas.arr(Schemas.obj(["id": s, "text": s], required: ["id", "text"])),
+                            "goal_changes": Schemas.arr(Schemas.obj(["goal": s, "target": i], required: ["goal", "target"])),
                             "about_me": Schemas.arr(Schemas.obj(["section": s, "text": s], required: ["section", "text"]))],
                            required: ["headline", "wins", "suggestions", "changes"])
     }()
@@ -153,11 +168,15 @@ public enum InsightPass {
             public var evidence: [String]?
         }
         public struct Line: Codable, Hashable, Sendable { public var section: String; public var text: String }
+        public struct PatternLine: Codable, Hashable, Sendable { public var id: String; public var text: String }
+        public struct GoalChange: Codable, Hashable, Sendable { public var goal: String; public var target: Int }
         public var headline: String
         public var wins: [String]
         public var suggestions: [String]
         public var changes: [Change]
         public var about_me: [Line]?
+        public var patterns: [PatternLine]?
+        public var goal_changes: [GoalChange]?
 
         public var review: WeeklyReview { WeeklyReview(headline: headline, wins: wins, suggestions: Array(suggestions.prefix(2))) }
     }
@@ -186,12 +205,43 @@ public enum InsightPass {
             "\(k.key) \(Knobs.value(k.key, in: x.policy).map(Knobs.format) ?? "?") (\(k.format), \(k.note))"
         }
         l.append("Behaviour knobs now: " + knobs.joined(separator: "; "))
+        if !x.goals.isEmpty { l.append("Goals this week: " + x.goals.joined(separator: "; ")) }
+        if !x.aiGoals.isEmpty { l.append("Goals you set [ai]: " + x.aiGoals.map { "\($0.ref) \($0.title) \(minutesLabel($0.target))/\($0.period.rawValue)" }.joined(separator: "; ")) }
         if let m = x.metrics { l.append(m) }
+        if !x.trackRecord.isEmpty { l.append("How tasks ended (track record): " + x.trackRecord.joined(separator: "; ")) }
+        if !x.answers.isEmpty { l.append("When plan and reality disagreed, they said: " + x.answers.joined(separator: "; ")) }
+        if !x.patterns.isEmpty {
+            l.append("Patterns found (id: text · evidence):")
+            for p in x.patterns.prefix(6) { l.append("- \(p.id): \(p.text) · " + p.evidence.prefix(4).joined(separator: ", ")) }
+        }
         if !x.dayRules.sequences.isEmpty { l.append("Day sequences: " + x.dayRules.sequences.map(\.name).joined(separator: ", ")) }
         if !x.policy.intentions.isEmpty { l.append("Reminders already: " + x.policy.intentions.map(\.text).joined(separator: "; ")) }
         if !x.feedback.isEmpty { l.append("Undone before (don't redo): " + x.feedback.joined(separator: " | ")) }
         if !x.conversations.isEmpty { l.append("Recent conversations: " + x.conversations.suffix(6).joined(separator: " | ")) }
         return l.joined(separator: "\n")
+    }
+
+    /// P2: the patterns it chose (only ids it was given; the text is the model's wording of code's numbers).
+    public static func patterns(_ o: Output, candidates: [Pattern]) -> [Pattern] {
+        var seen = Set<String>()
+        return Array((o.patterns ?? []).compactMap { line -> Pattern? in
+            guard seen.insert(line.id).inserted, var p = candidates.first(where: { $0.id == line.id }) else { return nil }
+            // Numbers in the wording must be the code's: any number not in the candidate's text keeps the code's text.
+            let nums = { (s: String) in Set(s.split(whereSeparator: { !$0.isNumber }).map(String.init)) }
+            if nums(line.text).isSubset(of: nums(p.text + " " + p.evidence.joined(separator: " "))) { p.text = line.text }
+            return p
+        }.prefix(2))
+    }
+
+    /// I2: moves only goals the AI suggested, by at most 10% (`Goals.nudge`). Returns the lines for the Changes list.
+    public static func goalChanges(_ o: Output, goals: inout [Goal]) -> [String] {
+        var out: [String] = []
+        for c in o.goal_changes ?? [] {
+            guard let i = goals.firstIndex(where: { Ref.matches(c.goal, prefix: "g", full: $0.id.uuidString) }) else { continue }
+            let old = goals[i].target
+            if Goals.nudge(&goals[i], to: c.target) { out.append("\(goals[i].title) goal: \(minutesLabel(old)) → \(minutesLabel(goals[i].target))") }
+        }
+        return out
     }
 
     /// J4: the insight pass can't add alarms; an `alarm` change becomes one Approve / Decline row in the Weekly Note.
