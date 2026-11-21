@@ -3,7 +3,7 @@
 #  • ios-compile: compile-check the app for the simulator, unsigned (every push)
 #  • ios-free-ipa: on a push to main or dev that changes code (see `paths` below), builds the free-account .ipa.
 #      main: releases v<VERSION>.<n> (VERSION holds major.minor; n counts up from 0) and updates source.json.
-#      dev:  replaces the rolling "dev" pre-release (Productium-dev.ipa). No version tag, no source.json change, so
+#      dev:  replaces the rolling "dev-build" pre-release (Productium-dev.ipa). No version tag, no source.json change, so
 #            testing builds never move the version.
 name: ios
 
@@ -104,8 +104,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp Productium-free.ipa Productium-dev.ipa
-          gh release delete dev --cleanup-tag -y || true
-          gh release create dev Productium-dev.ipa --target "${{ github.sha }}" --prerelease --latest=false \
+          gh release delete dev-build --cleanup-tag -y || true
+          gh release create dev-build Productium-dev.ipa --target "${{ github.sha }}" --prerelease --latest=false \
             --title "dev (${{ github.sha }})" --notes "Testing build of ${{ github.sha }} (would be v${{ steps.version.outputs.version }})."
       - name: SideStore source (always the newest build)
         if: github.ref == 'refs/heads/main'
