@@ -300,16 +300,22 @@ struct MoodMapCard: View {
                 let cells = map.cells.flatMap { wd, hs in hs.map { MoodCell(weekday: wd, hour: $0.key, mood: $0.value) } }
                 // Each cell spans its hour explicitly: with an automatic width, two cells at the same hour (any two days)
                 // make Charts divide by a zero spacing and crash.
-                // Rows Monday first (the calendar's own order), whole-row-high cells.
+                // Rows in the calendar's week order, top to bottom; every cell spans its hour and its whole row.
                 let order = (0..<7).map { cal.shortWeekdaySymbols[(cal.firstWeekday - 1 + $0) % 7] }
+                let row: (Int) -> Double = { wd in Double(6 - (wd - cal.firstWeekday + 7) % 7) }
                 Chart(cells.filter { (6...23).contains($0.hour) }) { c in
                     RectangleMark(xStart: .value("Hour", c.hour), xEnd: .value("Hour", c.hour + 1),
-                                  y: .value("Day", cal.shortWeekdaySymbols[c.weekday - 1]), height: .ratio(0.85))
+                                  yStart: .value("Day", row(c.weekday) + 0.06), yEnd: .value("Day", row(c.weekday) + 0.94))
                         .foregroundStyle(by: .value("Mood", c.mood))
                 }
                 .chartForegroundStyleScale(domain: 1.0...5.0, range: Gradient(colors: [Color.red.opacity(0.6), Color.yellow, Color.green]))
                 .chartXScale(domain: 6...24)
-                .chartYScale(domain: order)
+                .chartYScale(domain: 0.0...7.0)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: (0..<7).map { Double($0) + 0.5 }) { v in
+                        AxisValueLabel { Text(order[6 - Int(v.as(Double.self) ?? 0)]) }
+                    }
+                }
                 .frame(height: 170)
                 if let n = map.noticed { Text(n).font(.subheadline) }
             }
