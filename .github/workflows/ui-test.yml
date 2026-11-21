@@ -74,7 +74,7 @@ jobs:
             -k "thread backtrace all" -k "process kill" > /tmp/lldb.txt 2>&1 &
           for i in $(seq 1 600); do
             grep -q '^DONE' "$data/Documents/test/results.txt" 2>/dev/null && break
-            if ! xcrun simctl spawn "$udid" launchctl list 2>/dev/null | grep -q "$APP_ID" || grep -q "stop reason" /tmp/lldb.txt 2>/dev/null; then
+            if ! xcrun simctl spawn "$udid" launchctl list 2>/dev/null | grep -q "$APP_ID" || grep "stop reason" /tmp/lldb.txt 2>/dev/null | grep -qv SIGSTOP; then
               echo "the app stopped (crashed?)"; sleep 3; break
             fi
             sleep 1
@@ -83,7 +83,7 @@ jobs:
           mkdir -p out
           cp -R "$data/Documents/test/." out/
           cp /tmp/lldb.txt out/lldb.txt 2>/dev/null || true
-          grep -q "stop reason" out/lldb.txt 2>/dev/null && { echo "--- crash (lldb)"; grep -A40 "stop reason" out/lldb.txt | head -60; }
+          grep "stop reason" out/lldb.txt 2>/dev/null | grep -qv SIGSTOP && { echo "--- crash (lldb)"; grep -v SIGSTOP out/lldb.txt | grep -A40 "stop reason" | head -60; }
           xcrun simctl io "$udid" screenshot out/system-final.png || true
           xcrun simctl spawn "$udid" log show --last 30m --style compact --predicate 'process == "Productium"' > out/app.log 2>/dev/null || true
           sleep 8   # crash reports are written a few seconds after the crash
