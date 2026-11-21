@@ -16,8 +16,10 @@ for _ in $(seq 1 30); do
   [ "$id" != "$before" ] && break
   sleep 3
 done
-echo "run $id: $(gh run view "$id" --json url -q .url)"
-gh run watch "$id" --interval 20 >/dev/null || true
+# A new run can 404 for a few seconds.
+for _ in $(seq 1 20); do gh run view "$id" --json url -q .url >/dev/null 2>&1 && break; sleep 3; done
+echo "run $id: $(gh run view "$id" --json url -q .url 2>/dev/null)"
+until [ "$(gh run view "$id" --json status -q .status 2>/dev/null)" = completed ]; do sleep 20; done
 out="test-runs/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
 gh run download "$id" -n ui-test -D "$out"

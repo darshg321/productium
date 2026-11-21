@@ -66,15 +66,24 @@ jobs:
           if [ -n "$INPUT_COMMANDS" ]; then printf '%s\n' "$INPUT_COMMANDS" > "$data/Documents/test/commands.txt"
           else cp "$INPUT_FILE" "$data/Documents/test/commands.txt"; fi
           echo "--- commands"; cat "$data/Documents/test/commands.txt"
-          SIMCTL_CHILD_TZ="${{ inputs.tz }}" xcrun simctl launch "$udid" "$APP_ID"
+          # Under lldb, so a crash leaves its backtrace in out/lldb.txt.
+          sudo DevToolsSecurity -enable >/dev/null 2>&1 || true
+          pid=$(SIMCTL_CHILD_TZ="${{ inputs.tz }}" xcrun simctl launch --wait-for-debugger "$udid" "$APP_ID" | awk '{print $NF}')
+          echo "pid $pid"
+          nohup lldb --batch -o "process attach --pid $pid" -o "process handle SIGPIPE -n true -p true -s false" -o continue \
+            -k "thread backtrace all" -k "process kill" > /tmp/lldb.txt 2>&1 &
           for i in $(seq 1 600); do
             grep -q '^DONE' "$data/Documents/test/results.txt" 2>/dev/null && break
-            if ! xcrun simctl spawn "$udid" launchctl list 2>/dev/null | grep -q "$APP_ID"; then echo "the app isn't running (crashed?)"; break; fi
+            if ! xcrun simctl spawn "$udid" launchctl list 2>/dev/null | grep -q "$APP_ID" || grep -q "stop reason" /tmp/lldb.txt 2>/dev/null; then
+              echo "the app stopped (crashed?)"; sleep 3; break
+            fi
             sleep 1
           done
           echo "--- results"; cat "$data/Documents/test/results.txt" 2>/dev/null || echo "(no results)"
           mkdir -p out
           cp -R "$data/Documents/test/." out/
+          cp /tmp/lldb.txt out/lldb.txt 2>/dev/null || true
+          grep -q "stop reason" out/lldb.txt 2>/dev/null && { echo "--- crash (lldb)"; grep -A40 "stop reason" out/lldb.txt | head -60; }
           xcrun simctl io "$udid" screenshot out/system-final.png || true
           xcrun simctl spawn "$udid" log show --last 30m --style compact --predicate 'process == "Productium"' > out/app.log 2>/dev/null || true
           sleep 8   # crash reports are written a few seconds after the crash
