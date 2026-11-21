@@ -59,8 +59,7 @@ public enum Insights {
         let done = days.reduce(0) { $0 + $1.doneStudy }
         func mean(_ xs: [Int]) -> Int? { xs.isEmpty ? nil : xs.reduce(0, +) / xs.count }
         let moods = days.compactMap(\.mood)
-        let hours = (0..<24).filter { learned.hourSuccess[$0] + learned.hourFail[$0] > 6 }
-            .sorted { learned.hourReliability($0) > learned.hourReliability($1) }
+        let hours = learned.goodHours()
         var factors: [String: Double] = [:]
         for (k, v) in learned.estimateRatio where v.weight > LearnedModel.priorWeight { factors[k] = (v.mean * 100).rounded() / 100 }
 
@@ -86,7 +85,7 @@ public enum Insights {
                              averageSleep: mean(days.compactMap(\.sleep)),
                              averageMood: moods.isEmpty ? nil : moods.reduce(0, +) / Double(moods.count),
                              averageScreen: mean(days.compactMap(\.screen)),
-                             bestHours: Array(hours.prefix(3)).sorted(), estimateFactors: factors,
+                             bestHours: hours.sorted(), estimateFactors: factors,
                              patterns: Array(patterns.prefix(3)))
     }
 }

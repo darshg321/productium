@@ -72,6 +72,10 @@ struct RootView: View {
         else if link.hasPrefix("productium://review") { tab = 3 }
         else if link.hasPrefix("productium://settings") { tab = 4 }
         else if link.hasPrefix("productium://gap") { tab = 0; showPause = true }
+        else if link.hasPrefix("productium://join") {
+            tab = 3
+            Task { await model.joinLeaderboard(link) }
+        }
         else { tab = 0 }
         model.deepLink = nil
     }

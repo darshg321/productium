@@ -91,6 +91,8 @@ public struct AppState: Codable, Sendable {
     public var categoryRules = CategoryRules()
     /// v1.2 Part T: the development log, in every backup.
     public var telemetry = Telemetry()
+    /// Groups you compare day scores with (Review → Leaderboard).
+    public var leaderboard = LeaderboardState()
     public var prefs = Preferences()
     public var items: [WorkItem] = []
     public var planHistory: [String: [PlannedBlock]] = [:]
@@ -180,6 +182,7 @@ public struct AppState: Codable, Sendable {
         categories = v(.categories, d.categories)
         dayPlans = v(.dayPlans, d.dayPlans)
         telemetry = v(.telemetry, d.telemetry)
+        leaderboard = v(.leaderboard, d.leaderboard)
         outbox = v(.outbox, d.outbox)
         prompts = v(.prompts, d.prompts)
         goals = v(.goals, d.goals)

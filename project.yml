@@ -72,6 +72,7 @@ targets:
           - CFBundleURLName: productium
             CFBundleURLSchemes: [productium]
         ITSAppUsesNonExemptEncryption: false
+        ProductiumLeaderboardURL: ${LEADERBOARD_URL}
 
   ProductiumWidgets:
     type: app-extension

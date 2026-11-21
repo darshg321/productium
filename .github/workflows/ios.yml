@@ -21,6 +21,8 @@ on:
 
 env:
   BUNDLE_PREFIX: ${{ vars.BUNDLE_PREFIX || 'com.example' }}
+  # The leaderboard Worker new groups use (scripts/leaderboard/deploy.sh sets it); empty = groups can only be joined.
+  LEADERBOARD_URL: ${{ vars.LEADERBOARD_URL || '' }}
 
 jobs:
   core-tests:

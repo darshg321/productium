@@ -11,6 +11,8 @@ final class AppModel {
 
     var state: AppState
     var toast: String?
+    /// A leaderboard invite opened before you picked a name (Review → Leaderboard asks for it).
+    var pendingInvite: String?
     var busy: Set<String> = []
     var serverOnline: Bool?
     var serverUsage: ServerUsage?
@@ -163,6 +165,7 @@ final class AppModel {
         syncScreen()
         await refreshLog()
         learnCapacities()
+        learnAdherence()
         if let note = state.taper.update(days: state.screen, now: Date(), calendar: cal) {
             toast = note
         }
@@ -176,6 +179,7 @@ final class AppModel {
             await taxonomyPass()
             await refreshServerUsage()
             await refreshSubscription()
+            await refreshLeaderboards()
         }
     }
 
@@ -630,6 +634,18 @@ final class AppModel {
     private func learnCapacities() {
         state.beliefs = CapacityLearner.learn(state.beliefs, days: dayRecords(back: CapacityLearner.window), entries: state.entries,
                                               tree: state.categories, book: state.dayRules, now: Date(), calendar: cal)
+    }
+
+    /// Follow-through and good hours from each finished day's log (planner energy curve, weekly note, Review).
+    func learnAdherence() {
+        var learned = state.learned
+        let read = AdherenceLearner.learn(&learned, history: state.planHistory, entries: state.entries, items: state.items,
+                                          tree: state.categories, now: Date(), calendar: cal)
+        guard learned != state.learned else { return }
+        state.learned = learned
+        log(.planner, "adherence_learned", ["sessions": "\(read.count)", "done": "\(read.filter { $0.status == .done }.count)",
+                                            "adherence": "\(Int(learned.adherence * 100))%",
+                                            "goodHours": learned.goodHours().map(String.init).joined(separator: ",")])
     }
 
     var healthStatus: HealthStatus {

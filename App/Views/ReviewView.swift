@@ -5,7 +5,8 @@ import ProductiumCore
 // v1.2 G.1: Review, top to bottom. You open it every evening, so insights live here, not on Home.
 // 0. Today: untracked stretches to fill, assumed time to confirm, the day score with its parts vs your usual, patterns.
 // 1. The ring for a day / week / month, with drill-down and the last period beside each slice.
-// 2. Goals. 3. The day score and the four numbers that matter, then Life Metrics. 4. Mood by time of day.
+// 2. Goals. 3. The day score and the four numbers that matter, how you work (follow-through, good hours), the
+// leaderboard, then Life Metrics. 4. Mood by time of day.
 // 5. Where. 6. Pinned charts. 7. The Weekly Note.
 
 struct ReviewView: View {
@@ -19,6 +20,8 @@ struct ReviewView: View {
                     RingSection()
                     GoalsCard()
                     ScoreWeekCard()
+                    HowYouWorkCard()
+                    LeaderboardCard()
                     MetricsSection()
                     MoodMapCard()
                     WhereCard()
@@ -341,4 +344,159 @@ struct WhereCard: View {
 struct MoodCell: Identifiable {
     let weekday: Int, hour: Int, mood: Double
     var id: Int { weekday * 100 + hour }
+}
+
+// MARK: - How you work: follow-through and good hours, learned from each finished day's log
+
+struct HowYouWorkCard: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let l = model.state.learned
+        Card {
+            CardHeader(title: "How You Work", symbol: "clock.badge.checkmark", color: Theme.focus)
+            if l.adherenceSamples < 3 {
+                Text("Learning from your log: \(l.adherenceSamples) planned session\(l.adherenceSamples == 1 ? "" : "s") read so far. Each finished day adds more.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            } else {
+                LabeledContent("Planned sessions done", value: "\(Int((l.adherence * 100).rounded()))%")
+                let hours = l.goodHours()
+                if !hours.isEmpty {
+                    LabeledContent("Best hours", value: hours.sorted().map(hourLabel).joined(separator: ", "))
+                }
+                LabeledContent("Focus block", value: durationLabel(Int(l.focusMinutes)))
+                Text("Plans put work in your best hours and size the day to what you usually finish.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func hourLabel(_ h: Int) -> String {
+        let d = Calendar.current.date(bySettingHour: h, minute: 0, second: 0, of: Date()) ?? Date()
+        return d.formatted(.dateTime.hour())
+    }
+}
+
+// MARK: - Leaderboard: friends added by link, compared on the day score (or vs their own usual)
+
+struct LeaderboardCard: View {
+    @Environment(AppModel.self) private var model
+    @State private var groupId: String?
+    @State private var metric: Leaderboard.Metric = .score
+    @State private var adding = false
+    @State private var confirmLeave = false
+
+    var body: some View {
+        let lb = model.state.leaderboard
+        let group = lb.groups.first { $0.id == groupId } ?? lb.groups.first
+        Card {
+            CardHeader(title: "Leaderboard", symbol: "trophy.fill", color: .yellow, detail: group?.name)
+            if lb.groups.isEmpty || model.pendingInvite != nil {
+                Text(model.pendingInvite != nil ? "Pick the name your friends will see to join."
+                     : "Compare your days with friends. Only your day scores and a name are shared, never what you did.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Button(model.pendingInvite != nil ? "Join" : "Start or Join a Group") { adding = true }
+                    .buttonStyle(.borderedProminent)
+            }
+            if let g = group {
+                if lb.groups.count > 1 {
+                    Picker("Group", selection: Binding(get: { g.id }, set: { groupId = $0 })) {
+                        ForEach(lb.groups) { Text($0.name).tag($0.id) }
+                    }
+                    .pickerStyle(.menu)
+                }
+                Picker("Measure", selection: $metric) {
+                    ForEach(Leaderboard.Metric.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                let rows = lb.boards[g.id].map { Leaderboard.rows($0, metric: metric, you: g.memberId, today: Date(), calendar: .current) } ?? []
+                if rows.isEmpty {
+                    Text("Loading…").font(.subheadline).foregroundStyle(.secondary)
+                } else {
+                    ForEach(rows) { r in
+                        HStack {
+                            Text(r.rank > 0 ? "\(r.rank)" : "–").font(.subheadline.monospacedDigit()).frame(width: 22, alignment: .leading)
+                                .foregroundStyle(.secondary)
+                            Text(r.isYou ? "\(r.name) (you)" : r.name).font(r.isYou ? .subheadline.weight(.semibold) : .subheadline)
+                            Spacer()
+                            Text(r.label).font(.subheadline.monospacedDigit().weight(.semibold))
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                    Text(metric == .vsUsual ? "Last 7 days' average score minus each person's own usual." : "Last 7 days.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                HStack {
+                    if let url = Leaderboard.invite(g) {
+                        ShareLink(item: url, message: Text("Join \(g.name) on Productium")) { Label("Invite", systemImage: "person.badge.plus") }
+                    }
+                    Spacer()
+                    Menu {
+                        Button("Start or Join Another Group") { adding = true }
+                        Button("Leave \(g.name)", role: .destructive) { confirmLeave = true }
+                    } label: { Image(systemName: "ellipsis.circle") }
+                }
+                .font(.subheadline)
+                .confirmationDialog("Leave \(g.name)? Your row is removed for everyone.", isPresented: $confirmLeave, titleVisibility: .visible) {
+                    Button("Leave", role: .destructive) { Task { await model.leaveLeaderboard(g.id) } }
+                }
+            }
+        }
+        .task { await model.refreshLeaderboards() }
+        .sheet(isPresented: $adding) { JoinLeaderboardSheet() }
+    }
+}
+
+struct JoinLeaderboardSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var groupName = ""
+    @State private var link = ""
+    @State private var working = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Your name", text: $name).textContentType(.nickname)
+                } header: { Text("Shown to your friends") }
+                if model.pendingInvite == nil {
+                    Section {
+                        TextField("Paste an invite link", text: $link).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        Button("Join") { run { await model.joinLeaderboard(link) } }
+                            .disabled(link.isEmpty || name.trimmed.isEmpty)
+                    } header: { Text("Join") }
+                    Section {
+                        TextField("Group name", text: $groupName)
+                        Button("Start Group") { run { await model.createLeaderboard(named: groupName.trimmed) != nil } }
+                            .disabled(groupName.trimmed.isEmpty || name.trimmed.isEmpty)
+                    } header: { Text("Start a new group") } footer: {
+                        Text("You'll get a link to send. Anyone with it can see the group's scores and join.")
+                    }
+                } else {
+                    Button("Join") { run { await model.joinLeaderboard(model.pendingInvite ?? "") } }
+                        .disabled(name.trimmed.isEmpty)
+                }
+            }
+            .disabled(working)
+            .navigationTitle("Leaderboard")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .onAppear { name = model.state.leaderboard.displayName }
+        }
+    }
+
+    private func run(_ action: @escaping () async -> Bool) {
+        model.state.leaderboard.displayName = String(name.trimmed.prefix(40))
+        working = true
+        Task {
+            let ok = await action()
+            working = false
+            if ok { dismiss() }
+        }
+    }
+}
+
+private extension String {
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }
