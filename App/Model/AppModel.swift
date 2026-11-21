@@ -118,6 +118,14 @@ final class AppModel {
         if state.integrations.health {
             HealthService.shared.observeSleep { [weak self] in Task { @MainActor in await self?.refresh(full: false) } }
         }
+        // A6: Health can't be read while the phone is locked; read again the moment it unlocks.
+        NotificationCenter.default.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil,
+                                               queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.log(.health, "unlocked")
+                await self?.refresh(full: false)
+            }
+        }
         LocationService.shared.onVisit = { [weak self] visit in
             Task { @MainActor in self?.recordVisit(visit) }
         }
@@ -630,12 +638,23 @@ final class AppModel {
     private func syncHealth() async {
         guard state.integrations.health else { return }
         state.integrations.healthNeedsRequest = await HealthService.shared.requestNeeded()
-        let days = await HealthService.shared.days(back: 21, calendar: cal)
-        log(.health, "read", ["days": "\(days.count)", "needsRequest": "\(state.integrations.healthNeedsRequest)"])
+        let (days, report) = await HealthService.shared.days(back: 21, calendar: cal)
+        let now = Date()
+        log(.health, "read", level: report.error == nil ? .info : .warn,
+            ["days": "\(days.count)", "needsRequest": "\(state.integrations.healthNeedsRequest)",
+             "sleepSamples": "\(report.sleepSamples)", "nights": "\(days.filter { $0.sleepMinutes != nil }.count)",
+             "source": report.sleepSource ?? "none", "error": report.error ?? ""].filter { !$0.value.isEmpty })
+        if let e = report.error {
+            state.healthReads.lastError = e
+            state.healthReads.lastErrorAt = now
+        } else {
+            state.healthReads.lastSuccess = now
+            state.healthReads.lastSleepSamples = report.sleepSamples
+            if let src = report.sleepSource { state.healthReads.lastSleepSource = src }
+        }
         guard !days.isEmpty else { return }
-        var byDay = Dictionary(state.health.map { (cal.startOfDay(for: $0.day), $0) }, uniquingKeysWith: { $1 })
-        for d in days { byDay[cal.startOfDay(for: d.day)] = d }
-        state.health = byDay.values.sorted { $0.day < $1.day }
+        // A6: field by field, never clearing what an earlier read found.
+        state.health = state.health.merging(fresh: days, calendar: cal)
         // Moods logged elsewhere (Apple Watch, the Health app) come in once, unless one is already there within 10 minutes.
         for (at, mood) in await HealthService.shared.stateOfMind(back: 14)
         where !state.moods.contains(where: { abs($0.at.timeIntervalSince(at)) < 600 }) {
@@ -722,6 +741,9 @@ final class AppModel {
         state.health = SleepEstimator.fill(state.health, days: days, markers: recentCheckIns(), motion: state.motion,
                                            phoneUse: phoneUse, sleepNeedMinutes: state.prefs.sleepNeedMinutes, calendar: cal,
                                            firstPickups: pickups, charging: charging)
+        // A5 / B2: nights (measured or estimated) and naps are Sleep entries in the log.
+        let written = EntryBuilder.sleep(state.health, entries: &state.entries, now: Date(), calendar: cal)
+        if !written.isEmpty { log(.health, "sleep_entries", level: .debug, ["count": "\(written.count)"]) }
     }
 
     private func syncCalendar() {

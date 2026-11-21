@@ -314,10 +314,20 @@ public struct HealthDay: Codable, Hashable, Sendable {
     /// Apple's exercise minutes (rings), and the minutes of logged workouts. v1.1 H3.
     public var exerciseMinutes: Int?
     public var workoutMinutes: Int?
+    /// v1.2 A5: which source the night came from ("Apple Watch", "iPhone (in bed, no stages)").
+    public var sleepDevice: String?
+    /// v1.2 A5: daytime sleep (each ≥20 minutes), apart from the night.
+    public var naps: [DateInterval]?
+    /// v1.2 M8: heart-rate variability (SDNN, ms), the day's average.
+    public var hrv: Double?
 
     public init(day: Date, steps: Int? = nil, sleepMinutes: Int? = nil, bedtime: Date? = nil,
                 wake: Date? = nil, daylightMinutes: Int? = nil, restingHeartRate: Double? = nil, sleepSource: SleepSource? = nil,
-                exerciseMinutes: Int? = nil, workoutMinutes: Int? = nil) {
+                exerciseMinutes: Int? = nil, workoutMinutes: Int? = nil, sleepDevice: String? = nil, naps: [DateInterval]? = nil,
+                hrv: Double? = nil) {
+        self.sleepDevice = sleepDevice
+        self.naps = naps
+        self.hrv = hrv
         self.exerciseMinutes = exerciseMinutes
         self.workoutMinutes = workoutMinutes
         self.sleepSource = sleepSource

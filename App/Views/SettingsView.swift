@@ -364,6 +364,18 @@ struct SleepSettings: View {
             } header: { Text("Wake Up") } footer: {
                 Text("Keeping free-day wake within about an hour of school days avoids “social jet lag”.")
             }
+            Section {
+                let r = model.state.healthReads
+                LabeledContent("Source", value: r.lastSleepSource ?? "Nothing measured yet")
+                LabeledContent("Last read", value: r.lastSuccess.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never")
+                if let n = r.lastSleepSamples { LabeledContent("Sleep samples", value: "\(n)") }
+                if let e = r.lastError, let at = r.lastErrorAt, at > (r.lastSuccess ?? .distantPast) {
+                    Label("Last read failed \(at.formatted(date: .omitted, time: .shortened)): \(e)", systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
+            } header: { Text("Where Sleep Comes From") } footer: {
+                Text("An Apple Watch gives sleep stages; an iPhone alone gives time in bed (Sleep schedule). With neither, sleep is estimated from when the phone went still, and you're asked to confirm it in the morning. A read that finds nothing never wipes a night.")
+            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Sleep")

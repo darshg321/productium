@@ -76,6 +76,8 @@ public struct AppState: Codable, Sendable {
     public var progress: [ProgressEntry] = []
     public var moods: [MoodEntry] = []
     public var health: [HealthDay] = []
+    /// v1.2 A6: what the last Health reads did (errors, sample counts, the night's source).
+    public var healthReads = HealthReadLog()
     public var motion: [MotionSpan] = []
     public var screen: [ScreenDay] = []
     public var screenAverages: [ScreenDay] = []
@@ -164,6 +166,7 @@ public struct AppState: Codable, Sendable {
         progress = v(.progress, d.progress)
         moods = v(.moods, d.moods)
         health = v(.health, d.health)
+        healthReads = v(.healthReads, d.healthReads)
         motion = v(.motion, d.motion)
         screen = v(.screen, d.screen)
         screenAverages = v(.screenAverages, d.screenAverages)

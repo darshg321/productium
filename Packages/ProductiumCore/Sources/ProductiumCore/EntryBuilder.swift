@@ -42,4 +42,36 @@ public enum EntryBuilder {
         }
         return written
     }
+
+    /// A5 / B2: nights and naps as Sleep entries. Measured by Health = `health` (outranks the planned Sleep and
+    /// anything assumed); estimated from the phone (stillness, first pickup, the charger) = `sensor`. Nights from your
+    /// own check-ins are already entries. Ids come from the morning's day, so a re-read replaces the night in place and
+    /// keeps your marks. Returns the ids written.
+    @discardableResult
+    public static func sleep(_ days: [HealthDay], entries: inout [Entry], now: Date, calendar cal: Calendar) -> [UUID] {
+        var written: [UUID] = []
+        func put(_ e: Entry) {
+            if let j = entries.firstIndex(where: { $0.id == e.id }) {
+                var x = e
+                x.marks = entries[j].marks
+                if entries[j] != x { entries[j] = x }
+            } else {
+                entries.append(e)
+            }
+            written.append(e.id)
+        }
+        for d in days {
+            guard let bed = d.bedtime, let wake = d.wake, wake > bed, wake <= now.addingTimeInterval(3600),
+                  let src = d.sleepSource ?? (d.sleepMinutes != nil ? .health : nil), src == .health || src == .motion else { continue }
+            let key = DayKeys.key(d.day, cal)
+            put(Entry(id: Entry.sensorId("sleep|\(key)"), title: "Sleep", start: bed, end: min(wake, now), category: CategoryTree.sleep,
+                      note: d.sleepDevice ?? (src == .motion ? "estimated from the phone" : nil),
+                      source: src == .health ? .health : .sensor, createdAt: wake))
+            for n in d.naps ?? [] where n.end <= now {
+                put(Entry(id: Entry.sensorId("nap|\(Int(n.start.timeIntervalSince1970))"), title: "Nap", start: n.start, end: n.end,
+                          category: CategoryTree.sleep, note: d.sleepDevice, source: .health, createdAt: n.end))
+            }
+        }
+        return written
+    }
 }
