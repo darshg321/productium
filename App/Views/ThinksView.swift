@@ -130,8 +130,6 @@ struct BeliefDetail: View {
                 }
                 if model.state.beliefs[id] != nil {
                     Button("Reset to the Starting Assumption", role: .destructive) { model.state.beliefs.reset(id) }
-                } else if b.group == "routines" {
-                    Button("Reset to the Starting Assumption", role: .destructive) { model.resetRoutine(b.key) }
                 }
             } footer: {
                 Text("Correct… opens the Inbox with this filled in, so you only add the number.")
