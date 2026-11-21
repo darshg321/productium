@@ -66,6 +66,8 @@ public struct AppState: Codable, Sendable {
     public var dayPlans: [DayKey: [UUID: Int]] = [:]
     /// v1.2 F3: charts pinned to Review. Only the query is kept; the numbers are computed live from the log.
     public var pinnedCharts: [PinnedChart] = []
+    /// v1.2 Part N: what the phone noticed, asked and learned.
+    public var inference = InferenceState()
     /// v1.2 Part H: how every task ended (kept after the task is deleted).
     public var taskHistory = TaskHistory()
     /// v1.2 Part I: your goals and the AI's (the built-in tracking goal is `Goal.trackingGaps`, not stored).
@@ -177,6 +179,7 @@ public struct AppState: Codable, Sendable {
         prompts = v(.prompts, d.prompts)
         goals = v(.goals, d.goals)
         taskHistory = v(.taskHistory, d.taskHistory)
+        inference = v(.inference, d.inference)
         quickStarts = v(.quickStarts, d.quickStarts)
         categoryRules = v(.categoryRules, d.categoryRules)
         pinnedCharts = v(.pinnedCharts, d.pinnedCharts)
@@ -230,6 +233,7 @@ public struct AppState: Codable, Sendable {
         outbox.prune(now: now)
         prompts.prune(now: now)
         trace.prune(now: now)
+        inference.prune(now: now)
         approvals = Approvals.live(approvals, now: now)
     }
 

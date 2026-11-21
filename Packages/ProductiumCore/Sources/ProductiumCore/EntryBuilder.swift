@@ -74,4 +74,28 @@ public enum EntryBuilder {
         }
         return written
     }
+
+    /// B2 / N: scrolling sessions (the Shortcuts open / close automations) as `sensor` Scrolling entries; one counted
+    /// only from its check-in or an estimate is still Scrolling, just less sure. Ids from the session, so rebuilds replace.
+    @discardableResult
+    public static func scrolling(_ sessions: [ScrollSession], entries: inout [Entry], now: Date, since: Date) -> [UUID] {
+        var out: [UUID] = []
+        for s in sessions where s.openedAt >= since {
+            guard let end = s.endedAt, end > s.openedAt, end <= now, end.timeIntervalSince(s.openedAt) >= 60 else { continue }
+            let id = Entry.sensorId("scroll|\(s.id.uuidString)")
+            let e = Entry(id: id, title: s.app, start: s.openedAt, end: end, category: CategoryTree.scrolling,
+                          note: s.endSource?.observed == false ? "estimated end" : nil, source: .sensor, createdAt: end)
+            if let j = entries.firstIndex(where: { $0.id == id }) {
+                var x = e
+                x.marks = entries[j].marks
+                x.category = entries[j].category
+                x.filedByYou = entries[j].filedByYou
+                if entries[j] != x { entries[j] = x }
+            } else {
+                entries.append(e)
+            }
+            out.append(id)
+        }
+        return out
+    }
 }
