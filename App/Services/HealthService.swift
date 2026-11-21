@@ -17,7 +17,7 @@ final class HealthService {
     }
 
     private var shareTypes: Set<HKSampleType> {
-        var types: Set<HKSampleType> = [HKCategoryType(.mindfulSession), HKObjectType.workoutType()]
+        var types: Set<HKSampleType> = []
         if #available(iOS 18.0, *) { types.insert(HKObjectType.stateOfMindType()) }
         return types
     }
@@ -121,20 +121,6 @@ final class HealthService {
         }
     }
 
-    /// M8: an exercise entry you logged goes into Health as a workout (closes the Fitness rings).
-    func saveWorkout(_ title: String, start: Date, end: Date) {
-        guard available else { return }
-        let config = HKWorkoutConfiguration()
-        config.activityType = .other
-        let builder = HKWorkoutBuilder(healthStore: store, configuration: config, device: .local())
-        builder.beginCollection(withStart: start) { ok, _ in
-            guard ok else { return }
-            builder.addMetadata([HKMetadataKeyWorkoutBrandName: title]) { _, _ in
-                builder.endCollection(withEnd: end) { _, _ in builder.finishWorkout { _, _ in } }
-            }
-        }
-    }
-
     /// Minutes of logged workouts per day.
     private func workoutMinutes(from: Date, to: Date, cal: Calendar) async -> [Date: Double] {
         let q = HKSampleQueryDescriptor(predicates: [.workout(HKQuery.predicateForSamples(withStart: from, end: to))],
@@ -206,12 +192,6 @@ final class HealthService {
         }
         store.execute(q)
         store.enableBackgroundDelivery(for: type, frequency: .immediate) { _, _ in }
-    }
-
-    func logMindful(start: Date, end: Date) {
-        guard available else { return }
-        let s = HKCategorySample(type: HKCategoryType(.mindfulSession), value: HKCategoryValue.notApplicable.rawValue, start: start, end: end)
-        store.save(s) { _, _ in }
     }
 
     static func freeDayMidpoints(_ days: [HealthDay], prefs: Preferences, cal: Calendar) -> [Double] {

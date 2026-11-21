@@ -58,19 +58,6 @@ struct StartActivityIntent: LiveActivityIntent {
     }
 }
 
-struct StopActivityIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Stop Activity"
-    static var description = IntentDescription("Stops whatever is being tracked. Use it from Back Tap, a sticker, or a Focus turning off.")
-
-    @MainActor
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        AppModel.shared.log(.intent, "StopActivityIntent")
-        let title = AppModel.shared.running?.title
-        AppModel.shared.stopRunning(source: "intent")
-        return .result(dialog: title.map { "Stopped \($0)." } ?? "Nothing was running.")
-    }
-}
-
 /// One NFC sticker on the shower door: the first tap starts Shower, the next stops it.
 struct ToggleActivityIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Start or Stop Activity"
@@ -126,19 +113,6 @@ struct LogMoodIntent: AppIntent {
         AppModel.shared.log(.intent, "LogMoodIntent")
         AppModel.shared.logMood(mood, energy: nil, note: nil)
         return .result(dialog: "Thanks. Today's plan has adjusted.")
-    }
-}
-
-struct StartFocusIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Start focus"
-    static var description = IntentDescription("Start the block that's on now, or the next one. Try it from an NFC tag on your desk, or when a Focus turns on.")
-    static var openAppWhenRun = true
-
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        AppModel.shared.log(.intent, "StartFocusIntent")
-        AppModel.shared.startNowOrNext()
-        return .result()
     }
 }
 
@@ -307,10 +281,6 @@ enum Friction {
         let result = change(&l)
         log = l
         return result
-    }
-
-    static func pausesToday() -> Int {
-        LocalStore.defaults.integer(forKey: LocalStore.Key.frictionPrefix + LocalStore.dayKey())
     }
 
     static var checkInMinutes: [Int] {

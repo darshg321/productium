@@ -4,8 +4,6 @@ public enum Ref {
     public static func task(_ id: UUID) -> String { "t" + short(id.uuidString) }
     public static func activity(_ id: UUID) -> String { "a" + short(id.uuidString) }
     public static func event(_ id: String) -> String { "e" + short(id) }
-    public static func dayChange(_ id: UUID) -> String { "d" + short(id.uuidString) }
-    public static func situation(_ id: UUID) -> String { "s" + short(id.uuidString) }
     public static func alarm(_ id: UUID) -> String { "r" + short(id.uuidString) }
     public static func reminder(_ id: UUID) -> String { "n" + short(id.uuidString) }
 

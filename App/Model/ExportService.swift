@@ -110,13 +110,12 @@ enum ExportService {
             let types: [(String, HKObjectType)] = [
                 ("health.sleep", HKCategoryType(.sleepAnalysis)), ("health.steps", HKQuantityType(.stepCount)),
                 ("health.daylight", HKQuantityType(.timeInDaylight)), ("health.restingHeartRate", HKQuantityType(.restingHeartRate)),
-                ("health.mindful", HKCategoryType(.mindfulSession)),
                 ("health.exercise", HKQuantityType(.appleExerciseTime)), ("health.workouts", HKObjectType.workoutType()),
             ]
             for (name, type) in types {
                 p[name] = ["notDetermined", "sharingDenied", "sharingAuthorized"][safe: store.authorizationStatus(for: type).rawValue] ?? "?"
             }
-            let status = try? await store.statusForAuthorizationRequest(toShare: [HKCategoryType(.mindfulSession)],
+            let status = try? await store.statusForAuthorizationRequest(toShare: [],
                                                                          read: [HKCategoryType(.sleepAnalysis), HKQuantityType(.stepCount)])
             p["health.request"] = status.map { ["unknown", "shouldRequest", "unnecessary"][safe: $0.rawValue] ?? "?" } ?? "error"
         } else {

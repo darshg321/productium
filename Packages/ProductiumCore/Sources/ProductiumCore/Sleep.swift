@@ -38,6 +38,7 @@ public enum SleepEstimator {
     public static func isBedtime(_ m: CheckIn) -> Bool { normalised(activity: m.activity, phase: m.phase)?.1 == .start }
     public static func isWake(_ m: CheckIn) -> Bool { normalised(activity: m.activity, phase: m.phase)?.1 == .end }
 
+
     public static func night(morningOf day: Date, health: HealthDay?, markers: [CheckIn], motion: [MotionSpan] = [],
                              phoneUse: [Date] = [], plannedWake: Date?, sleepNeedMinutes: Int,
                              calendar cal: Calendar, firstPickup: Date? = nil, charging: Date? = nil,

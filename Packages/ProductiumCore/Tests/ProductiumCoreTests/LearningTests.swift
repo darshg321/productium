@@ -126,23 +126,13 @@ final class LearningTests: XCTestCase {
         XCTAssertTrue(json.contains("\"study\" : 30"), json)
     }
 
-    func testAIMapping() throws {
+    func testAIMapping() {
         let tz = TimeZone(identifier: "America/Vancouver")!
         let i = AIMapper.item(ParsedItem(title: "Math test", kind: "test", subject: "Math", due: "2026-11-20T08:00:00",
                                          estimateMinutes: 120, importance: 4, difficulty: 3, topics: ["ch 4"]), timeZone: tz)!
         XCTAssertEqual(i.due, Fx.mon(8, 0, plusDays: 4))
-        XCTAssertNotNil(AIMapper.commitment(ParsedCommitment(title: "Soccer", kind: "extracurricular", weekdays: [2, 4], start: "16:00", end: "17:30")))
-        XCTAssertNil(AIMapper.commitment(ParsedCommitment(title: "Bad", kind: "x", weekdays: [9], start: "16:00", end: "17:30")))
-        let raw = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"items":[],"commitments":[],"markers":[],"completedTitles":["HW"],"reply":"ok"}"#.utf8))
-        XCTAssertEqual(try raw.decode(QuickAddResult.self).completedTitles, ["HW"])
     }
 
-    func testSuggestionStopsAfterLearning() {
-        var routines = Routine.defaults
-        XCTAssertEqual(CheckInSuggester.suggestion(now: Fx.mon(7, 50), todaysEvents: [], commitments: [Fx.school], routines: routines, calendar: cal), "Left home")
-        routines[1].samples = [20, 20, 20, 20, 20]
-        XCTAssertNil(CheckInSuggester.suggestion(now: Fx.mon(7, 50), todaysEvents: [], commitments: [Fx.school], routines: routines, calendar: cal))
-    }
 }
 
 final class StabilityTests: XCTestCase {
@@ -160,21 +150,6 @@ final class StabilityTests: XCTestCase {
     }
 }
 
-final class MarkerCategoryTests: XCTestCase {
-    func testCategoryComesFromTheNameNotTheModelsDefault() {
-        let c = [Fx.school, Fx.soccer]
-        XCTAssertEqual(MarkerCategory.infer(activity: "to_school", commitments: c, model: .free), .commute)
-        XCTAssertEqual(MarkerCategory.infer(activity: "from_school", commitments: c), .commute)
-        XCTAssertEqual(MarkerCategory.infer(activity: "in_bed", commitments: c, model: .free), .sleep)
-        XCTAssertEqual(MarkerCategory.infer(activity: "wake", commitments: c, model: .free), .sleep)
-        XCTAssertEqual(MarkerCategory.infer(activity: "get_ready", commitments: c, model: .free), .routine)
-        XCTAssertEqual(MarkerCategory.infer(activity: "soccer", commitments: c, model: .free), .activities)
-        XCTAssertEqual(MarkerCategory.infer(activity: "homework", commitments: c, model: .free), .study)
-        XCTAssertEqual(MarkerCategory.infer(activity: "gaming", commitments: c, model: .screen), .screen)
-        XCTAssertEqual(MarkerCategory.infer(activity: "gaming", commitments: c), .free)
-    }
-
-}
 
 final class StatedRoutineTests: XCTestCase {
     func testStatedIsThePriorUntilThreeSamplesThenTheMedianTakesOver() {

@@ -88,12 +88,6 @@ public struct RingModel: Hashable, Sendable {
 
     static func order(_ g: CategoryGroup) -> Int { CategoryGroup.allCases.firstIndex(of: g) ?? 9 }
 
-    /// One level down: the leaves under a level-2 category (or under a group), with their minutes.
-    public func drill(_ id: String, tree: CategoryTree) -> [(CategoryID, Int)] {
-        let under: (CategoryID) -> Bool
-        if let g = CategoryGroup(rawValue: id) { under = { tree.group($0) == g } } else { under = { tree.isUnder($0, id) } }
-        return leaves.filter { under($0.key) }.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
-    }
 }
 
 extension CategoryGroup {

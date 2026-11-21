@@ -1,5 +1,6 @@
 # XcodeGen spec → Productium.xcodeproj  (generated on the macOS CI runner; no Mac needed locally)
-# Free Apple ID build: one app, HealthKit the only capability. Set BUNDLE_PREFIX (e.g. com.yourname) as an env var.
+# Free Apple ID build: the app (HealthKit its only capability) plus one widget extension (Live Activity, controls; no
+# capabilities, so a second free App ID). Set BUNDLE_PREFIX (e.g. com.yourname) as an env var.
 name: Productium
 options:
   bundleIdPrefix: ${BUNDLE_PREFIX}
@@ -31,6 +32,8 @@ targets:
       - Shared
     dependencies:
       - package: ProductiumCore
+      - target: ProductiumWidgets
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_PREFIX}.productium
@@ -52,10 +55,11 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIRequiresFullScreen: true
+        NSSupportsLiveActivities: true
         UIBackgroundModes: [fetch, processing, location]
         BGTaskSchedulerPermittedIdentifiers: [app.productium.refresh]
         NSHealthShareUsageDescription: Productium reads sleep, wake time, steps and daylight to plan around how rested you are and when you wake up.
-        NSHealthUpdateUsageDescription: Productium logs breathing breaks as Mindful Minutes and exercise you log as workouts.
+        NSHealthUpdateUsageDescription: Productium saves the moods you log as State of Mind.
         NSCalendarsFullAccessUsageDescription: Productium reads your calendar so it never plans over events, and can add your study plan to a Productium calendar.
         NSLocationWhenInUseUsageDescription: Productium notes where each part of your day happened, so it can fill in your day and show where your time goes.
         NSLocationAlwaysAndWhenInUseUsageDescription: Productium keeps a location history on this phone (in your backups, never sent anywhere) so each entry knows where it happened, places name themselves, and it can notice when your day differs from the plan. You can forget it in Settings → Privacy.
@@ -68,6 +72,26 @@ targets:
           - CFBundleURLName: productium
             CFBundleURLSchemes: [productium]
         ITSAppUsesNonExemptEncryption: false
+
+  ProductiumWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widgets
+      - Shared/RunningActivity.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_PREFIX}.productium.widgets
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) WIDGET_EXTENSION
+        INFOPLIST_KEY_CFBundleDisplayName: Productium
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Productium
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
 schemes:
   Productium:

@@ -66,7 +66,6 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     }
 
     /// Arrive and leave events need Always; While Using only works with the app open.
-    var needsSettings: Bool { status == .authorizedWhenInUse || status == .denied }
 
     func currentLocation() async -> CLLocation? {
         await withCheckedContinuation { c in

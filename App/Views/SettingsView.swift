@@ -59,10 +59,6 @@ struct SettingsView: View {
                 row("Keeping It Installed", "arrow.clockwise", .indigo,
                     UpdateChecker.shared.available.map { "\($0) available" } ?? "v\(UpdateChecker.installed)") { InstallSettings() }
             }
-
-            Section {
-                row("Why It Works This Way", "lightbulb.fill", .yellow, nil) { ScienceView() }
-            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Settings")
@@ -137,7 +133,7 @@ struct ClaudeSettings: View {
             Section {
                 LabeledContent("Everything", value: AIFeature.box.route.title)
             } header: { Text("Model") } footer: {
-                Text("The Inbox, screenshots, reads and the weekly note all use Sonnet at low effort. On this app's own requests it wrote a little over half the tokens Haiku 5.5 did, because Haiku's thinking can't be turned off. Flashcards and short reads are made in small batches, only when you open a gap.")
+                Text("The box, screenshots and the weekly note all use Sonnet at low effort. On this app's own requests it wrote a little over half the tokens Haiku 5.5 did, because Haiku's thinking can't be turned off.")
             }
         }
         .listStyle(.insetGrouped)
@@ -227,7 +223,7 @@ struct UsageView: View {
                 }
                 Toggle("Pause background AI over budget", isOn: $m.state.usage.pauseBackgroundOverBudget)
             } header: { Text("Budget") } footer: {
-                Text("The Inbox always works. Flashcards, short reads, project steps and the weekly note wait until tomorrow once the budget is spent.")
+                Text("The box always works. Project steps and the weekly note wait until tomorrow once the budget is spent.")
             }
 
             SubscriptionSection()
@@ -641,7 +637,7 @@ struct BackupSettings: View {
                     LabeledContent("Last Backup", value: Date(timeIntervalSince1970: lastBackup).formatted(date: .abbreviated, time: .shortened))
                 }
             } footer: {
-                Text("Saves every byte Productium keeps to one file you choose where to keep: tasks, schedule, check-ins, sleep and screen-time history, flashcards, what it has learned about you, About You, every prompt you've sent (with its screenshots) and every AI reply, AI usage, all settings, and a snapshot of notifications and permissions for debugging. Your API key isn't included: it stays in the Keychain.")
+                Text("Saves every byte Productium keeps to one file you choose where to keep: tasks, your time log, sleep and screen-time history, places, goals, what it has learned about you, About You, every prompt you've sent (with its screenshots) and every AI reply, AI usage, all settings, and a snapshot of notifications and permissions for debugging. Your API key isn't included: it stays in the Keychain.")
             }
 
             Section {
@@ -775,32 +771,6 @@ struct InstallSettings: View {
     }
 }
 
-struct WeekdayToggles: View {
-    @Binding var days: Set<Int>
-    var label: String
-    private let names = ["S", "M", "T", "W", "T", "F", "S"]
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(label)
-            HStack(spacing: 0) {
-                ForEach(1...7, id: \.self) { d in
-                    Button {
-                        if days.contains(d) { days.remove(d) } else { days.insert(d) }
-                    } label: {
-                        Text(names[d - 1]).font(.subheadline.weight(.semibold)).frame(width: 36, height: 36)
-                            .background(days.contains(d) ? Color.accentColor : Color(.tertiarySystemFill), in: Circle())
-                            .foregroundStyle(days.contains(d) ? .white : .primary)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityLabel(Calendar.current.weekdaySymbols[d - 1])
-                    .accessibilityAddTraits(days.contains(d) ? .isSelected : [])
-                }
-            }
-        }
-    }
-}
-
 struct TimePicker: View {
     var label: String
     @Binding var time: TimeOfDay
@@ -809,29 +779,6 @@ struct TimePicker: View {
             get: { Calendar.current.date(bySettingHour: time.hour, minute: time.minute, second: 0, of: Date()) ?? Date() },
             set: { let c = Calendar.current.dateComponents([.hour, .minute], from: $0); time = TimeOfDay(c.hour ?? 0, c.minute ?? 0) }),
                    displayedComponents: .hourAndMinute)
-    }
-}
-
-struct ScienceView: View {
-    private let points: [(String, String)] = [
-        ("Spaced, not crammed", "Test prep is spread over expanding gaps before the test, and sessions use retrieval (self-testing). These are the two highest-rated study techniques (Dunlosky et al. 2013; Cepeda et al. 2008)."),
-        ("Sleep is protected", "Trading sleep for study backfires for high schoolers (Gillen-O'Neel et al. 2013). Small trade-offs are allowed only for deadline-driven writing, never before tests."),
-        ("Estimates get corrected", "Everyone underestimates (planning fallacy). Productium learns how long your tasks really take and plans for that."),
-        ("Plans fit you", "If you complete less than planned, it plans less. Achievable plans build self-efficacy. Hard work goes in the hours you actually get work done."),
-        ("Big tasks become small steps", "Applications and essays are broken into steps with their own dates and paced in brief regular sessions (Boice 1989)."),
-        ("Free time stays free", "Free time is protected, and loosely labelled, since over-scheduling leisure makes it feel like work (Tonietto & Malkoc 2016)."),
-        ("Friction, not willpower", "A pause before a distracting app cut openings by more than half (Grüning et al. 2023). Limits taper ~10% a week so they stay achievable."),
-        ("No guilt", "Missed blocks get moved, not counted against you. Self-forgiveness reduces future procrastination (Wohl et al. 2010)."),
-    ]
-    var body: some View {
-        List(points, id: \.0) { p in
-            VStack(alignment: .leading, spacing: 4) {
-                Text(p.0).font(.headline)
-                Text(p.1).font(.subheadline).foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 4)
-        }
-        .navigationTitle("The science")
     }
 }
 

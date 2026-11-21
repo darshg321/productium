@@ -4,13 +4,6 @@ import XCTest
 final class DuplicateTests: XCTestCase {
     let cal = Fx.cal
 
-
-
-
-    func state(_ commitments: [Commitment] = [Fx.school]) -> DumpState {
-        DumpState(items: [], moods: [], screen: [], prefs: Preferences())
-    }
-
     func testSimilarTitlesAndOverlap() {
         XCTAssertTrue(EventMatch.similarTitles("Math (P1)", "P1 Math"))
         XCTAssertTrue(EventMatch.similarTitles("P3 English", "English + Data Mgmt"))

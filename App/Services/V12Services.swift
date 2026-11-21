@@ -3,6 +3,7 @@ import EventKit
 import Photos
 import Vision
 import UIKit
+import ActivityKit
 import ProductiumCore
 #if canImport(FoundationModels)
 import FoundationModels
@@ -171,5 +172,35 @@ enum OnDeviceModel {
         #else
         return nil
         #endif
+    }
+}
+
+// MARK: - D5: the running entry as a Live Activity (Lock Screen, Dynamic Island)
+
+@MainActor
+enum RunningActivity {
+    /// Live Activities allowed in Settings; when off, the passive running notification (D6) is the fallback.
+    static var enabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
+
+    /// One activity for the running entry: same entry → update; another or none → end the old one (and start the new).
+    static func sync(_ running: Entry?, path: String, goalLine: String?) {
+        let current = Activity<RunningAttributes>.activities
+        guard let e = running, e.isRunning, enabled else {
+            for a in current { Task { await a.end(nil, dismissalPolicy: .immediate) } }
+            return
+        }
+        let state = RunningAttributes.ContentState(title: e.title, path: path, start: e.start, goalLine: goalLine)
+        let content = ActivityContent(state: state, staleDate: nil)
+        for a in current where a.attributes.entryId != e.id { Task { await a.end(nil, dismissalPolicy: .immediate) } }
+        if let a = current.first(where: { $0.attributes.entryId == e.id }) {
+            if a.content.state != state { Task { await a.update(content) } }
+            return
+        }
+        do {
+            _ = try Activity.request(attributes: RunningAttributes(entryId: e.id), content: content, pushType: nil)
+            AppModel.shared.log(.notification, "live_activity_started", ["title": e.title])
+        } catch {
+            AppModel.shared.log(.notification, "live_activity_failed", level: .error, ["error": "\(error)"])
+        }
     }
 }

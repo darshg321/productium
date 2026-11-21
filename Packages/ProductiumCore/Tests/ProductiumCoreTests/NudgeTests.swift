@@ -278,15 +278,6 @@ final class TaskBoardTests: XCTestCase {
         XCTAssertEqual(sum.minutesPlanned, 40)
     }
 
-    func testLanes() {
-        let a = (start: Fx.mon(9), end: Fx.mon(10))
-        let b = (start: Fx.mon(9, 30), end: Fx.mon(11))
-        let c = (start: Fx.mon(10), end: Fx.mon(10, 30))
-        let d = (start: Fx.mon(11), end: Fx.mon(12))
-        let l = TimelineLayout.lanes([a, b, c, d])
-        XCTAssertEqual(l.map(\.lane), [0, 1, 0, 0])
-        XCTAssertEqual(l.map(\.of), [2, 2, 2, 1])
-    }
 }
 
 /// v1.1 H6: movement and morning-light reminders.

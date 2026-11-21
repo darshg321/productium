@@ -71,5 +71,4 @@ public struct ScreenTaper: Codable, Hashable, Sendable {
         return note
     }
 
-    public var dailyLimit: Int? { targetMinutes }
 }

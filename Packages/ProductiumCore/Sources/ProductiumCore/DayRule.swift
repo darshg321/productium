@@ -56,11 +56,6 @@ public struct DayRuleBook: Codable, Hashable, Sendable {
         labels[name] = keys.sorted()
     }
 
-    public mutating func unlabel(_ name: String, _ days: [Date], calendar cal: Calendar) {
-        let drop = Set(days.map { CapacityLearner.dayKey($0, cal) })
-        labels[name] = labels[name]?.filter { !drop.contains($0) }
-        if labels[name]?.isEmpty == true { labels[name] = nil }
-    }
 }
 
 /// Evaluates rules for one planning run. Pure apart from its memo, so create one per run (or per day range).

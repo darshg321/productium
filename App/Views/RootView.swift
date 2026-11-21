@@ -5,6 +5,7 @@ import ProductiumCore
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var tab = 0
+    @State private var showPause = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -59,6 +60,7 @@ struct RootView: View {
         }
         .animation(.spring(duration: 0.35), value: model.toast)
         .animation(.spring(duration: 0.35), value: model.rewardMoment)
+        .sheet(isPresented: $showPause) { PauseSheet() }
         .onChange(of: model.deepLink) { _, link in open(link) }
         .onAppear { open(model.deepLink) }
     }
@@ -69,6 +71,7 @@ struct RootView: View {
         else if link.hasPrefix("productium://tasks") { tab = 2 }
         else if link.hasPrefix("productium://review") { tab = 3 }
         else if link.hasPrefix("productium://settings") { tab = 4 }
+        else if link.hasPrefix("productium://gap") { tab = 0; showPause = true }
         else { tab = 0 }
         model.deepLink = nil
     }

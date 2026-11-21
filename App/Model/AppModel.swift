@@ -229,6 +229,7 @@ final class AppModel {
         ].filter { !$0.value.isEmpty })
         checkGoalMoments()
         LocationService.shared.tracking(running != nil)
+        RunningActivity.sync(running, path: running.map { state.categories.pathText($0.category) } ?? "", goalLine: goalLine(for: running))
         save()
         applyPlanEffects()
     }
@@ -253,7 +254,8 @@ final class AppModel {
             let buttons = startButtons(now: now).row.map(\.title)
             NotificationService.register(buttons: buttons)
             var planned = NudgePlanner.plan(nudges)
-            // D4: "What are you up to?" timed by the 30-minute goal; A7: the morning sleep check; D6: the running entry.
+            // D4: "What are you up to?" timed by the 30-minute goal; A7: the morning sleep check; D6: the running entry
+            // (only when Live Activities are off; otherwise the Lock Screen already shows it).
             let prompts = TrackPrompts.plan(TrackPromptInput(now: now, calendar: cal, entries: state.entries, plan: plan,
                                                              book: state.dayRules, log: state.prompts, buttons: buttons))
             state.prompts.scheduled = prompts.map {
@@ -261,7 +263,9 @@ final class AppModel {
             }
             planned += prompts
             if let q = TrackPrompts.sleepQuestion(entries: state.entries, now: now, log: state.prompts, calendar: cal) { planned.append(q) }
-            planned += TrackPrompts.running(running, tree: state.categories, goalLine: goalLine(for: running), now: now)
+            if !RunningActivity.enabled {
+                planned += TrackPrompts.running(running, tree: state.categories, goalLine: goalLine(for: running), now: now)
+            }
             planned += questionNudges(now: now)
             log(.notification, "scheduled", ["count": "\(planned.count)", "prompts": "\(prompts.count)",
                                              "next": planned.filter { $0.kind != .running }.min { $0.at < $1.at }.map { "\($0.title) at \($0.at)" } ?? "none"])
@@ -309,10 +313,17 @@ final class AppModel {
 
     /// Stops the running entry (a notification's Done, Siri, a Shortcut, the Stop button).
     func stopRunning(source: String) {
-        guard running != nil else { return }
+        guard let r = running else { return }
         log(.intent, "stop", ["source": source])
         applyUI([BoxOp(.entry, .stop)], what: "stop (\(source))", quiet: true)
         Haptics.stop()
+        // I: a work session that just ended gets its moment (minutes, or a new focus-hour milestone).
+        if r.taskId != nil {
+            let before = state.entries.filter { $0.taskId != nil && $0.id != r.id }
+                .reduce(0) { $0 + max(0, Int((($1.end ?? $1.start).timeIntervalSince($1.start)) / 60)) }
+            celebrate(.focusEnded(status: .done, minutes: Int(Date().timeIntervalSince(r.start) / 60), title: r.title,
+                                  percentBefore: nil, percentAfter: nil, freeAfterMinutes: nil, totalFocusMinutesBefore: before))
+        }
     }
 
     /// "What were you doing 3:10–4:30?" answered with a button: that stretch becomes a told entry.
@@ -361,11 +372,6 @@ final class AppModel {
                           policy: state.policy, dayRules: state.dayRules)
     }
 
-    var currentBlock: PlannedBlock? { state.plan.current(at: Date()) }
-
-    func todayBlocks(_ date: Date = Date()) -> [PlannedBlock] {
-        state.plan.blocks(on: date, calendar: cal).filter { $0.kind != .sleep }
-    }
 
     /// Study blocks that ended in the last 36 hours with no time tracked on them and no answer ("No") yet.
     var pendingOutcomes: [PlannedBlock] {
@@ -374,35 +380,6 @@ final class AppModel {
 
     var activeWarnings: [PlanWarning] {
         state.plan.warnings.filter { !state.dismissed.contains($0.message) }
-    }
-
-    /// How a planned block went. Done / partly = time tracked on the task (an entry); "No" is remembered so the block
-    /// isn't asked about or counted as missed twice. Learning, put-off history and the reward moment follow.
-    func logOutcome(blockId: UUID, status: OutcomeStatus, actualMinutes: Int? = nil, reason: String? = nil) {
-        guard let b = state.plan.blocks.first(where: { $0.id == blockId }), !Sessions.isWorked(b, entries: state.entries, now: Date()) else { return }
-        let actual = actualMinutes ?? (status == .done ? b.minutes : status == .partial ? b.minutes / 2 : 0)
-        let idx = b.itemId.flatMap { id in state.items.firstIndex { $0.id == id } }
-        if status != .skipped, actual > 0 {
-            let item = idx.map { state.items[$0] }
-            let e = Entry(title: b.title, start: b.start, end: b.start.addingTimeInterval(Double(actual) * 60),
-                          category: item?.category ?? CategoryTree.studying, taskId: b.itemId, source: .you, createdAt: Date())
-            var entries = state.entries
-            TimeLog.insert(e, now: Date(), entries: &entries, calendar: cal)
-            state.entries = entries
-        } else if status == .skipped {
-            state.snoozed[blockId] = Date().addingTimeInterval(40 * 3600)
-        }
-        let result = SessionResult(itemId: b.itemId, kind: idx.map { state.items[$0].kind }, plannedStart: b.start,
-                                   plannedMinutes: b.minutes, actualMinutes: actual, status: status)
-        NotificationService.cancel(blockId: blockId)
-        state.learned.record(session: result, calendar: cal)
-        if status != .skipped, let i = idx { state.items[i].completedMinutes += actual }
-        log(.log, "session", ["block": b.title, "status": status.rawValue, "minutes": "\(actual)"])
-        if status == .skipped {
-            Avoidance.record(reason == nil ? .skipped : .cantToday, itemId: b.itemId, in: &state.items, at: Date(), reason: reason, blockId: blockId)
-            toast = "No problem. It's been moved to a better slot."
-        }
-        replan()
     }
 
     // MARK: Running entry (D3: starting a task is starting an entry with its id)
@@ -484,12 +461,6 @@ final class AppModel {
         followUp(new: item)
     }
 
-    func addManually(_ item: WorkItem) {
-        state.items.append(item)
-        replan()
-        followUp(new: item)
-    }
-
     func reopen(_ id: UUID) {
         guard let i = state.items.firstIndex(where: { $0.id == id }), state.items[i].isDone else { return }
         state.items[i].isDone = false
@@ -528,34 +499,10 @@ final class AppModel {
         replan()
     }
 
-    // Places that learn themselves: ask to save a place you've just said you're at, or keep returning to.
-    var placeOffer: PlaceOffer?
     /// M5: a screenshot that looks like homework, waiting for Add.
     var screenshotOffer: AIImage?
     /// The celebration being shown now (cleared by `RootView` after a few seconds).
     var rewardMoment: RewardMoment?
-
-    func acceptPlaceOffer(name: String? = nil) {
-        guard let o = placeOffer, let lat = o.latitude, let lon = o.longitude else { placeOffer = nil; return }
-        let chosen = (name ?? o.name).trimmingCharacters(in: .whitespaces)
-        guard !chosen.isEmpty else { return }
-        let id = o.needsName ? PlaceSuggester.slug(chosen) : o.id
-        state.places.removeAll { $0.id == id }
-        state.places.append(SavedPlace(id: id, name: chosen, latitude: lat, longitude: lon))
-        state.integrations.location = true
-        LocationService.shared.visitsWanted = true
-        LocationService.shared.requestAlways()
-        LocationService.shared.monitor(state.places)
-        placeOffer = nil
-        toast = "\(chosen) saved. Arriving and leaving will be noticed."
-        save()
-    }
-
-    func declinePlaceOffer() {
-        if let o = placeOffer { state.declinedPlaces.insert(o.id) }
-        placeOffer = nil
-        save()
-    }
 
     /// A saved region's enter / exit is a visit's arrival / departure (Part E: places are visits, not check-ins).
     private func handleGeofence(_ place: String, entered: Bool) {
@@ -601,7 +548,6 @@ final class AppModel {
         replan()
     }
 
-    var supportSuggested: Bool { Wellbeing.supportSuggested(moods: state.moods, now: Date()) }
 
     var todayMood: MoodEntry? { state.moods.filter { cal.isDateInToday($0.at) }.max { $0.at < $1.at } }
 
@@ -1174,7 +1120,7 @@ final class AppModel {
     }
 
     /// Something was started, stopped or logged: it answers any tracking prompt, the start gets a button (D2), and
-    /// iOS learns the pattern (M4 donations). The running notification is renewed by the replan that follows.
+    /// iOS learns the pattern (M4 donations). The Live Activity / running notification is renewed by the replan that follows.
     func afterLogChange() {
         state.prompts.answered.append(Date())
         NotificationService.clearDelivered(prefixes: ["track.", "running."])

@@ -45,7 +45,6 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, Ex
     }
 
     public var stringValue: String? { if case .string(let s) = self { return s }; return nil }
-    public var numberValue: Double? { if case .number(let n) = self { return n }; return nil }
 }
 
 public enum AIModel {
@@ -222,31 +221,6 @@ public struct ParsedItem: Codable, Hashable, Sendable {
     }
 }
 
-public struct ParsedCommitment: Codable, Hashable, Sendable {
-    public var title: String
-    public var kind: String
-    public var weekdays: [Int]
-    public var start: String
-    public var end: String
-}
-
-public struct ParsedMarker: Codable, Hashable, Sendable {
-    public var phrase: String
-    public var activity: String
-    public var category: String
-    public var phase: String
-    public var minutesAgo: Int?
-}
-
-public struct QuickAddResult: Codable, Hashable, Sendable {
-    public var items: [ParsedItem]
-    public var commitments: [ParsedCommitment]
-    public var markers: [ParsedMarker]
-    public var completedTitles: [String]
-    public var mood: Int?
-    public var reply: String
-}
-
 public struct DecomposedStep: Codable, Hashable, Sendable {
     public var title: String
     public var estimateMinutes: Int
@@ -375,21 +349,4 @@ public enum AIMapper {
                         topics: p.topics ?? [], source: source)
     }
 
-    public static func commitment(_ p: ParsedCommitment) -> Commitment? {
-        func tod(_ s: String) -> TimeOfDay? {
-            let parts = s.split(separator: ":").compactMap { Int($0) }
-            guard parts.count >= 1, (0...23).contains(parts[0]) else { return nil }
-            return TimeOfDay(parts[0], parts.count > 1 ? parts[1] : 0)
-        }
-        guard let s = tod(p.start), let e = tod(p.end), e > s else { return nil }
-        let days = Set(p.weekdays.filter { (1...7).contains($0) })
-        guard !days.isEmpty else { return nil }
-        return Commitment(title: p.title, kind: CommitmentKind(rawValue: p.kind) ?? .extracurricular, weekdays: days, start: s, end: e)
-    }
-
-    public static func marker(_ p: ParsedMarker, now: Date) -> CheckIn {
-        CheckIn(at: now.addingTimeInterval(-Double(max(0, min(600, p.minutesAgo ?? 0))) * 60), phrase: p.phrase,
-                      activity: p.activity.lowercased(), category: TimeCategory(rawValue: p.category) ?? .free,
-                      phase: MarkerPhase(rawValue: p.phase) ?? .point, source: .voice)
-    }
 }

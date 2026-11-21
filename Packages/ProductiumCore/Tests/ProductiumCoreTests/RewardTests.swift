@@ -89,19 +89,6 @@ final class RewardTests: XCTestCase {
                                      now: Fx.mon(20), calendar: cal))
     }
 
-    func testPersonalBestsNeedHistory() {
-        // Weeks start on Monday in the fixtures; it is now Monday 14 Dec, so last week is 7–13 Dec.
-        var pts: [MetricPoint] = []
-        for w in 0..<5 {
-            let scrolling = w == 4 ? 40.0 : 90.0 + Double(w) * 5
-            for d in 0..<7 { pts.append(MetricPoint(day: Fx.mon(0, plusDays: 7 * w + d - 7), value: scrolling, source: .screenshot)) }
-        }
-        let s = MetricSeries(def: .of(.scrolling), points: pts, calendar: cal)
-        let now = Fx.mon(9, plusDays: 28)
-        XCTAssertEqual(Rewards.personalBests([.scrolling: s], now: now, calendar: cal), ["Lowest scrolling week"])
-        let short = MetricSeries(def: .of(.scrolling), points: pts.filter { $0.day >= Fx.mon(0, plusDays: 7) }, calendar: cal)
-        XCTAssertTrue(Rewards.personalBests([.scrolling: short], now: now, calendar: cal).isEmpty, "2 earlier weeks isn't enough")
-    }
 }
 
 /// v1.1 F6: celebrations that make no difference are turned down, and that is logged and revertible.

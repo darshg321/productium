@@ -131,8 +131,6 @@ final class RingTests: XCTestCase {
         XCTAssertEqual(studying.minutes, 5 * 90 + 60, "a leaf counts in its level-2 parent")
         XCTAssertEqual(studying.previous, 5 * 90)
         XCTAssertEqual(studying.delta, 60)
-        XCTAssertEqual(r.drill(CategoryTree.studying, tree: tree).map(\.0), [CategoryTree.studying, math.id])
-        XCTAssertEqual(r.drill(CategoryGroup.unproductive.rawValue, tree: tree).first?.1, 5 * 60 + 2 * 120)
     }
 }
 

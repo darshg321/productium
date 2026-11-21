@@ -27,7 +27,6 @@ public struct MotionSpan: Codable, Hashable, Identifiable, Sendable {
     }
 
     public var minutes: Int { Int(end.timeIntervalSince(start) / 60) }
-    public var isTravel: Bool { [.walking, .running, .cycling, .automotive].contains(kind) }
 }
 
 public enum MotionTimeline {

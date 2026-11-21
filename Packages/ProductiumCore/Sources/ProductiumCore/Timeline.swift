@@ -116,26 +116,6 @@ public enum MarkerParser {
     }
 }
 
-public enum MarkerCategory {
-    static let studyWords = ["study", "homework", "revis", "essay", "assignment", "application", "draft", "reading"]
-
-    /// The category a marker belongs in, decided from its name; the model's own value is only the last resort.
-    public static func infer(activity: String, commitments: [Commitment], model: TimeCategory? = nil) -> TimeCategory {
-        let key = activity.lowercased().replacingOccurrences(of: " ", with: "_")
-        switch key {
-        case "to_school", "from_school", "travel", "commute": return .commute
-        case "get_ready": return .routine
-        default: break
-        }
-        if SleepEstimator.normalised(activity: activity, phase: .start) != nil
-            || SleepEstimator.normalised(activity: activity, phase: .end) != nil { return .sleep }
-        let norm = MarkerParser.normalise(activity.replacingOccurrences(of: "_", with: " "))
-        if let c = commitments.first(where: { MarkerParser.normalise($0.title) == norm }) { return TimeCategory.from(c.kind) }
-        if studyWords.contains(where: { norm.contains($0) }) { return .study }
-        return model ?? .free
-    }
-}
-
 public struct Segment: Codable, Hashable, Sendable {
     public var start: Date
     public var end: Date
@@ -321,27 +301,6 @@ public enum TimelineBuilder {
             t[.screen, default: 0] += extra
         }
         return t
-    }
-}
-
-public enum CheckInSuggester {
-    public static func suggestion(now: Date, todaysEvents: [CheckIn], commitments: [Commitment],
-                                  routines: [Routine], calendar cal: Calendar) -> String? {
-        let weekday = cal.component(.weekday, from: now)
-        let school = commitments.filter { $0.weekdays.contains(weekday) && $0.kind == .school }
-        func at(_ t: TimeOfDay) -> Date { cal.date(bySettingHour: t.hour, minute: t.minute, second: 0, of: now) ?? now }
-        let logged = Set(todaysEvents.map { "\($0.activity)|\($0.phase.rawValue)" })
-        guard let first = school.min(by: { $0.start < $1.start }), let last = school.max(by: { $0.end < $1.end }) else { return nil }
-        let toSchool = routines.first { $0.id == "to_school" }?.minutes ?? 20
-        let start = at(first.start), end = at(last.end)
-        let leave = start.addingTimeInterval(-Double(toSchool + 15) * 60)
-        let needsCommute = (routines.first { $0.id == "to_school" }?.samples.count ?? 0) < 5
-        let needsHome = (routines.first { $0.id == "from_school" }?.samples.count ?? 0) < 5
-        if needsCommute, now >= leave.addingTimeInterval(-20 * 60), now < start, !logged.contains("to_school|start") { return "Left home" }
-        if needsCommute, logged.contains("to_school|start"), !logged.contains("to_school|end"), now < start.addingTimeInterval(3600) { return "At school" }
-        if needsHome, now >= end, now < end.addingTimeInterval(2 * 3600), !logged.contains("from_school|start") { return "Left school" }
-        if needsHome, logged.contains("from_school|start"), !logged.contains("from_school|end") { return "Home" }
-        return nil
     }
 }
 

@@ -19,6 +19,7 @@ struct TodayView: View {
                             .foregroundStyle(.secondary)
                             .textCase(.uppercase)
                         DumpBox()
+                        AlertCard(now: ctx.date)
                         ForEach(model.approvals.filter { $0.turnId == nil }) { a in Card { ApprovalRow(approval: a) } }
                         if let r = model.running { RunningCard(entry: r, now: ctx.date) } else { StartButtons(now: ctx.date) }
                         MoodButtons(now: ctx.date)
@@ -376,6 +377,67 @@ struct ClearSheet: View {
             .navigationTitle("Clear \(item.title)?")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
+/// At most one alert, most urgent first: the free build about to stop opening, then a plan warning.
+struct AlertCard: View {
+    @Environment(AppModel.self) private var model
+    let now: Date
+
+    var body: some View {
+        if let expiry = model.signatureExpiry, expiry.timeIntervalSince(now) < 2 * 86400 {
+            Card {
+                CardHeader(title: "Refresh Needed", symbol: "exclamationmark.triangle.fill", color: Theme.alert)
+                Text("This build stops opening \(expiry.relativeDay) at \(expiry.hm). Refresh it in SideStore.")
+                    .font(.subheadline)
+            }
+        } else if let w = model.activeWarnings.first(where: { $0.level != .info }) ?? model.activeWarnings.first {
+            Card {
+                CardHeader(title: "Heads Up", symbol: w.level == .critical ? "exclamationmark.triangle.fill" : "info.circle.fill",
+                           color: w.level == .critical ? Theme.alert : .orange)
+                Text(w.message).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                Button("Dismiss") { model.state.dismissed.insert(w.message); model.save() }
+                    .font(.subheadline)
+                    .buttonStyle(.borderless)
+            }
+        }
+    }
+}
+
+/// The "Pause Before Scrolling" automation lands here (productium://gap): start what's planned, or go back for 10 min.
+struct PauseSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let b = model.state.plan.current(at: Date()) ?? model.state.plan.next(after: Date()), b.isStudy {
+                    Section {
+                        Button {
+                            model.startNowOrNext()
+                            dismiss()
+                        } label: { Label("Start \(b.title)", systemImage: "play.fill") }
+                    } footer: { Text("Planned \(b.start.relativeDay) at \(b.start.hm).") }
+                }
+                Section {
+                    Button("Go Back to the App Anyway") {
+                        Friction.grant(minutes: 10)
+                        dismiss()
+                    }
+                    .foregroundStyle(.secondary)
+                } footer: {
+                    let mins = Friction.checkInMinutes
+                    Text(mins.isEmpty ? "No pause for the next 10 minutes."
+                         : "No pause for the next 10 minutes. If you're still in there after \(mins[0]) minutes, Productium will check in.")
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Paused")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
         }
         .presentationDetents([.medium])
     }

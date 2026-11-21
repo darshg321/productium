@@ -203,37 +203,6 @@ public enum Rewards {
         return Double(h >> 11) / Double(UInt64(1) << 53)
     }
 
-    /// Counts that can't break ("focused on 14 days this month"), never consecutive streaks.
-    public static func daysWithFocus(thisMonth now: Date, focus: MetricSeries, calendar cal: Calendar) -> Int {
-        guard let month = cal.dateInterval(of: .month, for: now) else { return 0 }
-        return focus.points.values.filter { $0.day >= month.start && $0.day < month.end && $0.value > 0 }.count
-    }
-
-    /// Personal bests for the week that just ended (call on the first day of a week). Needs 4 earlier full weeks
-    /// with data, so the first weeks of use don't throw out "records" for nothing.
-    public static func personalBests(_ series: [MetricID: MetricSeries], now: Date, calendar cal: Calendar) -> [String] {
-        guard let thisWeek = cal.dateInterval(of: .weekOfYear, for: now) else { return [] }
-        func weekValue(_ s: MetricSeries, _ start: Date) -> Double? {
-            let end = cal.date(byAdding: .day, value: 7, to: start)!
-            let xs = s.points.values.filter { $0.day >= start && $0.day < end }.map(\.value)
-            guard xs.count >= 4 else { return nil }
-            return Metrics.aggregate(xs, s.def.aggregate)
-        }
-        let checks: [(MetricID, String)] = [(.scrolling, "Lowest scrolling week"), (.focus, "Most focus in a week"),
-                                            (.sleepRegularity, "Most regular sleep week"), (.steps, "Most active week")]
-        var out: [String] = []
-        for (id, text) in checks {
-            guard let s = series[id], let last = cal.date(byAdding: .day, value: -7, to: thisWeek.start),
-                  let v = weekValue(s, last) else { continue }
-            let earlier = (1...52).compactMap { k in cal.date(byAdding: .day, value: -7 * k, to: last).flatMap { weekValue(s, $0) } }
-            guard earlier.count >= 4 else { continue }
-            let lowerIsBetter: Bool
-            switch s.def.better { case .lower: lowerIsBetter = true; default: lowerIsBetter = false }
-            let beats = lowerIsBetter ? earlier.allSatisfy { v < $0 - s.def.noiseFloor / 2 } : earlier.allSatisfy { v > $0 + s.def.noiseFloor / 2 }
-            if beats { out.append(text) }
-        }
-        return out
-    }
 }
 
 /// v1.1 F6: do celebrations change anything for this student? After four weeks of moments, compare the focus on the

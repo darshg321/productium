@@ -292,26 +292,6 @@ func durationLabel(_ m: Int) -> String {
     return r == 0 ? "\(h) hr" : "\(h) hr \(r) min"
 }
 
-struct DurationValue: View {
-    let minutes: Int
-    var body: some View {
-        let h = minutes / 60, m = minutes % 60
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            if h > 0 { part("\(h)", "hr") }
-            if m > 0 || h == 0 { part("\(m)", "min") }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(durationLabel(minutes))
-    }
-
-    private func part(_ v: String, _ u: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 2) {
-            Text(v).font(.system(.title, design: .rounded).weight(.semibold)).monospacedDigit()
-            Text(u).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-        }
-    }
-}
-
 extension Date {
     var hm: String { formatted(date: .omitted, time: .shortened) }
     var relativeDay: String {
@@ -322,32 +302,6 @@ extension Date {
             return formatted(.dateTime.weekday(.wide))
         }
         return formatted(.dateTime.month(.abbreviated).day())
-    }
-}
-
-struct DayStrip: View {
-    let blocks: [PlannedBlock]
-    let start: Date
-    let end: Date
-    var height: CGFloat = 8
-
-    var body: some View {
-        GeometryReader { g in
-            let span = max(60, end.timeIntervalSince(start))
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color(.tertiarySystemFill))
-                ForEach(blocks.filter { $0.end > start && $0.start < end && $0.kind != .breakTime }) { b in
-                    let x = max(0, b.start.timeIntervalSince(start)) / span
-                    let w = min(b.end, end).timeIntervalSince(max(b.start, start)) / span
-                    Rectangle().fill(Theme.color(for: b))
-                        .frame(width: max(1, g.size.width * w))
-                        .offset(x: g.size.width * x)
-                }
-            }
-            .clipShape(Capsule())
-        }
-        .frame(height: height)
-        .accessibilityHidden(true)
     }
 }
 
@@ -390,77 +344,5 @@ struct TokenMeter: View {
         }
         .padding(.horizontal, 2)
         .animation(.easeOut(duration: 0.3), value: f)
-    }
-}
-
-struct ColorChoice: View {
-    var label: String = "Colour"
-    @Binding var color: String?
-    var automatic: Color = .secondary
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    swatch(nil, automatic, "Auto")
-                    ForEach(Palette.names, id: \.self) { n in swatch(n, Theme.named(n) ?? .gray, n.capitalized) }
-                }
-                .padding(.vertical, 2)
-            }
-        }
-    }
-
-    private func swatch(_ name: String?, _ fill: Color, _ title: String) -> some View {
-        let on = Palette.normalise(color) == name || (name == nil && color == nil)
-        return Button { color = name } label: {
-            ZStack {
-                Circle().fill(fill).frame(width: 28, height: 28)
-                if name == nil { Text("A").font(.caption.weight(.bold)).foregroundStyle(.white) }
-                if on { Circle().stroke(Color.primary, lineWidth: 2).frame(width: 34, height: 34) }
-            }
-            .frame(width: 36, height: 36)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(on ? .isSelected : [])
-    }
-}
-
-struct ColorSettings: View {
-    @Environment(AppModel.self) private var model
-
-    private let rows: [(String, String, BlockKind?)] = [
-        ("study", "Study blocks", .work), ("break", "Breaks", .breakTime), ("free", "Free time", .free),
-        ("school", "School", .commitment), ("extracurricular", "Activities", .commitment), ("job", "Work shifts", .commitment),
-        ("family", "Family", .commitment), ("event", "Events", .event), ("meal", "Meals", .meal),
-        ("routine", "Routines & travel", .routine), ("wind_down", "Wind-down", .windDown), ("sleep", "Sleep", .sleep),
-    ]
-
-    var body: some View {
-        List {
-            Section {
-                ForEach(rows, id: \.0) { key, title, kind in
-                    ColorChoice(label: title, color: binding(key), automatic: kind.map { Theme.color(for: $0) } ?? .secondary)
-                }
-            } footer: {
-                Text("A task's or activity's own colour wins over these. Or tell the Inbox: “make free time green and maths blue”.")
-            }
-            let subjects = model.state.prefs.colors.keys.filter { $0.hasPrefix("subject:") || $0.hasPrefix("task:") }.sorted()
-            if !subjects.isEmpty {
-                Section("Subjects & Types") {
-                    ForEach(subjects, id: \.self) { k in
-                        ColorChoice(label: k.split(separator: ":").last.map { String($0).capitalized } ?? k, color: binding(k))
-                    }
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle("Colours")
-    }
-
-    private func binding(_ key: String) -> Binding<String?> {
-        Binding(get: { model.state.prefs.colors[key] },
-                set: { model.state.prefs.colors[key] = $0; model.replan() })
     }
 }

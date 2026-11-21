@@ -1,7 +1,10 @@
 # Builds Productium without a Mac.
 #  • core-tests: the planning engine, on Linux (every push)
 #  • ios-compile: compile-check the app for the simulator, unsigned (every push)
-#  • ios-free-ipa: on a push to main that changes code (see `paths` below): versions, builds the free-account .ipa and releases
+#  • ios-free-ipa: on a push to main or dev that changes code (see `paths` below), builds the free-account .ipa.
+#      main: releases v<VERSION>.<n> (VERSION holds major.minor; n counts up from 0) and updates source.json.
+#      dev:  replaces the rolling "dev" pre-release (Productium-dev.ipa). No version tag, no source.json change, so
+#            testing builds never move the version.
 name: ios
 
 on:
@@ -11,7 +14,9 @@ on:
       - "App/**"
       - "Shared/**"
       - "Packages/**"
+      - "Widgets/**"
       - "project.yml"
+      - "VERSION"
   workflow_dispatch:
 
 env:
@@ -47,13 +52,13 @@ jobs:
         with: { name: build-log, path: build.log }
 
   ios-free-ipa:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     needs: [core-tests, ios-compile]
     runs-on: macos-26
     permissions:
       contents: write
     concurrency:
-      group: release
+      group: release-${{ github.ref_name }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -61,21 +66,9 @@ jobs:
       - name: Work out the version
         id: version
         run: |
-          last=$(git tag --list 'v*' --sort=-v:refname | head -1)
-          if [ -z "$last" ]; then
-            v=1.0.0
-          else
-            IFS=. read -r major minor patch <<< "${last#v}"
-            log=$(git log "$last"..HEAD --format='%s%n%b')
-            if echo "$log" | grep -qE 'BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:'; then
-              major=$((major+1)); minor=0; patch=0
-            elif echo "$log" | grep -qE '^feat(\([^)]*\))?:'; then
-              minor=$((minor+1)); patch=0
-            else
-              patch=$((patch+1))
-            fi
-            v="$major.$minor.$patch"
-          fi
+          base=$(tr -d '[:space:]' < VERSION)
+          last=$(git tag --list "v$base.*" --sort=-v:refname | head -1)
+          if [ -z "$last" ]; then v="$base.0"; else v="$base.$(( ${last##*.} + 1 ))"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: maxim-lobanov/setup-xcode@v1
         with: { xcode-version: latest-stable }
@@ -102,13 +95,25 @@ jobs:
           PLIST
           mkdir Payload
           cp -R build/Build/Products/Release-iphoneos/Productium.app Payload/
+          for x in Payload/Productium.app/PlugIns/*.appex; do codesign -f -s - "$x"; done
           codesign -f -s - --entitlements app.ent Payload/Productium.app
           zip -qry Productium-free.ipa Payload
+      - name: Dev build (rolling pre-release, never tagged as a version)
+        if: github.ref == 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp Productium-free.ipa Productium-dev.ipa
+          gh release delete dev --cleanup-tag -y || true
+          gh release create dev Productium-dev.ipa --target "${{ github.sha }}" --prerelease --latest=false \
+            --title "dev (${{ github.sha }})" --notes "Testing build of ${{ github.sha }} (would be v${{ steps.version.outputs.version }})."
       - name: SideStore source (always the newest build)
+        if: github.ref == 'refs/heads/main'
         run: |
           python3 scripts/make-source.py "${{ github.repository }}" "$BUNDLE_PREFIX.productium" \
             "${{ steps.version.outputs.version }}" "${{ github.run_number }}" Productium-free.ipa source.json
       - name: Release (the stable asset name keeps releases/latest/download/Productium-free.ipa current for SideStore)
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -116,6 +121,7 @@ jobs:
             --target "${{ github.sha }}" --title "v${{ steps.version.outputs.version }}" \
             --generate-notes --latest
       - name: Keep the repo's source.json in step (SideStore checks the version against the IPA)
+        if: github.ref == 'refs/heads/main'
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"

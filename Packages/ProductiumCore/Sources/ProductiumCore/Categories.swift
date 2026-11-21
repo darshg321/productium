@@ -94,7 +94,6 @@ public struct CategoryTree: Codable, Hashable, Sendable {
         return p.isEmpty ? id : p.map(\.name).joined(separator: " › ")
     }
 
-    public func root(_ id: CategoryID) -> CategoryID { path(id).first?.id ?? id }
 
     /// The node itself or anything below it.
     public func isUnder(_ id: CategoryID, _ ancestor: CategoryID) -> Bool { path(id).contains { $0.id == ancestor } }

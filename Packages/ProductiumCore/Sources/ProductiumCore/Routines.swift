@@ -63,7 +63,6 @@ public struct Routine: Codable, Identifiable, Hashable, Sendable {
     }
 
     public var isLearned: Bool { !samples.isEmpty }
-    public var isKnown: Bool { stated != nil || !samples.isEmpty }
 
     @discardableResult
     public mutating func observe(_ m: Int) -> Bool {

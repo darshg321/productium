@@ -30,9 +30,4 @@ public enum EventMatch {
         return max(0, both) / shorter
     }
 
-    public static func duplicates(_ a: FixedEvent, _ b: FixedEvent, calendar cal: Calendar) -> Bool {
-        guard cal.isDate(a.start, inSameDayAs: b.start) else { return false }
-        if a.title.plainKey == b.title.plainKey { return true }
-        return overlap((a.start, a.end), (b.start, b.end)) >= 0.8 && similarTitles(a.title, b.title)
-    }
 }

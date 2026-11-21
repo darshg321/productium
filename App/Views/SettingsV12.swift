@@ -183,6 +183,8 @@ struct GoalsSettings: View {
 struct PrivacySettings: View {
     @Environment(AppModel.self) private var model
     @State private var confirm = false
+    @State private var renaming: UUID?
+    @State private var newName = ""
 
     var body: some View {
         List {
@@ -195,7 +197,8 @@ struct PrivacySettings: View {
             }
             Section {
                 ForEach(model.state.placeBook.places.filter { $0.name != nil }) { p in
-                    Text(p.title).swipeActions { Button("Forget", role: .destructive) { model.forgetPlace(p.id) } }
+                    Button { newName = p.title; renaming = p.id } label: { Text(p.title).foregroundStyle(.primary) }
+                        .swipeActions { Button("Forget", role: .destructive) { model.forgetPlace(p.id) } }
                 }
             } header: { Text("Named Places") }
             Section {
@@ -203,6 +206,15 @@ struct PrivacySettings: View {
             }
         }
         .listStyle(.insetGrouped)
+        .alert("Rename place", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Save") {
+                let name = newName.trimmingCharacters(in: .whitespaces)
+                if let id = renaming, !name.isEmpty { model.renamePlace(id, name) }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
         .navigationTitle("Privacy")
         .confirmationDialog("Forget every visit, place and the place on every entry?", isPresented: $confirm, titleVisibility: .visible) {
             Button("Forget", role: .destructive) { model.forgetLocationHistory() }

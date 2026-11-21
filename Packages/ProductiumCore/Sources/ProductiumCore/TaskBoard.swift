@@ -137,33 +137,3 @@ extension TaskKind {
         }
     }
 }
-
-public enum TimelineLayout {
-    public static func lanes(_ xs: [(start: Date, end: Date)]) -> [(lane: Int, of: Int)] {
-        let order = xs.indices.sorted { (xs[$0].start, xs[$0].end) < (xs[$1].start, xs[$1].end) }
-        var result = Array(repeating: (lane: 0, of: 1), count: xs.count)
-        var cluster: [Int] = []
-        var laneEnds: [Date] = []
-        var clusterEnd = Date.distantPast
-        func close() {
-            for i in cluster { result[i].of = max(1, laneEnds.count) }
-            cluster = []
-            laneEnds = []
-        }
-        for i in order {
-            let x = xs[i]
-            if x.start >= clusterEnd { close() }
-            if let free = laneEnds.firstIndex(where: { $0 <= x.start }) {
-                laneEnds[free] = x.end
-                result[i].lane = free
-            } else {
-                laneEnds.append(x.end)
-                result[i].lane = laneEnds.count - 1
-            }
-            cluster.append(i)
-            clusterEnd = max(clusterEnd, x.end)
-        }
-        close()
-        return result
-    }
-}
