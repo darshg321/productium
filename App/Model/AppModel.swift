@@ -149,7 +149,6 @@ final class AppModel {
         estimateSleep()
         syncCalendar()
         syncScreen()
-        learnRoutines()
         learnCapacities()
         if let note = state.taper.update(days: state.screen, now: Date(), calendar: cal) {
             toast = note
@@ -177,6 +176,11 @@ final class AppModel {
                                book: state.dayRules, calendar: cal)
     }
 
+    /// How long getting ready and the trips to and from school take, read from the log (O4: not stored).
+    var routines: [Routine] {
+        Routine.fromLog(state.entries, tree: state.categories, now: Date(), book: state.dayRules, calendar: cal)
+    }
+
     var itemsById: [UUID: WorkItem] { Dictionary(uniqueKeysWithValues: state.items.map { ($0.id, $0) }) }
 
     func replan() {
@@ -194,7 +198,11 @@ final class AppModel {
         PlanHistory.recordBedtimes(plan: state.plan, into: &state.plannedBedtimes, now: now, calendar: cal)
         state.plan = Planner.merge(previous: state.plan, new: Planner.plan(input), now: now, calendar: cal)
         // O3: the plan's future blocks are `plan` entries; what each day asked for is kept at its first plan.
-        PlanEntries.replace(in: &state.entries, with: PlanEntries.from(state.plan, items: state.items, now: now), now: now)
+        PlanEntries.replace(in: &state.entries, with: PlanEntries.from(state.plan, items: state.items, now: now, calendar: cal), now: now)
+        // N / B2: phone use during planned Sleep becomes sensor entries, and Sleep starts after the last pickup.
+        let uses = Friction.log.sessions.compactMap { s in s.endedAt.map { EntryBuilder.PhoneUse(start: s.openedAt, end: $0) } }
+        let written = EntryBuilder.phoneAfterBedtime(uses, entries: &state.entries, now: now)
+        if !written.isEmpty { log(.sensor, "phone_after_bedtime", ["entries": "\(written.count)"]) }
         let todayKey = DayKeys.key(now, cal)
         if state.dayPlans[todayKey] == nil { state.dayPlans[todayKey] = Accountability.asked(by: state.plan, on: now, calendar: cal) }
         let took = started.duration(to: .now)
@@ -211,7 +219,7 @@ final class AppModel {
     func plannerInput(now: Date, locked: [PlannedBlock] = []) -> PlannerInput {
         PlannerInput(now: now, calendar: cal, items: state.items,
                      preferences: state.prefs, learned: state.learned,
-                     health: state.health, moods: state.moods, locked: locked, routines: state.routines,
+                     health: state.health, moods: state.moods, locked: locked, routines: routines,
                      horizonDays: 14, policy: state.policy, beliefs: state.beliefs,
                      dayRules: state.dayRules,
                      entries: state.entries, rules: state.rules, categories: state.categories)
@@ -238,12 +246,10 @@ final class AppModel {
 
     /// Both alarm toggles feed one wanted list; an off toggle means its alarms are cancelled, not left behind.
     func syncAlarms(_ input: NudgeInput? = nil) {
-        let now = Date()
-        let soon = DateInterval(start: now, duration: 3 * 86400)
-        let entryAlarms = EntryAlerts.alarms(Days.expand(state.entries.filter { state.prefs.wakeAlarms || !($0.source == .plan && $0.category == CategoryTree.sleep) }, in: soon, now: now, book: state.dayRules, calendar: cal),
-                                             now: now, allowed: state.integrations.alarms)
-        AlarmService.sync(AlarmPlanner.desired(input ?? nudgeInput(), wake: state.integrations.alarms && state.prefs.wakeAlarms,
-                                               entryAlarms: entryAlarms))
+        // O4: the wake alarm is the planned Sleep's alert; your own alarms are entries' alerts (approved only, J).
+        let entryAlarms = AlarmPlanner.entryAlarms(state.entries, now: Date(), allowed: state.integrations.alarms,
+                                                   wake: state.prefs.wakeAlarms, book: state.dayRules, calendar: cal)
+        AlarmService.sync(AlarmPlanner.desired(input ?? nudgeInput(), entryAlarms: entryAlarms))
     }
 
     func nudgeInput(now: Date = Date()) -> NudgeInput {
@@ -252,7 +258,7 @@ final class AppModel {
         return NudgeInput(now: now, calendar: cal, plan: state.plan, items: state.items, settings: state.prefs.nudges,
                           startedBlockId: Sessions.block(for: running, in: state.plan, now: now)?.id, answeredBlockIds: answered, snoozedBlockIds: snoozed,
                           markerPrompts: markerPrompts(), timeLabel: { $0.formatted(date: .omitted, time: .shortened) },
-                          policy: state.policy, alarmRules: state.alarmRules, dayRules: state.dayRules)
+                          policy: state.policy, dayRules: state.dayRules)
     }
 
     var currentBlock: PlannedBlock? { state.plan.current(at: Date()) }
@@ -349,14 +355,6 @@ final class AppModel {
         guard focus == nil else { return }
         if let b = state.plan.blocks.first(where: { $0.id == blockId }), b.isStudy, b.end > Date() { startFocus(b) }
         else { startNowOrNext() }
-    }
-
-    func resetRoutine(_ id: String) {
-        guard let i = state.routines.firstIndex(where: { $0.id == id }) else { return }
-        state.routines[i].samples = []
-        state.routines[i].stated = nil
-        state.routines[i].learnedFrom = []
-        replan()
     }
 
     func recordMissedBlocks() {
@@ -468,13 +466,13 @@ final class AppModel {
         state.items[i].isDone = true
         state.items[i].doneAt = Date()
         let it = state.items[i]
-        let stepsLeft = it.parentId.map { p in state.items.filter { $0.parentId == p && !$0.isDone }.count } ?? 0
+        let stepsLeft = it.parentId.map { p in state.items.filter { $0.parentId == p && $0.isOpen }.count } ?? 0
         let daysEarly = max(0, cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: cal.startOfDay(for: it.due)).day ?? 0)
         celebrate(.itemDone(title: it.title, isStep: it.parentId != nil, stepsLeft: stepsLeft, daysEarly: daysEarly))
         if it.completedMinutes >= 10 {
             state.learned.recordCompletion(kind: it.kind, estimated: it.estimateMinutes, actual: it.completedMinutes)
         }
-        if let p = it.parentId, !state.items.contains(where: { $0.parentId == p && !$0.isDone }) { complete(p) }
+        if let p = it.parentId, !state.items.contains(where: { $0.parentId == p && $0.isOpen }) { complete(p) }
         replan()
     }
 
@@ -491,7 +489,6 @@ final class AppModel {
         state.entries = entries
         state.categories = tree
         log(.log, "check_in", ["phrase": phrase, "source": source.rawValue, "events": "\(evs.count)"])
-        learnRoutines(days: 1)
         if source != .geofence { offerPlace(after: evs) }
         if evs.contains(where: { $0.category == .sleep }) { estimateSleep(); replan() } else { save() }
     }
@@ -605,8 +602,9 @@ final class AppModel {
             let wd = cal.component(.weekday, from: day)
             let school = legacyCommitments.filter { $0.kind == .school && $0.weekdays.contains(wd) }
             guard let first = school.min(by: { $0.start < $1.start }), let last = school.max(by: { $0.end < $1.end }) else { continue }
-            let to = state.routines.first { $0.id == "to_school" }
-            let from = state.routines.first { $0.id == "from_school" }
+            let rs = routines
+            let to = rs.first { $0.id == "to_school" }
+            let from = rs.first { $0.id == "from_school" }
             if let to, to.samples.count < 5, let s = cal.date(bySettingHour: first.start.hour, minute: first.start.minute, second: 0, of: day) {
                 out.append((s.addingTimeInterval(-Double(to.minutes + 5) * 60), "Left home"))
             }
@@ -657,11 +655,6 @@ final class AppModel {
         guard !samples.isEmpty else { return }
         let fresh = MotionTimeline.spans(samples, until: now, previous: state.motion)
         state.motion = MotionTimeline.merge(state.motion, with: fresh, from: samples.map(\.at).min() ?? from)
-        for i in 0...7 {
-            guard let day = cal.date(byAdding: .day, value: -i, to: cal.startOfDay(for: now)) else { continue }
-            state.routines = MotionTimeline.learnRoutines(state.motion, day: day, commitments: legacyCommitments,
-                                                          routines: state.routines, calendar: cal)
-        }
     }
 
     func isSchoolDay(_ d: Date) -> Bool {
@@ -761,19 +754,6 @@ final class AppModel {
         }
     }
 
-    /// Pairs complete a routine sample as soon as the end marker exists; learned marker ids stop a pair counting twice.
-    private func learnRoutines(days: Int = 7) {
-        let today = cal.startOfDay(for: Date())
-        for i in 0..<days {
-            guard let day = cal.date(byAdding: .day, value: -i, to: today) else { continue }
-            let evs = CheckIns.derive(state.entries, tree: state.categories, in: Days.dayInterval(day, cal), now: Date(),
-                                      book: state.dayRules, calendar: cal)
-            guard !evs.isEmpty else { continue }
-            let wake = state.health.first { cal.isDate($0.day, inSameDayAs: day) }?.wake
-            state.routines = RoutineLearner.learn(day: evs, healthWake: wake, routines: state.routines)
-        }
-    }
-
     /// The weekly note and the quiet insight pass (v1.1 D.2): one Sonnet call. The note is shown; the changes are
     /// applied at once and only listed in What Productium Thinks → Changes. `force` is pull-to-refresh.
     func insightPass(force: Bool = false, asked question: String? = nil) async {
@@ -794,7 +774,7 @@ final class AppModel {
         defer { busy.remove("review") }
         let convos = state.archive.conversations.suffix(5).compactMap(\.title) + state.conversation.turns.suffix(5).map { String($0.text.prefix(120)) }
         let input = InsightInput(now: now, calendar: cal, trigger: trigger, question: question, aboutMe: aboutMe,
-                                 beliefs: state.beliefs, routines: state.routines, deferrals: deferrals, days: days,
+                                 beliefs: state.beliefs, routines: routines, deferrals: deferrals, days: days,
                                  summary: Insights.summarize(dayTotals(last: 7), learned: state.learned), policy: state.policy,
                                  feedback: state.changes.feedback, changes: state.changes.changeSummary(now: now),
                                  conversations: convos, items: state.items, plan: state.plan, moods: state.moods,
@@ -818,17 +798,10 @@ final class AppModel {
                                        evidence: [], model: "code", at: now))
         }
         editDumpState { state.changes.apply(run, drafts, to: &$0, now: now) }
-        replan()
-    }
-
-    func setAlarmRule(_ id: UUID, enabled: Bool) {
-        guard let i = state.alarmRules.firstIndex(where: { $0.id == id }) else { return }
-        state.alarmRules[i].enabled = enabled
-        replan()
-    }
-
-    func removeAlarmRule(_ id: UUID) {
-        state.alarmRules.removeAll { $0.id == id }
+        // J4: alarms are only proposed; they wait in Review and Settings → Alarms for Allow.
+        let proposed = InsightPass.proposals(out, items: state.items, now: now, calendar: cal)
+        state.approvals += proposed
+        if !proposed.isEmpty { log(.ai, "alarm_proposed", ["why": proposed.map(\.why).joined(separator: " | ")]) }
         replan()
     }
 
@@ -905,7 +878,7 @@ final class AppModel {
     func dayInputs(_ day: Date) -> DayInputs {
         let next = cal.date(byAdding: .day, value: 1, to: day) ?? day
         return DayInputs(day: day, entries: state.entries, categories: state.categories,
-                         routines: state.routines, itemsById: itemsById,
+                         routines: routines, itemsById: itemsById,
                          health: state.health.first { cal.isDate($0.day, inSameDayAs: day) },
                          nextHealth: state.health.first { cal.isDate($0.day, inSameDayAs: next) },
                          screen: state.screen.first { cal.isDate($0.day, inSameDayAs: day) }, prefs: state.prefs,
@@ -1031,7 +1004,7 @@ final class AppModel {
     }
 
     func ensureGapContent() async {
-        for t in state.items where t.kind.isMemoryBased && !t.isDone && !t.topics.isEmpty && t.due.timeIntervalSinceNow < 14 * 86400
+        for t in state.items where t.kind.isMemoryBased && t.isOpen && !t.topics.isEmpty && t.due.timeIntervalSinceNow < 14 * 86400
             && !state.flashcards.contains(where: { $0.itemId == t.id }) {
             await makeCards(for: t)
         }
@@ -1049,9 +1022,6 @@ final class AppModel {
     // MARK: The box (O6)
 
     var undoTurnId: UUID?
-    /// Ops waiting for Approve / Decline, with why (shown under the turn that made them).
-    var held: [HeldOp] = []
-    var heldTurnId: UUID?
     @ObservationIgnored private var undoReceipt: BoxReceipt?
     @ObservationIgnored private var undoSide: SideSnapshot?
 
@@ -1065,8 +1035,6 @@ final class AppModel {
         undoReceipt = nil
         undoSide = nil
         undoTurnId = nil
-        held = []
-        heldTurnId = nil
     }
 
     /// "school days Mon–Fri, sleep need 8h, sleep floor 7h, wake 6:45 on school days, notifications standard".
@@ -1167,7 +1135,7 @@ final class AppModel {
                 undoReceipt = receipt
                 undoSide = side
             }
-            if !receipt.held.isEmpty { held = receipt.held; heldTurnId = turnId }
+            state.approvals += Approvals.from(receipt.held, turnId: turnId, at: now)
             replan()
             for item in state.items where !beforeIds.contains(item.id) { followUp(new: item) }
             return true
@@ -1213,26 +1181,36 @@ final class AppModel {
         save()
     }
 
-    /// Approve: applies the held ops as they were asked (they were held, not changed).
-    func approveHeld() {
-        guard !held.isEmpty else { return }
+    /// Changes waiting for Approve / Decline (risky box ops, alarms the insight pass proposed), newest first.
+    var approvals: [Approval] { Approvals.live(state.approvals, now: Date()).sorted { $0.at > $1.at } }
+
+    /// Approve: applies the ops as they were asked (they were held, not changed). An alarm turns Full-Screen
+    /// Alarms on if it was off (J2: Allow is the one tap).
+    func approve(_ id: UUID) {
+        guard let a = state.approvals.first(where: { $0.id == id }) else { return }
+        state.approvals.removeAll { $0.id == id }
         let now = Date()
         let plan = state.entries.filter { $0.source == .plan }
         var bs = boxState(entries: state.entries.filter { $0.source != .plan })
-        let receipt = BoxApplier.apply(held.map(\.op), to: &bs, now: now, calendar: cal, approved: true)
+        let receipt = BoxApplier.apply(a.ops, to: &bs, now: now, calendar: cal, approved: true)
         absorb(bs, plan: plan)
-        askForAlarmsIfWanted()
-        log(.box, "approved", ["lines": receipt.lines.joined(separator: " | "), "problems": receipt.problems.joined(separator: " | ")])
+        if a.addsAlarm {
+            if !state.integrations.alarms {
+                state.integrations.alarms = true
+                log(.alarm, "turned_on_by_allow")
+            }
+            Task { _ = await AlarmService.requestAuthorization() }
+        }
+        log(.box, "approved", ["source": a.source.rawValue, "why": a.why, "lines": receipt.lines.joined(separator: " | "),
+                               "problems": receipt.problems.joined(separator: " | ")])
         toast = receipt.lines.first ?? "Done."
-        held = []
-        heldTurnId = nil
         replan()
     }
 
-    func declineHeld() {
-        log(.box, "declined", ["ops": held.map(\.why).joined(separator: " | ")])
-        held = []
-        heldTurnId = nil
+    func decline(_ id: UUID) {
+        guard let a = state.approvals.first(where: { $0.id == id }) else { return }
+        state.approvals.removeAll { $0.id == id }
+        log(.box, "declined", ["source": a.source.rawValue, "why": a.why])
         save()
     }
 

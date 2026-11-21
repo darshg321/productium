@@ -70,7 +70,6 @@ public struct AppState: Codable, Sendable {
     public var telemetry = Telemetry()
     public var prefs = Preferences()
     public var items: [WorkItem] = []
-    public var routines: [Routine] = Routine.defaults
     public var planHistory: [String: [PlannedBlock]] = [:]
     /// Planned bedtime per night, keyed by the morning (for "in bed on time").
     public var plannedBedtimes: [String: Date] = [:]
@@ -83,9 +82,8 @@ public struct AppState: Codable, Sendable {
     public var scrollingApps: [String: Bool] = [:]
     /// Named day sequences (A/B rotations) and labels ("exam-week", "no-school").
     public var dayRules = DayRuleBook()
-    /// Things the student said that the app couldn't act on (v1.2's backlog).
-    /// Alarms added, moved or switched off by the box or the insight pass (`AlarmRules`).
-    public var alarmRules: [AlarmRule] = []
+    /// v1.2 J: changes waiting for your Approve / Decline (risky box ops, alarms the insight pass proposes).
+    public var approvals: [Approval] = []
     public var learned = LearnedModel()
     public var beliefs = Beliefs()
     public var policy = BehaviourPolicy()
@@ -119,11 +117,9 @@ public struct AppState: Codable, Sendable {
 
     public var dumpState: DumpState {
         get {
-            var ds = DumpState(items: items,
-                      routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy,
+            var ds = DumpState(items: items, moods: moods, screen: screen, prefs: prefs, policy: policy,
                       progress: progress, beliefs: beliefs, scrollingApps: scrollingApps, screenAverages: screenAverages)
             ds.dayRules = dayRules
-            ds.alarmRules = alarmRules
             ds.metricTiles = metricTiles
             ds.alarmsAllowed = integrations.alarms
             ds.rewardSettings = rewardSettings
@@ -131,7 +127,6 @@ public struct AppState: Codable, Sendable {
         }
         set {
             items = newValue.items
-            routines = newValue.routines
             moods = newValue.moods
             screen = newValue.screen
             prefs = newValue.prefs
@@ -141,7 +136,6 @@ public struct AppState: Codable, Sendable {
             scrollingApps = newValue.scrollingApps
             screenAverages = newValue.screenAverages
             dayRules = newValue.dayRules
-            alarmRules = newValue.alarmRules
             metricTiles = newValue.metricTiles
             rewardSettings = newValue.rewardSettings
         }
@@ -165,7 +159,6 @@ public struct AppState: Codable, Sendable {
         pinnedCharts = v(.pinnedCharts, d.pinnedCharts)
         prefs = v(.prefs, d.prefs)
         items = v(.items, d.items)
-        routines = v(.routines, d.routines)
         planHistory = v(.planHistory, d.planHistory)
         plannedBedtimes = v(.plannedBedtimes, d.plannedBedtimes)
         progress = v(.progress, d.progress)
@@ -176,7 +169,7 @@ public struct AppState: Codable, Sendable {
         screenAverages = v(.screenAverages, d.screenAverages)
         scrollingApps = v(.scrollingApps, d.scrollingApps)
         dayRules = v(.dayRules, d.dayRules)
-        alarmRules = v(.alarmRules, d.alarmRules)
+        approvals = v(.approvals, d.approvals)
         learned = v(.learned, d.learned)
         beliefs = v(.beliefs, d.beliefs)
         policy = v(.policy, d.policy)

@@ -61,7 +61,7 @@ struct WeekStrip: View {
             ForEach(days, id: \.self) { d in
                 let on = cal.isDate(d, inSameDayAs: selected)
                 let today = cal.isDateInToday(d)
-                let due = model.state.items.contains { !$0.isDone && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: d) }
+                let due = model.state.items.contains { $0.isOpen && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: d) }
                 Button { withAnimation(.snappy) { selected = d } } label: {
                     VStack(spacing: 3) {
                         Text(d.formatted(.dateTime.weekday(.narrow))).font(.caption2.weight(.semibold))
@@ -105,7 +105,7 @@ struct AgendaList: View {
     var body: some View {
         let cal = Calendar.current
         let rows = Agenda.rows(day: day, plan: model.state.plan, items: model.state.items, now: Date(), calendar: cal)
-        let overdue = model.state.items.filter { !$0.isDone && $0.parentId == nil && $0.due < Date() }
+        let overdue = model.state.items.filter { $0.isOpen && $0.parentId == nil && $0.due < Date() }
         ScrollViewReader { proxy in
             List {
                 if !overdue.isEmpty {

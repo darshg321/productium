@@ -674,38 +674,6 @@ struct PlacesSettings: View {
     }
 }
 
-struct RoutineSettings: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var m = model
-        List {
-            Section {
-                ForEach($m.state.routines) { $r in
-                    Toggle(isOn: $r.enabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(r.name)
-                            Text(r.disagreement ?? "\(r.confidence.title) · \(r.minutes) min")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            } footer: {
-                Text("Durations are learned from your check-ins and places.")
-            }
-            Section {
-                Button("Re-learn Routines", role: .destructive) {
-                    for i in m.state.routines.indices { m.state.routines[i].samples = []; m.state.routines[i].stated = nil; m.state.routines[i].learnedFrom = [] }
-                    model.replan()
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle("Routines")
-        .onChange(of: model.state.routines) { _, _ in model.replan() }
-    }
-}
-
 struct BackupDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
     var data: Data

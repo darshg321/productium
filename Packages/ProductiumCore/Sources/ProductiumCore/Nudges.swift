@@ -169,15 +169,12 @@ public struct NudgeInput {
     public var limit: Int
     public var timeLabel: ((Date) -> String)?
     public var policy: BehaviourPolicy
-    /// Alarms the student or the insight pass added, moved or removed (`AlarmRules`).
-    public var alarmRules: [AlarmRule]
     public var dayRules: DayRuleBook
 
     public init(now: Date, calendar: Calendar, plan: Plan, items: [WorkItem], settings: NudgeSettings,
                 startedBlockId: UUID? = nil, answeredBlockIds: Set<UUID> = [], snoozedBlockIds: Set<UUID> = [],
                 markerPrompts: [(Date, String)] = [], limit: Int = 52, timeLabel: ((Date) -> String)? = nil,
-                policy: BehaviourPolicy = BehaviourPolicy(), alarmRules: [AlarmRule] = [], dayRules: DayRuleBook = DayRuleBook()) {
-        self.alarmRules = alarmRules
+                policy: BehaviourPolicy = BehaviourPolicy(), dayRules: DayRuleBook = DayRuleBook()) {
         self.dayRules = dayRules
         self.policy = policy
         self.now = now

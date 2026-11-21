@@ -14,21 +14,6 @@ struct ThinksView: View {
             } footer: {
                 Text("What Productium adjusted about how it plans and reminds you, from how your weeks went. Each one can be undone.")
             }
-            if !model.state.alarmRules.isEmpty {
-                Section {
-                    ForEach(model.state.alarmRules) { r in
-                        Toggle(isOn: Binding(get: { r.enabled }, set: { model.setAlarmRule(r.id, enabled: $0) })) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(r.summary(items: model.state.items, calendar: .current))
-                                Text(r.source == .reflection ? "Added by Productium" : "You asked for it").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .swipeActions { Button("Remove", role: .destructive) { model.removeAlarmRule(r.id) } }
-                    }
-                } header: { Text("Alarms You or Productium Added") } footer: {
-                    Text("These are on top of the wake-up, bedtime and leave-by alarms. Ask the box to move or remove any of them.")
-                }
-            }
             let reminders = model.state.policy.intentions.filter { $0.byStudent == true }
             if !reminders.isEmpty {
                 Section("Your Reminders") {
@@ -55,10 +40,11 @@ struct ThinksView: View {
                 }
             }
             Section {
-                ForEach(Beliefs.routines(model.state.routines)) { BeliefRow(belief: $0) }
+                ForEach(Beliefs.routines(model.routines)) { BeliefRow(belief: $0) }
                 ForEach(beliefs.group("routines")) { BeliefRow(belief: $0) }
-                NavigationLink("Turn Routines On or Off") { RoutineSettings() }
-            } header: { Text("Routines") }
+            } header: { Text("Routines") } footer: {
+                Text("Learned from what you log. Tell the box your own routine (\"I get ready 7:00 to 7:40\") and that's used instead.")
+            }
             ForEach(beliefs.groups.filter { !["routines", "places", "scrolling", "patterns"].contains($0.id) }) { g in
                 let rows = beliefs.group(g.id)
                 if !rows.isEmpty || g.createdBy != "app" {

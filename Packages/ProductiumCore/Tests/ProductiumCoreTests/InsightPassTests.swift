@@ -49,7 +49,7 @@ final class InsightPassTests: XCTestCase {
         XCTAssertEqual(out.review.suggestions.count, 2, "the note keeps at most 2 suggestions")
         let run = InsightRun(at: Fx.mon(9), note: out.headline, model: "sonnet")
         let drafts = InsightPass.drafts(out, runId: run.id, items: [essay], now: Fx.mon(9), model: "sonnet", calendar: cal)
-        var s = DumpState(items: [essay], routines: Routine.defaults,
+        var s = DumpState(items: [essay],
                           moods: [], screen: [], prefs: Preferences())
         var log = ChangeLog()
         let problems = log.apply(run, drafts, to: &s, now: Fx.mon(9))
@@ -115,33 +115,4 @@ final class InsightSituationTests: XCTestCase {
     let cal = Fx.cal
 
 
-}
-
-final class InsightAlarmTests: XCTestCase {
-    let cal = Fx.cal
-    func changes(_ cs: [InsightPass.Output.Change], items: [WorkItem] = []) -> (ChangeLog, DumpState, [String]) {
-        let out = InsightPass.Output(headline: "h", wins: [], suggestions: [], changes: cs, about_me: nil)
-        let drafts = InsightPass.drafts(out, runId: UUID(), items: items, now: Fx.mon(9), model: "sonnet", calendar: cal)
-        var s = DumpState(items: items, routines: Routine.defaults,
-                          moods: [], screen: [], prefs: Preferences())
-        var log = ChangeLog()
-        let problems = log.apply(InsightRun(at: Fx.mon(9), note: "", model: "sonnet"), drafts, to: &s, now: Fx.mon(9))
-        return (log, s, problems)
-    }
-
-    func testInsightPassCanAddAndMoveAlarmsButNotRemoveTheMorningOne() {
-        let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 5))
-        let t = Ref.task(essay.id)
-        var (log, s, problems) = changes([
-            .init(type: "alarm", task: t, minutes: 5, alarm_kind: "before_blocks", label: "Essay time", reason: "missed the last 4 Essay blocks"),
-            .init(type: "alarm", minutes: -45, alarm_kind: "shift", alarm_target: "bedtime", scope: #"{"weekdays":[6]}"#, reason: "late nights on Fridays"),
-            .init(type: "alarm", alarm_kind: "off", alarm_target: "wake", reason: "x")], items: [essay])
-        XCTAssertEqual(s.alarmRules.count, 2, "\(problems)")
-        XCTAssertEqual(s.alarmRules.first { (r: AlarmRule) in r.kind == AlarmRule.Kind.shift }?.minutes, -30, "at most 30 minutes")
-        XCTAssertEqual(problems.count, 1, "removing the morning alarm is refused: \(problems)")
-        XCTAssertTrue(s.alarmRules.allSatisfy { (r: AlarmRule) in r.source == Writer.reflection })
-        XCTAssertTrue(log.revert(log.applied[0].id, in: &s, now: Fx.mon(10)))
-        XCTAssertEqual(s.alarmRules.count, 1)
-        _ = (log, problems)
-    }
 }

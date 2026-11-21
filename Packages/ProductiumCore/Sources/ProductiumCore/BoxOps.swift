@@ -306,7 +306,8 @@ public enum BoxApplier {
             guard let title = f.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty,
                   let start = time(f.start, f) else { return problem("An entry needs a title and a start") }
             let end = time(f.end, f)
-            if let end, end <= start { return problem("“\(title)” ends before it starts") }
+            // end == start is a moment (an alarm, a reminder): it shows on the day but counts no time.
+            if let end, end < start { return problem("“\(title)” ends before it starts") }
             let ti = task(f.task, s)
             let fallback = ti.flatMap { s.items[$0].category } ?? CategoryTree.other
             let running = end == nil && f.repeats == nil && start <= now

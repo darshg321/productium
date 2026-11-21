@@ -77,22 +77,6 @@ public enum MotionTimeline {
             .max { $0.minutes < $1.minutes }
     }
 
-    public static func learnRoutines(_ spans: [MotionSpan], day: Date, commitments: [Commitment],
-                                     routines: [Routine], calendar cal: Calendar) -> [Routine] {
-        var out = routines
-        let occ = Commitment.occurrences(commitments, on: cal.startOfDay(for: day), calendar: cal)
-            .filter { $0.commitment.kind == .school }
-        guard let first = occ.map(\.start).min(), let last = occ.map(\.end).max() else { return out }
-        let todays = spans.filter { $0.isTravel && $0.minutes >= minMinutes && cal.isDate($0.start, inSameDayAs: day) }
-        func teach(_ id: String, _ span: MotionSpan?) {
-            guard let span, let i = out.firstIndex(where: { $0.id == id }), !out[i].learnedFrom.contains(span.id) else { return }
-            if out[i].observe(span.minutes) { out[i].learnedFrom.insert(span.id) }
-        }
-        teach("to_school", todays.last { $0.end >= first.addingTimeInterval(-45 * 60) && $0.end <= first.addingTimeInterval(10 * 60) })
-        teach("from_school", todays.first { $0.start >= last.addingTimeInterval(-5 * 60) && $0.start <= last.addingTimeInterval(30 * 60) })
-        return out
-    }
-
     public static func summary(_ spans: [MotionSpan], on day: Date, calendar cal: Calendar) -> String? {
         let f = DateFormatter.local("HH:mm", cal)
         let parts = spans.filter { cal.isDate($0.start, inSameDayAs: day) }.compactMap { s -> String? in

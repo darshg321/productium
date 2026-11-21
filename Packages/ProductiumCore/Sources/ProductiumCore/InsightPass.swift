@@ -103,9 +103,8 @@ public enum InsightPass {
         - starter_step: for a task put off often, a 5-20 min concrete first step: task (id), title, minutes, due.
         - intention: an if-then reminder: trigger time (weekdays 1=Sun..7=Sat, time HH:mm) or arrive_home; text;         task (id) if it's about one.
         - belief_group: a pattern worth tracking: group_id, group_title, 3+ evidence lines. At most one.
-        - alarm: your own alarm or a change to the app's: alarm_kind clock (time, scope days) | before_due (task) | before_blocks (task, minutes) \
-        | shift (alarm_target wake|bedtime|leave|missedStart, minutes -30..30, scope days) | off (alarm_target, not wake); label. For example an \
-        alarm 5 minutes before the blocks of a task they keep missing. Never remove an alarm the student set.
+        - alarm: only proposed, the student taps Allow first: alarm_kind clock (time HH:mm, scope days, label) or \
+        before_due (task, minutes before). For example an alarm 5 minutes before the time they keep missing. At most one.
         \(DayRuleText.grammar)
         Each has reason (one sentence of evidence) and evidence (short lines). Don't redo anything under "Undone         before".
         about_me: up to 3 lines, section Inferred ("text — evidence: …, confidence: low|med|high, since YYYY-MM-DD")         or Patterns ("puts off university essays: deferred 3× this week").
@@ -195,6 +194,36 @@ public enum InsightPass {
         return l.joined(separator: "\n")
     }
 
+    /// J4: the insight pass can't add alarms; an `alarm` change becomes one Approve / Decline row in the Weekly Note.
+    public static func proposals(_ o: Output, items: [WorkItem], now: Date, calendar cal: Calendar) -> [Approval] {
+        func task(_ ref: String?) -> WorkItem? { ref.flatMap { r in items.first { Ref.matches(r, prefix: "t", full: $0.id.uuidString) } } }
+        let hm = DateFormatter.local("yyyy-MM-dd HH:mm", cal)
+        var out: [Approval] = []
+        for p in o.changes where p.type.lowercased().filter(\.isLetter) == "alarm" {
+            let kind = (p.alarm_kind ?? "clock").lowercased().filter(\.isLetter)
+            var f = BoxFields(category: CategoryTree.other, alert: "alarm")
+            if kind == "beforedue", let t = task(p.task), t.isOpen {
+                let at = t.due.addingTimeInterval(-Double(max(0, p.minutes ?? 30)) * 60)
+                guard at > now else { continue }
+                f.title = p.label?.isEmpty == false ? p.label : "\(t.title) is due soon"
+                f.start = hm.string(from: at)
+                f.end = f.start
+            } else if let tod = ClockText.timeOfDay(p.time) {
+                var day = cal.startOfDay(for: now)
+                if let t = cal.date(bySettingHour: tod.hour, minute: tod.minute, second: 0, of: day), t <= now {
+                    day = cal.date(byAdding: .day, value: 1, to: day)!
+                }
+                f.title = p.label?.isEmpty == false ? p.label : "Alarm"
+                f.start = "\(DayKeys.key(day, cal)) \(tod.label.count == 4 ? "0" + tod.label : tod.label)"
+                f.end = f.start
+                f.repeats = DayRuleText.rule(p.scope, tz: cal.timeZone, items: items)
+            } else { continue }
+            out.append(Approval(ops: [BoxOp(.entry, .add, f)], why: p.reason, source: .insight, at: now))
+            break
+        }
+        return out
+    }
+
     public static func drafts(_ o: Output, runId: UUID, items: [WorkItem], now: Date, model: String,
                               calendar cal: Calendar) -> [LoggedChange] {
         func make(_ c: InsightChange, _ reason: String, _ ev: [String]) -> LoggedChange {
@@ -218,17 +247,7 @@ public enum InsightPass {
                 out.append(make(.intention(IntentionNudge(trigger: home ? .arriveHome : .time, weekdays: p.weekdays ?? [],
                                                           time: ClockText.timeOfDay(p.time), text: text, itemId: task(p.task)?.id)),
                                 p.reason, ev))
-            case "alarm":
-                let k = (p.alarm_kind ?? "").lowercased().filter(\.isLetter)
-                guard let kind = ["clock": AlarmRule.Kind.clock, "beforedue": .beforeDue, "beforeblocks": .beforeBlocks, "shift": .shift, "off": .suppress][k] else { continue }
-                let target = p.alarm_target.flatMap { ["wake": PlannedAlarm.Kind.wake, "bed": .bedtime, "bedtime": .bedtime, "leave": .leave,
-                                                       "missedstart": .missedStart][$0.lowercased().filter(\.isLetter)] }
-                let rule = AlarmRule(label: p.label ?? "", kind: kind, time: ClockText.timeOfDay(p.time), itemId: task(p.task)?.id,
-                                     minutes: p.minutes ?? 0, target: target,
-                                     when: DayRuleText.rule(p.scope, tz: cal.timeZone, items: items),
-                                     expires: p.expires.flatMap { AIMapper.parseDate($0, timeZone: cal.timeZone) }, source: .reflection, createdAt: now)
-                if (kind == .clock && rule.time == nil) || (kind == .beforeDue && rule.itemId == nil) || ((kind == .shift || kind == .suppress) && target == nil) { continue }
-                out.append(make(.alarm(rule), p.reason, ev))
+            case "alarm": continue
             case "beliefgroup":
                 guard let id = p.group_id ?? p.group_title, let title = p.group_title ?? p.group_id else { continue }
                 let slug = id.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "_" }

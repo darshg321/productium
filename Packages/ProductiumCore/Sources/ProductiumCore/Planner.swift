@@ -228,7 +228,8 @@ public enum Planner {
                 var fixed: [PlannedBlock] = []
                 if let r = routine("get_ready", on: day) {
                     fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: wakeT,
-                                              end: wakeT.addingTimeInterval(Double(r.minutes) * 60), title: r.name))
+                                              end: wakeT.addingTimeInterval(Double(r.minutes) * 60), title: r.name,
+                                              sourceId: "routine:\(r.id)"))
                 }
                 let todays = fixedEntries(on: day).filter { $0.taskId == nil }.map {
                     (start: $0.start, end: $0.end,
@@ -244,7 +245,8 @@ public enum Planner {
                     }
                     if let s, let e {
                         busy.append(Interval(start: s, end: e))
-                        fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: s, end: e, title: r.name))
+                        fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: s, end: e, title: r.name,
+                                                  sourceId: "routine:\(r.id)"))
                     }
                 }
                 for de in fixedEntries(on: day) {
@@ -259,7 +261,9 @@ public enum Planner {
                 }
                 let beliefs = input.beliefs
                 let dinnerMinutes = beliefs.minutes("routines.dinnerMinutes")
-                if dinnerMinutes > 0 {
+                // "Dinner 7:30" said as an entry is your dinner: the learned one steps aside.
+                let ownMeal = fixedEntries(on: day).contains { input.categories.isUnder($0.category, CategoryTree.meals) }
+                if dinnerMinutes > 0 && !ownMeal {
                     let dinner = TimeOfDay(minutes: beliefs.minutes("routines.dinnerTime"))
                     let s = at(day, dinner), e = s.addingTimeInterval(Double(dinnerMinutes) * 60)
                     if !busy.contains(where: { $0.start < e && s < $0.end }) {

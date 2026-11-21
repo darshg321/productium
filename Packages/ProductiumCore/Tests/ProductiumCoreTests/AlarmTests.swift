@@ -1,22 +1,37 @@
 import XCTest
 @testable import ProductiumCore
 
-/// v1.1 C1/C2: which alarms should exist, and getting the device there without duplicates or orphans.
+/// v1.1 C1/C2, v1.2 O4: which alarms should exist, and getting the device there without duplicates or orphans.
+/// The wake alarm is the planned Sleep entry's `alert` (no separate wake path).
 final class AlarmTests: XCTestCase {
     let cal = Fx.cal
 
-
-    func plan(now: Date, items: [WorkItem] = [], calendar: Calendar? = nil) -> Plan {
-        var input = Fx.input(now: now, items: items)
-        if let calendar { input.calendar = calendar; input.entries = Fx.timetable(in: calendar) }
-        return Planner.plan(input)
+    /// The log after replanning at each of `times` (past plan entries stay, the future is renewed), like the app.
+    func entries(replannedAt times: [Date], items: [WorkItem] = [], calendar: Calendar? = nil) -> [Entry] {
+        let c = calendar ?? cal
+        var es = Fx.timetable(in: c)
+        for now in times {
+            var input = Fx.input(now: now, items: items)
+            input.calendar = c
+            input.entries = es
+            PlanEntries.replace(in: &es, with: PlanEntries.from(Planner.plan(input), items: items, now: now, calendar: c), now: now)
+        }
+        return es
     }
 
-    func desired(_ p: Plan, now: Date, wake: Bool = true, nudges: Bool = true, calendar: Calendar? = nil) -> [PlannedAlarm] {
+    func desired(at now: Date, items: [WorkItem] = [], wake: Bool = true, nudges: Bool = true, calendar: Calendar? = nil,
+                 replans: [Date]? = nil) -> [PlannedAlarm] {
+        let c = calendar ?? cal
         var s = NudgeSettings(); s.alarms = nudges
-        let input = NudgeInput(now: now, calendar: calendar ?? cal, plan: p, items: [], settings: s)
-        return AlarmPlanner.desired(input, wake: wake)
+        var input = Fx.input(now: now, items: items)
+        input.calendar = c
+        let es = entries(replannedAt: replans ?? [now], items: items, calendar: c)
+        input.entries = es
+        let n = NudgeInput(now: now, calendar: c, plan: Planner.plan(input), items: items, settings: s)
+        return AlarmPlanner.desired(n, entryAlarms: AlarmPlanner.entryAlarms(es, now: now, allowed: true, wake: wake, calendar: c))
     }
+
+    func wakes(_ a: [PlannedAlarm]) -> [PlannedAlarm] { a.filter { $0.kind == .entry } }
 
     func hm(_ d: Date, _ c: Calendar? = nil) -> String {
         let x = (c ?? cal).dateComponents([.hour, .minute], from: d)
@@ -29,16 +44,17 @@ final class AlarmTests: XCTestCase {
         // Replanned every evening at 20:00 for 14 days: the next wake alarm is always tomorrow's, at the right time.
         for d in 0..<14 {
             let now = Fx.mon(20, plusDays: d)
-            let a = desired(plan(now: now), now: now, nudges: false)
-            XCTAssertEqual(a.filter { $0.kind == .wake }.count, 3, "day \(d)")
-            let next = a.first { $0.kind == .wake }!
+            let a = wakes(desired(at: now, nudges: false))
+            XCTAssertEqual(a.count, 3, "day \(d)")
+            let next = a[0]
             let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now))!
-            XCTAssertEqual(next.key, "wake.\(AlarmPlanner.dayKey(tomorrow, cal))")
+            XCTAssertTrue(cal.isDate(next.at, inSameDayAs: tomorrow), "day \(d)")
+            XCTAssertTrue(next.key.hasPrefix("entry.") && next.key.hasSuffix(".end"))
             let weekday = cal.component(.weekday, from: tomorrow)
             if (2...6).contains(weekday) {
                 // School 8:30, leave at 8:00 (25 min safe trip + 5), 40 min to get ready.
                 XCTAssertEqual(hm(next.at), "07:20", "school day \(d)")
-                XCTAssertTrue(next.title.hasPrefix("Leave by"))
+                XCTAssertEqual(next.title, "Leave by 8:00 AM")
             } else {
                 XCTAssertEqual(hm(next.at), "08:30", "free day \(d)")
                 XCTAssertEqual(next.title, "Good morning")
@@ -47,49 +63,51 @@ final class AlarmTests: XCTestCase {
     }
 
     func testTodaysWakeOnlyWhileItIsAhead() {
-        let early = desired(plan(now: Fx.mon(6)), now: Fx.mon(6), nudges: false)
-        XCTAssertEqual(early.first?.key, "wake.2026-11-16")
-        let late = desired(plan(now: Fx.mon(9)), now: Fx.mon(9), nudges: false)
-        XCTAssertEqual(late.first?.key, "wake.2026-11-17")
+        // Last night's Sleep was planned on Sunday evening and stays in the log; its alarm rings until it's past.
+        let sunday = Fx.mon(20, plusDays: -1)
+        let early = wakes(desired(at: Fx.mon(6), nudges: false, replans: [sunday, Fx.mon(6)]))
+        XCTAssertEqual(early.first.map { hm($0.at) }, "07:20")
+        XCTAssertTrue(cal.isDate(early[0].at, inSameDayAs: Fx.mon(6)))
+        let late = wakes(desired(at: Fx.mon(9), nudges: false, replans: [sunday, Fx.mon(9)]))
+        XCTAssertTrue(cal.isDate(late[0].at, inSameDayAs: Fx.mon(9, plusDays: 1)))
     }
-
 
     func testDaylightSavingKeepsLocalTimes() {
         // Vancouver springs forward on Sunday 14 March 2027.
         let fri = cal.date(from: DateComponents(year: 2027, month: 3, day: 12, hour: 20))!
-        let a = desired(plan(now: fri), now: fri, nudges: false)
-        XCTAssertEqual(a.map(\.key), ["wake.2027-03-13", "wake.2027-03-14", "wake.2027-03-15"])
+        let a = wakes(desired(at: fri, nudges: false))
+        XCTAssertEqual(a.map { AlarmPlanner.dayKey($0.at, cal) }, ["2027-03-13", "2027-03-14", "2027-03-15"])
         XCTAssertEqual(a.map { hm($0.at) }, ["08:30", "08:30", "07:20"])
         // Fall back, Sunday 7 November 2027.
         let fri2 = cal.date(from: DateComponents(year: 2027, month: 11, day: 5, hour: 20))!
-        XCTAssertEqual(desired(plan(now: fri2), now: fri2, nudges: false).map { hm($0.at) }, ["08:30", "08:30", "07:20"])
+        XCTAssertEqual(wakes(desired(at: fri2, nudges: false)).map { hm($0.at) }, ["08:30", "08:30", "07:20"])
     }
 
     func testTimeZoneComesFromTheAppCalendar() {
         var toronto = Calendar(identifier: .gregorian)
         toronto.timeZone = TimeZone(identifier: "America/Toronto")!
         let now = toronto.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: 20))!
-        let a = desired(plan(now: now, calendar: toronto), now: now, nudges: false, calendar: toronto)
+        let a = wakes(desired(at: now, nudges: false, calendar: toronto))
         XCTAssertEqual(hm(a[0].at, toronto), "07:20")
-        XCTAssertEqual(a[0].key, "wake.2026-11-17")
+        XCTAssertEqual(AlarmPlanner.dayKey(a[0].at, toronto), "2026-11-17")
     }
 
     func testKeysAndTimesAreStableAcrossReplans() {
         let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(9, plusDays: 4), estimateMinutes: 240)
-        let a = desired(plan(now: Fx.mon(15, 40), items: [essay]), now: Fx.mon(15, 40))
-        let b = desired(plan(now: Fx.mon(15, 45), items: [essay]), now: Fx.mon(15, 45))
+        let a = desired(at: Fx.mon(15, 40), items: [essay])
+        let b = desired(at: Fx.mon(15, 45), items: [essay], replans: [Fx.mon(15, 40), Fx.mon(15, 45)])
         XCTAssertFalse(a.isEmpty)
         let wakeBed = { (xs: [PlannedAlarm]) in xs.filter { $0.kind != .missedStart }.map { "\($0.key)@\(Int($0.at.timeIntervalSince1970))" } }
         XCTAssertEqual(wakeBed(a), wakeBed(b), "a replan five minutes later changes nothing")
         XCTAssertTrue(a.contains { $0.kind == .bedtime && $0.key == "bed.2026-11-17" })
+        // The leave alarm rings with the wake alarm's title now, so it's the same minute only once.
         XCTAssertTrue(a.contains { $0.kind == .leave && $0.key == "leave.2026-11-17" })
     }
 
     func testTogglesAreIndependent() {
-        let p = plan(now: Fx.mon(20))
-        XCTAssertTrue(desired(p, now: Fx.mon(20), wake: false, nudges: false).isEmpty)
-        XCTAssertTrue(desired(p, now: Fx.mon(20), wake: true, nudges: false).allSatisfy { $0.kind == .wake })
-        XCTAssertTrue(desired(p, now: Fx.mon(20), wake: false, nudges: true).allSatisfy { $0.kind != .wake })
+        XCTAssertTrue(desired(at: Fx.mon(20), wake: false, nudges: false).isEmpty)
+        XCTAssertTrue(desired(at: Fx.mon(20), wake: true, nudges: false).allSatisfy { $0.kind == .entry })
+        XCTAssertTrue(desired(at: Fx.mon(20), wake: false, nudges: true).allSatisfy { $0.kind != .entry })
     }
 
     // MARK: C2: reconciling with the device
@@ -122,7 +140,7 @@ final class AlarmTests: XCTestCase {
         var last: [PlannedAlarm] = []
         for k in 0..<20 {
             let now = Fx.mon(12).addingTimeInterval(Double(k) * 90)
-            last = desired(plan(now: now, items: [essay]), now: now)
+            last = desired(at: now, items: [essay])
             dev.sync(last, now: now)
             XCTAssertEqual(Set(dev.alarms.values.map(\.key)), Set(last.map(\.key)), "replan \(k)")
             XCTAssertEqual(dev.alarms.count, last.count, "no duplicates after replan \(k)")
@@ -134,7 +152,7 @@ final class AlarmTests: XCTestCase {
 
     func testOrphansAndDuplicatesAreCancelled() {
         let now = Fx.mon(20)
-        let want = desired(plan(now: now), now: now)
+        let want = desired(at: now)
         var dev = FakeDevice()
         dev.sync(want, now: now)
         // An alarm scheduled before the app was killed, never saved in the ledger.
@@ -154,88 +172,76 @@ final class AlarmTests: XCTestCase {
     func testRingingAlarmIsNeverCancelledAndFailedAddsRetry() {
         let now = Fx.mon(20)
         var dev = FakeDevice()
-        let want = desired(plan(now: now), now: now)
+        let want = desired(at: now)
         dev.failNextAdds = 2
         dev.sync(want, now: now)
         XCTAssertEqual(dev.alarms.count, want.count - 2)
         dev.sync(want, now: now)
         XCTAssertEqual(dev.alarms.count, want.count, "the next sync adds what failed")
-        let ringing = dev.alarms.first { $0.value.kind == .wake }!.key
+        let ringing = dev.alarms.first { $0.value.kind == .entry }!.key
         dev.alerting = [ringing]
         dev.sync([], now: now)
         XCTAssertEqual(Array(dev.alarms.keys), [ringing], "only the ringing one is left")
     }
 }
 
-/// The box and the insight pass can add, move, remove and tie alarms to tasks.
-final class AlarmRuleTests: XCTestCase {
-    let cal = Fx.cal
-    let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 3), estimateMinutes: 240)
-
-    func desired(_ rules: [AlarmRule], now: Date = Fx.mon(20), wake: Bool = true, nudges: Bool = true, book: DayRuleBook = DayRuleBook()) -> [PlannedAlarm] {
-        var s = NudgeSettings(); s.alarms = nudges
-        let plan = Planner.plan(Fx.input(now: now, items: [essay]))
-        return AlarmPlanner.desired(NudgeInput(now: now, calendar: cal, plan: plan, items: [essay], settings: s, alarmRules: rules, dayRules: book), wake: wake)
-    }
-
-    func state() -> DumpState {
-        var s = DumpState(items: [essay], routines: Routine.defaults,
-                          moods: [], screen: [], prefs: Preferences())
-        s.alarmsAllowed = true
-        return s
-    }
-
-    func str(_ v: String) -> JSONValue { .string(v) }
-
-    func testTaskAlarmIsBeforeDueAndGoesWhenTheTaskIsDone() {
-        let rule = AlarmRule(kind: .beforeDue, itemId: essay.id, minutes: 60)
-        let a = desired([rule]).first { $0.key.hasPrefix("rule.") }
-        XCTAssertEqual(a?.at, essay.due.addingTimeInterval(-3600))
-        XCTAssertEqual(a?.title, "Essay is due in 1h")
-        var done = essay; done.isDone = true
-        var s = NudgeSettings(); s.alarms = false
-        let none = AlarmPlanner.desired(NudgeInput(now: Fx.mon(20), calendar: cal, plan: .empty, items: [done], settings: s, alarmRules: [rule]), wake: false)
-        XCTAssertTrue(none.isEmpty)
-    }
-
-    func testBlockAlarmsFollowTheTasksStudyBlocks() {
-        let rule = AlarmRule(kind: .beforeBlocks, itemId: essay.id, minutes: 5)
-        let alarms = desired([rule], wake: false, nudges: false)
-        XCTAssertFalse(alarms.isEmpty)
-        XCTAssertTrue(alarms.allSatisfy { $0.blockId != nil && $0.key.hasPrefix("rule.") })
-    }
-
-    func testClockAlarmWithAndWithoutADayRule() {
-        let once = AlarmRule(label: "Take medicine", kind: .clock, time: TimeOfDay(21))
-        XCTAssertEqual(desired([once], wake: false, nudges: false).map(\.at), [Fx.mon(21)])
-        let fridays = AlarmRule(label: "Call gran", kind: .clock, time: TimeOfDay(17), when: .weekdays([6]))
-        let a = desired([fridays], wake: false, nudges: false)
-        XCTAssertEqual(a.count, 2, "two Fridays inside 14 days")
-        XCTAssertTrue(a.allSatisfy { cal.component(.weekday, from: $0.at) == 6 && $0.title == "Call gran" })
-        let off = AlarmRule(kind: .clock, time: TimeOfDay(21), enabled: false)
-        XCTAssertTrue(desired([off], wake: false, nudges: false).isEmpty)
-    }
-
-    func testMoveAndRemoveTheGeneratedAlarms() {
-        let base = desired([])
-        let bed = base.first { $0.kind == .bedtime }!
-        let earlier = desired([AlarmRule(kind: .shift, minutes: -20, target: .bedtime)])
-        XCTAssertEqual(earlier.first { $0.key == bed.key }?.at, bed.at.addingTimeInterval(-20 * 60))
-        let noWake = desired([AlarmRule(kind: .suppress, target: .wake)])
-        XCTAssertTrue(noWake.filter { $0.kind == .wake }.isEmpty)
-        XCTAssertFalse(noWake.filter { $0.kind == .bedtime }.isEmpty, "only the wake alarms go")
-        // Only on Tuesdays.
-        let tue = desired([AlarmRule(kind: .suppress, target: .wake, when: .weekdays([3]))]).filter { $0.kind == .wake }
-        XCTAssertTrue(tue.allSatisfy { cal.component(.weekday, from: $0.at) != 3 })
-        XCTAssertEqual(tue.count, base.filter { $0.kind == .wake }.count - (base.contains { $0.kind == .wake && cal.component(.weekday, from: $0.at) == 3 } ? 1 : 0))
-    }
-
-}
-
-final class BoxPowerTests: XCTestCase {
+/// v1.2 J: alarms on entries ring only once approved; the insight pass only proposes them.
+final class EntryAlarmTests: XCTestCase {
     let cal = Fx.cal
 
+    func medicine(approved: Bool) -> Entry {
+        Entry(title: "Take medicine", start: Fx.mon(21), end: Fx.mon(21), category: CategoryTree.other,
+              repeats: .weekly([1, 2, 3, 4, 5, 6, 7]), alert: Alert(.alarm, approved: approved), source: .you)
+    }
 
+    func testApprovedEntryAlarmsRingDailyUnapprovedOnesDont() {
+        let a = AlarmPlanner.entryAlarms([medicine(approved: true)], now: Fx.mon(20), allowed: true, wake: true, calendar: cal)
+        XCTAssertEqual(a.map(\.at), [Fx.mon(21), Fx.mon(21, plusDays: 1), Fx.mon(21, plusDays: 2)])
+        XCTAssertTrue(a.allSatisfy { $0.title == "Take medicine" })
+        XCTAssertTrue(AlarmPlanner.entryAlarms([medicine(approved: false)], now: Fx.mon(20), allowed: true, wake: true, calendar: cal).isEmpty)
+        XCTAssertTrue(AlarmPlanner.entryAlarms([medicine(approved: true)], now: Fx.mon(20), allowed: false, wake: true, calendar: cal).isEmpty,
+                      "Full-Screen Alarms off: none")
+    }
+
+    func testSkippingOneDayRemovesThatAlarmOnly() {
+        var e = medicine(approved: true)
+        e.marks["2026-11-17"] = .skipped
+        let a = AlarmPlanner.entryAlarms([e], now: Fx.mon(20), allowed: true, wake: true, calendar: cal)
+        XCTAssertEqual(a.map(\.at), [Fx.mon(21), Fx.mon(21, plusDays: 2)])
+    }
+
+    func testBoxAlarmIsHeldThenApprovedRings() {
+        var s = BoxState()
+        let op = BoxOp(.entry, .add, BoxFields(title: "Wake up", start: "06:40", end: "06:40", day: "2026-11-17", alert: "alarm"))
+        let r = BoxApplier.apply([op], to: &s, now: Fx.mon(20), calendar: cal)
+        XCTAssertEqual(r.held.count, 1)
+        XCTAssertTrue(s.entries.isEmpty)
+        let ok = BoxApplier.apply(r.held.map(\.op), to: &s, now: Fx.mon(20), calendar: cal, approved: true)
+        XCTAssertTrue(ok.problems.isEmpty, "\(ok.problems)")
+        let a = AlarmPlanner.entryAlarms(s.entries, now: Fx.mon(20), allowed: true, wake: true, calendar: cal)
+        XCTAssertEqual(a.map(\.at), [Fx.mon(6, 40, plusDays: 1)])
+        XCTAssertEqual(TimeLog.past(s.entries, in: Days.dayInterval(Fx.mon(0, plusDays: 1), cal), now: Fx.mon(8, plusDays: 1), calendar: cal)
+            .filter { $0.entry != nil }.count, 0, "a moment counts no time")
+    }
+
+    func testInsightPassProposesAlarmsInsteadOfAddingThem() {
+        let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 3), estimateMinutes: 240)
+        let out = InsightPass.Output(headline: "Week", wins: [], suggestions: [], changes: [
+            .init(type: "alarm", time: "16:55", alarm_kind: "clock", label: "Reading at 5", scope: #"{"weekdays":[2,3,4,5,6]}"#, reason: "Missed 4 of 5"),
+            .init(type: "alarm", task: Ref.task(essay.id), minutes: 60, alarm_kind: "before_due", reason: "Due tonight"),
+        ])
+        let p = InsightPass.proposals(out, items: [essay], now: Fx.mon(20), calendar: cal)
+        XCTAssertEqual(p.count, 1, "one a run")
+        XCTAssertEqual(p[0].source, .insight)
+        XCTAssertTrue(p[0].addsAlarm)
+        XCTAssertEqual(p[0].ops[0].fields.start, "2026-11-17 16:55", "16:55 has passed today, so tomorrow")
+        XCTAssertTrue(InsightPass.drafts(out, runId: UUID(), items: [essay], now: Fx.mon(20), model: "m", calendar: cal).isEmpty,
+                      "never applied as a change")
+        var s = BoxState()
+        let r = BoxApplier.apply(p[0].ops, to: &s, now: Fx.mon(20), calendar: cal, approved: true)
+        XCTAssertTrue(r.problems.isEmpty, "\(r.problems)")
+        XCTAssertEqual(s.entries.first?.repeats?.days, .weekdays([2, 3, 4, 5, 6]))
+    }
 }
 
 final class EntryAlarmWiringTests: XCTestCase {
@@ -247,9 +253,9 @@ final class EntryAlarmWiringTests: XCTestCase {
         let entryAlarms = EntryAlerts.alarms(occ, now: Fx.mon(12), allowed: true)
         XCTAssertEqual(entryAlarms.count, 1)
         let input = NudgeInput(now: Fx.mon(12), calendar: cal, plan: .empty, items: [], settings: NudgeSettings())
-        let wanted = AlarmPlanner.desired(input, wake: false, entryAlarms: entryAlarms)
+        let wanted = AlarmPlanner.desired(input, entryAlarms: entryAlarms)
         XCTAssertEqual(wanted.map(\.at), [Fx.mon(7, plusDays: 1)])
-        XCTAssertEqual(AlarmPlanner.desired(input, wake: false, entryAlarms: []).count, 0)
+        XCTAssertEqual(AlarmPlanner.desired(input, entryAlarms: []).count, 0)
         XCTAssertTrue(EntryAlerts.alarms(occ, now: Fx.mon(12), allowed: false).isEmpty)
     }
 }

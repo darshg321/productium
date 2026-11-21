@@ -233,17 +233,8 @@ struct TurnView: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
-            if model.heldTurnId == turn.id, !model.held.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(model.held.enumerated()), id: \.offset) { _, h in
-                        Label(h.why, systemImage: "hand.raised").font(.footnote).foregroundStyle(.orange)
-                    }
-                    HStack {
-                        Button("Approve") { withAnimation { model.approveHeld() } }.buttonStyle(.borderedProminent)
-                        Button("Decline") { withAnimation { model.declineHeld() } }.buttonStyle(.bordered)
-                    }
-                    .font(.subheadline)
-                }
+            ForEach(model.approvals.filter { $0.turnId == turn.id }) { a in
+                ApprovalRow(approval: a)
             }
             HStack(spacing: 16) {
                 if model.undoTurnId == turn.id { Button("Undo") { withAnimation { model.undo() } } }
@@ -549,6 +540,29 @@ struct MoodCard: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// One Approve / Decline (0.3, J2): a risky box change or an alarm the insight pass proposed.
+struct ApprovalRow: View {
+    @Environment(AppModel.self) private var model
+    let approval: Approval
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(approval.why, systemImage: approval.addsAlarm ? "alarm" : "hand.raised")
+                .font(.footnote).foregroundStyle(.orange)
+            if approval.addsAlarm && !model.state.integrations.alarms {
+                Text("Full-Screen Alarms are off. Allow turns them on.").font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Button(approval.addsAlarm ? "Allow" : "Approve") { withAnimation { model.approve(approval.id) } }
+                    .buttonStyle(.borderedProminent)
+                Button(approval.addsAlarm ? "No" : "Decline") { withAnimation { model.decline(approval.id) } }
+                    .buttonStyle(.bordered)
+            }
+            .font(.subheadline)
         }
     }
 }

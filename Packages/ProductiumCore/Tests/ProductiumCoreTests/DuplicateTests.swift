@@ -8,7 +8,7 @@ final class DuplicateTests: XCTestCase {
 
 
     func state(_ commitments: [Commitment] = [Fx.school]) -> DumpState {
-        DumpState(items: [],                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpState(items: [], moods: [], screen: [], prefs: Preferences())
     }
 
     func testSimilarTitlesAndOverlap() {

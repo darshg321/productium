@@ -5,7 +5,7 @@ final class ScreenTimeTests: XCTestCase {
     let cal = Fx.cal
 
     func state() -> DumpState {
-        DumpState(items: [],                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpState(items: [], moods: [], screen: [], prefs: Preferences())
     }
 
     func app(_ n: String, _ m: Int, _ c: String? = nil) -> JSONValue {
@@ -113,7 +113,7 @@ final class ScreenSeriesTests: XCTestCase {
 
 enum ShotFx {
     static func state() -> DumpState {
-        DumpState(items: [],                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpState(items: [], moods: [], screen: [], prefs: Preferences())
     }
 
     static func app(_ n: String, _ m: Int, _ c: String? = nil) -> JSONValue {

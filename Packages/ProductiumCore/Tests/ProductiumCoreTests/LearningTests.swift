@@ -17,18 +17,50 @@ final class LearningTests: XCTestCase {
         XCTAssertTrue(p("lol idk").isEmpty)
     }
 
-    func testRoutineLearnsCommuteAndRejectsOutliers() {
-        var routines = Routine.defaults
+    func testRoutinesComeFromTheLog() {
+        // Mon–Thu: told a 50-minute get-ready, a walk to school ending before 8:30, and the trip home.
+        var es = Fx.timetable
         for d in 0..<4 {
-            let evs = MarkerParser.parse("left home", at: Fx.mon(8, 0, plusDays: d), commitments: [Fx.school], calendar: cal)
-                + MarkerParser.parse("at school", at: Fx.mon(8, 22 + d, plusDays: d), commitments: [Fx.school], calendar: cal)
-            routines = RoutineLearner.learn(day: evs, healthWake: Fx.mon(7, 10, plusDays: d), routines: routines)
+            es.append(Entry(title: "Getting ready", start: Fx.mon(7, 10, plusDays: d), end: Fx.mon(8, 0, plusDays: d),
+                            category: CategoryTree.gettingReady, source: .you, createdAt: Fx.mon(8, 0, plusDays: d)))
+            es.append(Entry(title: "Walk to school", start: Fx.mon(8, 5, plusDays: d), end: Fx.mon(8, 27 + d, plusDays: d),
+                            category: CategoryTree.travel, source: .sensor, createdAt: Fx.mon(9, plusDays: d)))
+            es.append(Entry(title: "Bus home", start: Fx.mon(15, 5, plusDays: d), end: Fx.mon(15, 25, plusDays: d),
+                            category: CategoryTree.travel, source: .you, createdAt: Fx.mon(16, plusDays: d)))
         }
-        let commute = routines.first { $0.id == "to_school" }!
-        XCTAssertEqual(commute.samples, [22, 23, 24, 25])
-        XCTAssertEqual(routines.first { $0.id == "get_ready" }!.minutes, 50)
-        var r = commute
-        XCTAssertFalse(r.observe(150), "forgot to tap until lunch")
+        // A trip on Saturday doesn't count: there's no school.
+        es.append(Entry(title: "Bus", start: Fx.mon(8, 0, plusDays: 5), end: Fx.mon(9, 0, plusDays: 5), category: CategoryTree.travel,
+                        source: .you, createdAt: Fx.mon(10, plusDays: 5)))
+        let r = Routine.fromLog(es, tree: CategoryTree(), now: Fx.mon(12, plusDays: 6), calendar: cal)
+        func get(_ id: String) -> Routine { r.first { $0.id == id }! }
+        XCTAssertEqual(get("to_school").samples, [22, 23, 24, 25])
+        XCTAssertEqual(get("get_ready").minutes, 50)
+        XCTAssertEqual(get("from_school").samples, [20, 20, 20, 20])
+        var c = get("to_school")
+        XCTAssertFalse(c.observe(150), "forgot to stop it until lunch")
+        // Planned routines are a guess, not a sample.
+        let planned = Entry(title: "To school", start: Fx.mon(8, 0, plusDays: 4), end: Fx.mon(8, 30, plusDays: 4),
+                            category: CategoryTree.travel, source: .plan)
+        XCTAssertEqual(Routine.fromLog(es + [planned], tree: CategoryTree(), now: Fx.mon(12, plusDays: 6), calendar: cal)
+            .first { $0.id == "to_school" }!.samples.count, 4)
+    }
+
+    func testYourOwnRoutineEntryReplacesThePlannersOne() {
+        let ready = Entry(title: "Get ready", start: Fx.mon(7), end: Fx.mon(7, 30), category: CategoryTree.gettingReady,
+                          repeats: .weekly([2, 3, 4, 5, 6]), source: .you)
+        let r = Routine.fromLog(Fx.timetable + [ready], tree: CategoryTree(), now: Fx.mon(12), calendar: cal)
+        XCTAssertFalse(r.first { $0.id == "get_ready" }!.enabled)
+        let plan = Planner.plan(Fx.input(now: Fx.mon(5), items: [], entries: Fx.timetable + [ready], routines: r))
+        XCTAssertFalse(plan.blocks.contains { $0.kind == .routine && $0.title == "Get ready" })
+        XCTAssertTrue(plan.blocks.contains { $0.kind == .routine && $0.title == "To school" })
+    }
+
+    func testOwnDinnerEntryReplacesTheLearnedDinner() {
+        let dinner = Entry(title: "Dinner", start: Fx.mon(19, 30), end: Fx.mon(20), category: CategoryTree.meals,
+                           repeats: .weekly(Set(1...7)), source: .you)
+        let plan = Planner.plan(Fx.input(now: Fx.mon(5), items: [], entries: Fx.timetable + [dinner]))
+        XCTAssertFalse(plan.blocks.contains { $0.kind == .meal && cal.isDate($0.start, inSameDayAs: Fx.mon(12)) },
+                       "your 7:30 dinner is the dinner; no second one at 6:30")
     }
 
     func testTimelineInfersRoutinesWithoutCheckins() {

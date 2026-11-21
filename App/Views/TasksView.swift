@@ -162,10 +162,10 @@ struct TaskRow: View {
                         Label(item.kind.title, systemImage: item.kind.symbol).labelStyle(.iconOnly)
                             .foregroundStyle(Theme.color(for: item, in: model.state))
                         Text(subtitle(steps: steps))
-                            .foregroundStyle(!item.isDone && item.due < now ? Theme.alert : .secondary)
+                            .foregroundStyle(item.isOpen && item.due < now ? Theme.alert : .secondary)
                     }
                     .font(.caption)
-                    if !item.isDone {
+                    if item.isOpen {
                         if let n = next {
                             Label("\(n.start.relativeDay.capitalized), \(n.start.hm)", systemImage: "calendar.badge.clock")
                                 .font(.caption).foregroundStyle(Theme.focus)
@@ -176,7 +176,7 @@ struct TaskRow: View {
                     }
                 }
                 Spacer(minLength: 0)
-                if !item.isDone {
+                if item.isOpen {
                     VStack(alignment: .trailing, spacing: 4) {
                         if short {
                             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -203,12 +203,12 @@ struct TaskRow: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) { model.delete(item.id) } label: { Label("Delete", systemImage: "trash") }
             Button { onEdit(item) } label: { Label("Edit", systemImage: "pencil") }.tint(.orange)
-            if !item.isDone {
+            if item.isOpen {
                 Button { model.focusNow(on: item) } label: { Label("Now", systemImage: "play.fill") }.tint(Theme.focus)
             }
         }
         .contextMenu {
-            if !item.isDone {
+            if item.isOpen {
                 Button { model.focusNow(on: item) } label: { Label("Work on It Now", systemImage: "play.fill") }
                 Button { model.complete(item.id) } label: { Label("Mark as Done", systemImage: "checkmark.circle") }
             }
@@ -223,7 +223,7 @@ struct TaskRow: View {
         else { parts.append("Due \(item.due.relativeDay) \(item.due.hm)") }
         if let s = item.subject, !s.isEmpty { parts.append(s.capitalized) }
         if !steps.isEmpty { parts.append("\(steps.filter(\.isDone).count)/\(steps.count) steps") }
-        if !item.isDone, let p = item.putOffLabel { parts.append(p) }
+        if item.isOpen, let p = item.putOffLabel { parts.append(p) }
         return parts.joined(separator: " · ")
     }
 }

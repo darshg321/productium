@@ -10,7 +10,6 @@ final class ExportTests: XCTestCase {
         let task = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 4), completedMinutes: 30)
         s.items = [task]
         s.entries = Fx.timetable
-        s.routines[1].samples = [14]
         s.moods = [MoodEntry(at: now, mood: 4)]
         s.progress = [ProgressEntry(at: now, itemId: task.id, minutes: 30, from: 0, to: 30, source: .task)]
         s.health = [HealthDay(day: Fx.mon(0), steps: 4000)]

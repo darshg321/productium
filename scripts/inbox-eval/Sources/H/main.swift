@@ -33,7 +33,7 @@ var s = DumpState(items: [
     WorkItem(title: "Calc problem set 5", kind: .assignment, subject: "Math", due: now.addingTimeInterval(2 * 86400)),
     WorkItem(title: "Bio quiz on cells", kind: .quiz, subject: "Biology", due: now.addingTimeInterval(3 * 86400), topics: ["mitosis"]),
     WorkItem(title: "Gatsby essay", kind: .essay, subject: "English", due: now.addingTimeInterval(8 * 86400)),
-], routines: Routine.defaults, moods: [], screen: [],
+], moods: [], screen: [],
    prefs: Preferences())
 
 func send(_ req: AIRequest) async throws -> AIResponse {
@@ -57,7 +57,7 @@ if CommandLine.arguments.dropFirst().first == "--insight" {
     let days = (1...14).map { i in DayRecord(day: cal.date(byAdding: .day, value: -i, to: cal.startOfDay(for: now))!, isSchoolDay: ![1, 7].contains(cal.component(.weekday, from: cal.date(byAdding: .day, value: -i, to: now)!)),
                                               planned: 90, done: i % 3 == 0 ? 80 : 20) }
     let plan = Planner.plan(PlannerInput(now: now, calendar: cal, items: s.items,
-                                         preferences: s.prefs, routines: s.routines, entries: timetable, categories: tree))
+                                         preferences: s.prefs, entries: timetable, categories: tree))
     let input = InsightInput(now: now, calendar: cal, trigger: .deferrals, deferrals: InsightPass.deferrals(items: s.items, since: now.addingTimeInterval(-14 * 86400)),
                              days: days, policy: s.policy, items: s.items, plan: plan, dayRules: s.dayRules)
     let req = AIRequest(model: AIFeature.review.route.model, system: InsightPass.system(), messages: [AIMessage(role: "user", content: InsightPass.request(input))],
