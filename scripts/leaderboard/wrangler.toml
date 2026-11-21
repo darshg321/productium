@@ -3,7 +3,4 @@ main = "worker.js"
 compatibility_date = "2026-11-01"
 workers_dev = true
 
-# Filled in by ./deploy.sh on the first deploy.
-[[kv_namespaces]]
-binding = "BOARD"
-id = ""
+# ./deploy.sh appends the KV namespace binding (BOARD) on the first deploy.

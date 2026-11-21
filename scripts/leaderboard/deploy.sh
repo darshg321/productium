@@ -7,10 +7,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 W="npx --yes wrangler@4"
-if grep -q '^id = ""' wrangler.toml; then
-  id=$($W kv namespace create BOARD 2>&1 | grep -oE '[0-9a-f]{32}' | head -1)
-  [ -n "$id" ] || { echo "couldn't create the KV namespace"; exit 1; }
-  sed -i "s/^id = \"\"/id = \"$id\"/" wrangler.toml
+if ! grep -q 'binding = "BOARD"' wrangler.toml; then
+  # Non-interactive (CI=1, no stdin) so wrangler doesn't stop to ask about editing the config itself.
+  out=$(CI=1 $W kv namespace create BOARD </dev/null 2>&1) || { echo "$out"; exit 1; }
+  id=$(echo "$out" | grep -oE '[0-9a-f]{32}' | head -1)
+  [ -n "$id" ] || { echo "$out"; echo "couldn't read the KV namespace id"; exit 1; }
+  printf '\n[[kv_namespaces]]\nbinding = "BOARD"\nid = "%s"\n' "$id" >> wrangler.toml
   echo "KV namespace $id"
 fi
 node test.mjs
