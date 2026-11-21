@@ -5,7 +5,7 @@ struct TaskDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let itemId: UUID
-    @State private var editing: WorkItem?
+    @State private var clearing: WorkItem?
 
     init(itemId: UUID) { self.itemId = itemId }
 
@@ -83,33 +83,39 @@ struct TaskDetailView: View {
                 if let n = item.notes, !n.isEmpty {
                     Section("Notes") { Text(n).font(.subheadline) }
                 }
+                if item.isOpen, item.firstStep != nil || model.trackWarning(for: item) != nil {
+                    Section {
+                        if let f = item.firstStep { LabeledContent("First step", value: f) }
+                        if let w = model.trackWarning(for: item) { Label(w, systemImage: "clock.arrow.circlepath").font(.footnote) }
+                    }
+                }
 
                 Section {
                     if item.isDone {
                         Button { model.reopen(item.id) } label: {
                             Label("Mark as Not Done", systemImage: "arrow.uturn.backward")
                         }
-                    } else {
-                        Button { model.focusNow(on: item); dismiss() } label: {
-                            Label("Work on It Now", systemImage: "play.fill")
+                    } else if item.isOpen {
+                        Button { model.startTask(item); dismiss() } label: {
+                            Label("Start", systemImage: "play.fill")
                         }
                         Button { model.complete(item.id); dismiss() } label: {
-                            Label("Mark as Done", systemImage: "checkmark.circle")
+                            Label("Done", systemImage: "checkmark.circle")
+                        }
+                        Button { clearing = item } label: {
+                            Label("Clear (not doing it)", systemImage: "xmark.circle")
                         }
                     }
                     Button(role: .destructive) { model.delete(item.id); dismiss() } label: {
-                        Label("Delete Task", systemImage: "trash")
+                        Label("Delete (made by mistake)", systemImage: "trash")
                     }
                 } footer: {
-                    Text("Edit changes it here, with no AI. You can also tell the Inbox, like “move this to friday”.")
+                    Text("To change it, tell the box: “the essay is due friday”, “only 30 min of this a day”.")
                 }
             }
             .listStyle(.insetGrouped)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) { Button("Edit") { editing = item } }
-            }
-            .sheet(item: $editing) { TaskEditor(item: $0, isNew: false) }
+            .sheet(item: $clearing) { ClearSheet(item: $0) }
         } else {
             ContentUnavailableView("Task Removed", systemImage: "tray")
         }

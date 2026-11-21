@@ -39,45 +39,67 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         let action = response.actionIdentifier
+        let text = (response as? UNTextInputNotificationResponse)?.userText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let window: DateInterval? = {
+            guard let s = info["start"] as? Double, let e = info["end"] as? Double, e > s else { return nil }
+            return DateInterval(start: Date(timeIntervalSince1970: s), end: Date(timeIntervalSince1970: e))
+        }()
+        let question = info["question"] as? String
+        let kind = info["kind"] as? String
         await MainActor.run {
             let model = AppModel.shared
             model.log(.notification, "answered", ["action": action, "id": response.notification.request.identifier,
-                                                  "kind": "\(info["kind"] ?? "")"])
+                                                  "kind": kind ?? "", "typed": text.isEmpty ? "" : "\(text.count) chars"].filter { !$0.value.isEmpty })
             let blockId = (info["blockId"] as? String).flatMap(UUID.init(uuidString:))
             let itemId = (info["itemId"] as? String).flatMap(UUID.init(uuidString:))
-            if let id = blockId, let status = OutcomeStatus(rawValue: action) {
-                model.logOutcome(blockId: id, status: status)
-            } else if action == "focus.start" {
+            switch action {
+            case "focus.start":
                 if let id = blockId { model.startFocus(blockId: id) } else { model.startNowOrNext() }
-            } else if action == "focus.snooze", let id = blockId {
-                model.snooze(blockId: id)
-            } else if action == "focus.cant", let id = blockId {
-                model.logOutcome(blockId: id, status: .skipped, reason: "Can't today")
-            } else if action == "scroll.gap" {
+            case "focus.snooze":
+                if let id = blockId { model.snooze(blockId: id) }
+            case "task.notToday":
+                if let id = blockId { model.notToday(blockId: id) }
+            case "scroll.gap":
                 Friction.answered(stillScrolling: false)
-                model.deepLink = "productium://gap"
-            } else if action == "scroll.yes" {
-                Friction.answered(stillScrolling: true)
-            } else if action == "scroll.stop" {
-                Friction.answered(stillScrolling: false)
-            } else if action == "item.done", let id = itemId {
-                model.complete(id)
-            } else if action == "item.focus", let id = itemId, let item = model.state.items.first(where: { $0.id == id }) {
-                model.focusNow(on: item)
-            } else if action.hasPrefix("mood"), let m = Int(action.dropFirst(4)) {
-                model.logMood(m, energy: nil, note: nil)
-            } else if action == "marker.yes", let phrase = info["marker"] as? String {
-                model.logMarker(phrase, source: .notification)
-            } else if let link = info["deeplink"] as? String, action == UNNotificationDefaultActionIdentifier {
-                model.deepLink = link
+                model.deepLink = "productium://today"
+            case "scroll.yes": Friction.answered(stillScrolling: true)
+            case "scroll.stop": Friction.answered(stillScrolling: false)
+            case "item.done":
+                if let id = itemId { model.complete(id) }
+            case "item.focus":
+                if let id = itemId, let item = model.state.items.first(where: { $0.id == id }) { model.focusNow(on: item) }
+            case "run.stop": model.stopRunning(source: "notification")
+            case "sleep.yes":
+                if let w = window { model.confirmSleep(w) }
+            case let a where a.hasPrefix("mood"):
+                if let m = Int(a.dropFirst(4)) { model.logMood(m, energy: nil, note: nil) }
+            case let a where a.hasPrefix("track.") && a != "track.reply":
+                // A start button on "What are you up to?": now, or the past stretch it asked about.
+                guard let i = Int(a.dropFirst(6)), let titles = info["actions"] as? [String], i < titles.count else { break }
+                if let w = window, kind == NudgeKind.untracked.rawValue, response.notification.request.identifier == "track.past" {
+                    model.logStretch(titles[i], w)
+                } else {
+                    model.start(title: titles[i], at: window.map { max($0.start, Date().addingTimeInterval(-3600)) }, source: "prompt")
+                }
+            case let a where a.hasPrefix("q."):
+                model.answerQuestion(action: a, id: response.notification.request.identifier, text: text)
+            case UNNotificationDefaultActionIdentifier:
+                if let link = info["deeplink"] as? String { model.deepLink = link }
+            default: break
             }
         }
-        guard let text = (response as? UNTextInputNotificationResponse)?.userText, !text.isEmpty else { return }
-        if action == "gap.reply", let s = info["start"] as? Double, let e = info["end"] as? Double {
-            await AppModel.shared.answerGap(text, gap: MysteryGap(start: Date(timeIntervalSince1970: s),
-                                                                  end: min(Date(), Date(timeIntervalSince1970: e)), ongoing: false))
-        } else {
-            await AppModel.shared.dump(text)
+        guard !text.isEmpty, !action.hasPrefix("q.") else { return }
+        switch action {
+        case "run.switch":
+            await AppModel.shared.submit("starting \(text)", source: .notification)
+        case "sleep.reply":
+            await MainActor.run { _ = window.map { AppModel.shared.state.prompts.sleepAnswered.insert(DayKeys.key($0.end, AppModel.shared.cal)) } }
+            await AppModel.shared.submit("I slept \(text)", source: .notification, context: question)
+        case "track.reply":
+            let what = window.map { w in "\(question ?? "What were you doing") (\(w.start.hm)–\(min(w.end, Date()).hm))" } ?? question
+            await AppModel.shared.submit(text, source: .notification, context: what)
+        default:
+            await AppModel.shared.submit(text, source: .notification, context: question)
         }
     }
 }

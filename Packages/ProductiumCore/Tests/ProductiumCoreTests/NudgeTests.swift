@@ -33,7 +33,7 @@ final class NudgeTests: XCTestCase {
     func testGentleKeepsTheBasicsOnly() {
         let (_, n) = nudges(.gentle)
         let kinds = Set(n.map(\.kind))
-        XCTAssertTrue(kinds.isSuperset(of: [.start, .end, .windDown, .checkIn, .morning, .leaveNow, .deadline]))
+        XCTAssertTrue(kinds.isSuperset(of: [.start, .windDown, .checkIn, .morning, .leaveNow, .deadline]))
         XCTAssertTrue(kinds.isDisjoint(with: [.leadUp, .followUp, .bedtime, .stillUp, .leaveSoon]))
     }
 
@@ -51,7 +51,7 @@ final class NudgeTests: XCTestCase {
 
     func testPersistentAddsMore() {
         let (plan, n) = nudges(.persistent, item: essay(due: Fx.mon(15, plusDays: 1)))
-        XCTAssertEqual(n.filter { $0.kind == .followUp && $0.blockId == plan.blocks[0].id }.count, 3)
+        XCTAssertEqual(n.filter { $0.kind == .followUp && $0.blockId == plan.blocks[0].id }.count, 2, "H4: fewer")
         XCTAssertTrue(n.contains { $0.kind == .stillUp && $0.at == Fx.mon(22, 20) })
         XCTAssertFalse(n.contains { $0.id.hasPrefix("plan.dueday") }, "same-day reminder is past the 24 h horizon")
         let (_, soon) = nudges(.persistent, now: Fx.mon(20), item: essay(due: Fx.mon(15, plusDays: 1)))
@@ -64,7 +64,6 @@ final class NudgeTests: XCTestCase {
         let w1 = plan.blocks[0]
         let (_, started) = nudges(.persistent, now: Fx.mon(16, 1), started: w1.id, item: e)
         XCTAssertFalse(started.contains { $0.blockId == w1.id && [.start, .followUp, .leadUp].contains($0.kind) })
-        XCTAssertTrue(started.contains { $0.blockId == w1.id && $0.kind == .end }, "still asked how it went")
         let (_, answered) = nudges(.persistent, now: Fx.mon(16, 1), answered: [w1.id], item: e)
         XCTAssertFalse(answered.contains { $0.blockId == w1.id })
     }
@@ -321,5 +320,151 @@ final class SensorNudgeTests: XCTestCase {
         let later = NudgePlanner.plan(NudgeInput(now: Fx.mon(20, plusDays: 4), calendar: cal, plan: plan, items: [], settings: NudgeSettings()))
             .filter { $0.kind == .daylight }
         XCTAssertEqual(later.map(\.at), [Fx.mon(9, 45, plusDays: 5)])
+    }
+}
+
+extension NudgeTests {
+    // MARK: v1.2 A8 / H4
+
+    func testReplyCopyHasTextField() {
+        let e = essay()
+        var s = NudgeSettings(); s.level = .persistent
+        let x = NudgeInput(now: Fx.mon(12), calendar: cal, plan: samplePlan(essay: e.id), items: [e], settings: s)
+        let prompts = TrackPrompts.plan(TrackPromptInput(now: Fx.mon(18), calendar: cal, entries: [], plan: samplePlan(essay: e.id),
+                                                         buttons: ["Shower", "Gaming"]))
+        let sleepEntry = Entry(title: "Sleep", start: Fx.mon(23, plusDays: -1), end: Fx.mon(7), category: CategoryTree.sleep, source: .sensor)
+        let sleepQ = TrackPrompts.sleepQuestion(entries: [sleepEntry], now: Fx.mon(8), log: PromptLog(), calendar: cal)
+        let running = Entry(title: "Shower", start: Fx.mon(17), end: nil, category: "essentials.shower", source: .you)
+        let all = NudgePlanner.plan(x) + prompts + [sleepQ].compactMap { $0 }
+            + TrackPrompts.running(running, tree: CategoryTree(), goalLine: nil, now: Fx.mon(17, 5))
+        XCTAssertFalse(prompts.isEmpty)
+        XCTAssertNotNil(sleepQ)
+        for n in all where NotificationCategory.invitesReply(n.title + " " + n.body) {
+            XCTAssertEqual(n.kind.category?.takesText, true, "\(n.kind): “\(n.body)” invites a reply without a text field")
+        }
+        for k in NudgeKind.allCases where k.category?.takesText == true {
+            XCTAssertTrue([.checkIn, .untracked, .sleepConfirm, .question, .running].contains(k))
+        }
+    }
+
+    func testEveryTaskNotificationNamesAStepADurationAndWhatItLeadsTo() {
+        var e = essay()
+        e.firstStep = "Outline paragraph 2"
+        let w1 = PlannedBlock(id: Planner.stableUUID("a"), kind: .work, start: Fx.mon(16), end: Fx.mon(16, 40), title: "Essay · 2 of 3", itemId: e.id)
+        let w2 = PlannedBlock(id: Planner.stableUUID("b"), kind: .work, start: Fx.mon(19), end: Fx.mon(19, 30), title: "Bio quiz", itemId: nil,
+                              hint: "Self-test from memory")
+        let dinner = PlannedBlock(id: Planner.stableUUID("c"), kind: .meal, start: Fx.mon(18), end: Fx.mon(18, 30), title: "Dinner")
+        let plan = Plan(generatedAt: Fx.mon(12), blocks: [w1, dinner, w2], warnings: [], shortfalls: [:], sleepTradeoffMinutes: 0, loadFactor: 1)
+        let n = NudgePlanner.plan(NudgeInput(now: Fx.mon(12), calendar: cal, plan: plan, items: [e], settings: NudgeSettings()))
+        let start1 = n.first { $0.kind == .start && $0.blockId == w1.id }!
+        XCTAssertEqual(start1.title, "Essay")
+        XCTAssertEqual(start1.body, "Outline paragraph 2 · 40m. 1 of 3 sessions done. Then you're free until 6:00 PM.")
+        let start2 = n.first { $0.kind == .start && $0.blockId == w2.id }!
+        XCTAssertEqual(start2.body, "Self-test from memory · 30m. Then you're done for today.")
+        for x in n where [.start, .leadUp, .followUp].contains(x.kind) {
+            XCTAssertTrue(x.body.contains("m"), "a duration: \(x.body)")
+        }
+        XCTAssertFalse(n.contains { $0.title == "How did it go?" })
+    }
+
+    func testNoFollowUpWhileYouTrackSomethingElse() {
+        let e = essay()
+        let plan = samplePlan(essay: e.id)
+        let running = Entry(title: "Volleyball", start: Fx.mon(15, 30), end: nil, category: CategoryTree.extracurricular, source: .you)
+        var s = NudgeSettings(); s.level = .persistent
+        let n = NudgePlanner.plan(NudgeInput(now: Fx.mon(15, 45), calendar: cal, plan: plan, items: [e], settings: s, running: running))
+        XCTAssertFalse(n.contains { $0.kind == .followUp })
+        XCTAssertTrue(n.contains { $0.kind == .start }, "the start itself still comes")
+    }
+}
+
+/// v1.2 D4 / A7 / D6.
+final class TrackPromptTests: XCTestCase {
+    let cal = Fx.cal
+
+    func plan() -> Plan {
+        let wind = PlannedBlock(kind: .windDown, start: Fx.mon(21, 30), end: Fx.mon(22), title: "Wind down")
+        let sleep = PlannedBlock(kind: .sleep, start: Fx.mon(22), end: Fx.mon(7, plusDays: 1), title: "Sleep")
+        let study = PlannedBlock(kind: .work, start: Fx.mon(19), end: Fx.mon(19, 45), title: "Essay")
+        let wake = WakePlan(day: Fx.mon(0), wake: Fx.mon(7), leaveBy: nil, firstCommitment: nil, reason: "")
+        return Plan(generatedAt: Fx.mon(7), blocks: [study, wind, sleep], warnings: [], shortfalls: [:], sleepTradeoffMinutes: 0,
+                    loadFactor: 1, wakePlans: [wake])
+    }
+
+    func told(_ t: String, _ a: Date, _ b: Date?) -> Entry {
+        Entry(title: t, start: a, end: b, category: CategoryTree.free, source: .you, createdAt: b ?? a)
+    }
+
+    func x(_ now: Date, _ entries: [Entry], log: PromptLog = PromptLog()) -> TrackPromptInput {
+        TrackPromptInput(now: now, calendar: cal, entries: Fx.timetable.filter { $0.title == "School" } + entries, plan: plan(), log: log,
+                         buttons: ["Shower", "Gaming", "Homework", "Walk"])
+    }
+
+    func testFirstAt25MinutesThenEvery30() {
+        // School ends 15:00; nothing tracked after. At 15:10 the first prompt is set for 15:25, then 15:55.
+        let p = TrackPrompts.plan(x(Fx.mon(15, 10), []))
+        let live = p.filter { $0.id.hasPrefix("track.live") }
+        XCTAssertEqual(live.map(\.at), [Fx.mon(15, 25), Fx.mon(15, 55)])
+        XCTAssertEqual(live[0].title, "What are you up to?")
+        XCTAssertEqual(live[0].actions, ["Shower", "Gaming", "Homework"])
+        XCTAssertTrue(live[0].body.contains("since 15:00"))
+    }
+
+    func testCountsFromWhatEndsLaterAndSkipsQuietTimes() {
+        // At 13:00 school covers until 15:00: the prompts are already lined up after it.
+        XCTAssertEqual(TrackPrompts.plan(x(Fx.mon(13), [])).filter { $0.id.hasPrefix("track.live") }.map(\.at),
+                       [Fx.mon(15, 25), Fx.mon(15, 55)])
+        // Gaming 18:00–18:40, then the planned essay at 19:00 and wind-down: nothing to ask at 19:05 (study) or 21:40.
+        let p = TrackPrompts.plan(x(Fx.mon(18, 50), [told("Gaming", Fx.mon(18), Fx.mon(18, 40))]))
+        XCTAssertTrue(p.filter { $0.id.hasPrefix("track.live") }.allSatisfy { !(Fx.mon(19)..<Fx.mon(19, 45)).contains($0.at) })
+        let late = TrackPrompts.plan(x(Fx.mon(21, 20), [told("TV", Fx.mon(20), Fx.mon(21, 15))]))
+        XCTAssertTrue(late.filter { $0.id.hasPrefix("track.live") }.isEmpty, "wind-down and sleep are quiet")
+    }
+
+    func testRunningEntryMeansNoPromptAndStartingCancels() {
+        let p = TrackPrompts.plan(x(Fx.mon(16), [told("Gaming", Fx.mon(15, 30), nil)]))
+        XCTAssertTrue(p.filter { $0.id.hasPrefix("track.live") }.isEmpty)
+    }
+
+    func testTwoIgnoredStopsItForTheDay() {
+        var log = PromptLog()
+        log.asked = [.init(at: Fx.mon(15, 25), stretchStart: Fx.mon(15), past: false), .init(at: Fx.mon(15, 55), stretchStart: Fx.mon(15), past: false)]
+        XCTAssertTrue(TrackPrompts.plan(x(Fx.mon(16, 10), [], log: log)).filter { $0.id.hasPrefix("track.live") }.isEmpty)
+        log.answered = [Fx.mon(16)]
+        XCTAssertFalse(TrackPrompts.plan(x(Fx.mon(16, 10), [], log: log)).filter { $0.id.hasPrefix("track.live") }.isEmpty,
+                       "an answer resets it")
+        XCTAssertEqual(log.ignoredInARow(now: Fx.mon(16, 10, plusDays: 1), calendar: cal), 0, "a new day starts fresh")
+    }
+
+    func testPastStretchIsAskedOnceInThePastTense() {
+        let es = [told("Homework", Fx.mon(16, 30), Fx.mon(17, 30))]
+        let p = TrackPrompts.plan(x(Fx.mon(17, 40), es))
+        let past = p.first { $0.id == "track.past" }
+        XCTAssertEqual(past?.title, "Nothing logged 15:00–16:30")
+        XCTAssertEqual(past?.window, DateInterval(start: Fx.mon(15), end: Fx.mon(16, 30)))
+        var log = PromptLog()
+        log.asked = [.init(at: Fx.mon(17, 41), stretchStart: Fx.mon(15), past: true)]
+        XCTAssertNil(TrackPrompts.plan(x(Fx.mon(17, 50), es, log: log)).first { $0.id == "track.past" })
+    }
+
+    func testSleepQuestionOnlyWhenNothingMeasuredIt() {
+        let est = Entry(title: "Sleep", start: Fx.mon(23, 20, plusDays: -1), end: Fx.mon(7, 5), category: CategoryTree.sleep, source: .sensor)
+        let q = TrackPrompts.sleepQuestion(entries: [est], now: Fx.mon(8), log: PromptLog(), calendar: cal)
+        XCTAssertEqual(q?.title, "Slept about 23:20–7:05?")
+        XCTAssertEqual(q?.at, Fx.mon(10))
+        let health = Entry(title: "Sleep", start: Fx.mon(23, plusDays: -1), end: Fx.mon(7), category: CategoryTree.sleep, source: .health)
+        XCTAssertNil(TrackPrompts.sleepQuestion(entries: [est, health], now: Fx.mon(8), log: PromptLog(), calendar: cal))
+        var log = PromptLog(); log.sleepAnswered = ["2026-11-16"]
+        XCTAssertNil(TrackPrompts.sleepQuestion(entries: [est], now: Fx.mon(8), log: log, calendar: cal))
+        XCTAssertNil(TrackPrompts.sleepQuestion(entries: [est], now: Fx.mon(11), log: PromptLog(), calendar: cal), "past 10:00")
+    }
+
+    func testRunningNotificationCountsUp() {
+        let e = Entry(title: "Shower", start: Fx.mon(21), end: nil, category: "essentials.shower", source: .you)
+        let n = TrackPrompts.running(e, tree: CategoryTree(), goalLine: nil, now: Fx.mon(21, 5))
+        XCTAssertEqual(n.count, 13)
+        XCTAssertEqual(n[0].body, "5m · Essentials › Shower")
+        XCTAssertEqual(n[1].body, "15m · Essentials › Shower")
+        XCTAssertTrue(TrackPrompts.running(nil, tree: CategoryTree(), goalLine: nil, now: Fx.mon(21)).isEmpty)
     }
 }

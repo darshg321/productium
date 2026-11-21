@@ -11,23 +11,12 @@ struct ThinksView: View {
                 NavigationLink { ChangesView() } label: {
                     LabeledContent("Changes", value: "\(model.state.changes.applied.count)")
                 }
+                NavigationLink("Study Settings") { StudySettings() }
+                NavigationLink { TaxonomyRunsView() } label: {
+                    LabeledContent("Category Tidy-Ups", value: "\(model.state.taxonomy.runs.filter { !$0.reverted }.count)")
+                }
             } footer: {
                 Text("What Productium adjusted about how it plans and reminds you, from how your weeks went. Each one can be undone.")
-            }
-            if !model.state.alarmRules.isEmpty {
-                Section {
-                    ForEach(model.state.alarmRules) { r in
-                        Toggle(isOn: Binding(get: { r.enabled }, set: { model.setAlarmRule(r.id, enabled: $0) })) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(r.summary(items: model.state.items, calendar: .current))
-                                Text(r.source == .reflection ? "Added by Productium" : "You asked for it").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .swipeActions { Button("Remove", role: .destructive) { model.removeAlarmRule(r.id) } }
-                    }
-                } header: { Text("Alarms You or Productium Added") } footer: {
-                    Text("These are on top of the wake-up, bedtime and leave-by alarms. Ask the box to move or remove any of them.")
-                }
             }
             let reminders = model.state.policy.intentions.filter { $0.byStudent == true }
             if !reminders.isEmpty {
@@ -55,10 +44,11 @@ struct ThinksView: View {
                 }
             }
             Section {
-                ForEach(Beliefs.routines(model.state.routines)) { BeliefRow(belief: $0) }
+                ForEach(Beliefs.routines(model.routines)) { BeliefRow(belief: $0) }
                 ForEach(beliefs.group("routines")) { BeliefRow(belief: $0) }
-                NavigationLink("Turn Routines On or Off") { RoutineSettings() }
-            } header: { Text("Routines") }
+            } header: { Text("Routines") } footer: {
+                Text("Learned from what you log. Tell the box your own routine (\"I get ready 7:00 to 7:40\") and that's used instead.")
+            }
             ForEach(beliefs.groups.filter { !["routines", "places", "scrolling", "patterns"].contains($0.id) }) { g in
                 let rows = beliefs.group(g.id)
                 if !rows.isEmpty || g.createdBy != "app" {
@@ -70,8 +60,9 @@ struct ThinksView: View {
                 }
             }
             Section("Places") {
-                if model.state.places.isEmpty { Text("None saved yet.").foregroundStyle(.secondary) }
-                ForEach(model.state.places) { p in LabeledContent(p.name, value: "\(Int(p.radius)) m") }
+                let named = model.state.placeBook.places.filter { $0.name != nil }
+                if named.isEmpty { Text("None named yet. Tell the box where you are: “this is the library”.").foregroundStyle(.secondary) }
+                ForEach(named) { p in LabeledContent(p.title, value: p.named?.rawValue ?? "") }
             }
             Section("Scrolling") {
                 let log = Friction.log
@@ -139,8 +130,6 @@ struct BeliefDetail: View {
                 }
                 if model.state.beliefs[id] != nil {
                     Button("Reset to the Starting Assumption", role: .destructive) { model.state.beliefs.reset(id) }
-                } else if b.group == "routines" {
-                    Button("Reset to the Starting Assumption", role: .destructive) { model.resetRoutine(b.key) }
                 }
             } footer: {
                 Text("Correct… opens the Inbox with this filled in, so you only add the number.")

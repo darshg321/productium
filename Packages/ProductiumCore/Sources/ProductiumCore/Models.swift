@@ -44,6 +44,21 @@ public struct TimeOfDay: Codable, Hashable, Comparable, Sendable {
     public static func < (a: TimeOfDay, b: TimeOfDay) -> Bool { a.minutesFromMidnight < b.minutesFromMidnight }
 
     public var label: String { String(format: "%d:%02d", hour, minute) }
+
+    enum CodingKeys: String, CodingKey { case hour, minute }
+
+    /// `{hour, minute}`, or "HH:mm" / "9pm" as the model sometimes writes it.
+    public init(from decoder: Decoder) throws {
+        if let s = try? decoder.singleValueContainer().decode(String.self) {
+            guard let t = ClockText.timeOfDay(s) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "not a time: \(s)"))
+            }
+            self = t
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(try c.decode(Int.self, forKey: .hour), (try? c.decode(Int.self, forKey: .minute)) ?? 0)
+    }
 }
 
 public enum TaskKind: String, Codable, CaseIterable, Sendable {
@@ -314,10 +329,20 @@ public struct HealthDay: Codable, Hashable, Sendable {
     /// Apple's exercise minutes (rings), and the minutes of logged workouts. v1.1 H3.
     public var exerciseMinutes: Int?
     public var workoutMinutes: Int?
+    /// v1.2 A5: which source the night came from ("Apple Watch", "iPhone (in bed, no stages)").
+    public var sleepDevice: String?
+    /// v1.2 A5: daytime sleep (each ≥20 minutes), apart from the night.
+    public var naps: [DateInterval]?
+    /// v1.2 M8: heart-rate variability (SDNN, ms), the day's average.
+    public var hrv: Double?
 
     public init(day: Date, steps: Int? = nil, sleepMinutes: Int? = nil, bedtime: Date? = nil,
                 wake: Date? = nil, daylightMinutes: Int? = nil, restingHeartRate: Double? = nil, sleepSource: SleepSource? = nil,
-                exerciseMinutes: Int? = nil, workoutMinutes: Int? = nil) {
+                exerciseMinutes: Int? = nil, workoutMinutes: Int? = nil, sleepDevice: String? = nil, naps: [DateInterval]? = nil,
+                hrv: Double? = nil) {
+        self.sleepDevice = sleepDevice
+        self.naps = naps
+        self.hrv = hrv
         self.exerciseMinutes = exerciseMinutes
         self.workoutMinutes = workoutMinutes
         self.sleepSource = sleepSource

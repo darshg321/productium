@@ -10,7 +10,6 @@ final class ExportTests: XCTestCase {
         let task = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 4), completedMinutes: 30)
         s.items = [task]
         s.entries = Fx.timetable
-        s.routines[1].samples = [14]
         s.moods = [MoodEntry(at: now, mood: 4)]
         s.progress = [ProgressEntry(at: now, itemId: task.id, minutes: 30, from: 0, to: 30, source: .task)]
         s.health = [HealthDay(day: Fx.mon(0), steps: 4000)]
@@ -20,8 +19,26 @@ final class ExportTests: XCTestCase {
         s.policy.maxBlockMinutes = 45
         _ = s.beliefs.state("study.schoolDayCapacity", 120, now: now)
         s.taper.baselineMinutes = 130
-        s.flashcards = [Flashcard(itemId: task.id, subject: nil, front: "Q", back: "A")]
-        s.reads = [ReadPiece(title: "T", body: "B", subject: nil, question: "Q", source: "Claude")]
+        // v1.2 (B6 / E5): the log, the tree, places, the location history and everything that learns.
+        let math = s.categories.add("Math", under: CategoryTree.studying, yours: true)!
+        s.entries.append(Entry(title: "Math homework", start: Fx.mon(16), end: Fx.mon(17), category: math.id, topics: ["math"],
+                               marks: ["2026-11-16": .confirmed], source: .you, createdAt: now))
+        s.rules = [Rule(text: "No study after 9:45", limits: PlannerLimits(noStudyAfter: TimeOfDay(21, 45)), createdAt: now)]
+        s.dayPlans = ["2026-11-16": [task.id: 40]]
+        s.goals = [Goal(title: "Studying", measure: .category(CategoryTree.studying), period: .day, target: 120, createdAt: now)]
+        s.placeBook.cluster([PlaceVisit(latitude: 43.6, longitude: -79.4, arrival: now, departure: now.addingTimeInterval(3600))], now: now)
+        s.trace.add(TracePoint(at: now, latitude: 43.6, longitude: -79.4, accuracy: 30))
+        s.trace.add(PlaceVisit(latitude: 43.6, longitude: -79.4, arrival: now, departure: now.addingTimeInterval(3600)))
+        s.quickStarts.noteStart(Entry(title: "Shower", start: now, end: nil, category: "essentials.shower", source: .you), at: now)
+        s.categoryRules.correct("Shower", from: CategoryTree.other, to: "essentials.shower", at: now)
+        s.outbox.add("gym with sam", source: .notification, at: now)
+        s.prompts.asked = [.init(at: now, stretchStart: now, past: false)]
+        s.taskHistory.add(TaskHistory.record(task, cleared: true, why: "no time", entries: [], now: now, calendar: Fx.cal))
+        s.inference.learner.answered(.walk, yes: true)
+        s.inference.alarmStops = [AlarmStop(ringAt: now, stoppedAt: now.addingTimeInterval(600))]
+        s.approvals = [Approval(ops: [BoxOp(.entry, .add, BoxFields(title: "Wake", start: "06:40", alert: "alarm"))], why: "alarm",
+                                source: .insight, at: now)]
+        s.pinnedCharts = [PinnedChart(title: "Math", query: TimeQuery(id: "q1", range: .init(last: "28d"), filter: .init(categories: ["School › Math"])), pinnedAt: now)]
         s.plan = Planner.plan(Fx.input(now: Fx.mon(7), items: [task]))
         s.places = [SavedPlace(id: "home", name: "Home", latitude: 43.6, longitude: -79.4)]
         s.integrations.health = true
@@ -34,7 +51,6 @@ final class ExportTests: XCTestCase {
                                reply: "Hello", applied: AppliedReport(changes: ["Added Essay"])))
         s.conversation = c
         s.archive.archive(c, now: now)
-        s.gaps = GapLog(asked: [AskedGap(start: now, end: now.addingTimeInterval(3000), askedAt: now, answer: "gym", activity: "exercise")])
         s.appOpens = [now]
         s.insightAt = now
         s.rewardSettings = RewardSettings(level: .subtle, surpriseRate: 0.1)

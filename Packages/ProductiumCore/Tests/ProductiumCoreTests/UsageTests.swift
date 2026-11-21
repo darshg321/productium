@@ -13,16 +13,16 @@ final class UsageTests: XCTestCase {
         var l = UsageLedger()
         l.dailyBudget = 1000
         l.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(input: 5000, output: 400, cacheRead: 900)))
-        l.record(UsageRecord(at: now, feature: .flashcards, model: "sonnet", tokens: TokenCount(input: 200, output: 150, cacheWrite: 800)))
+        l.record(UsageRecord(at: now, feature: .taxonomy, model: "sonnet", tokens: TokenCount(input: 200, output: 150, cacheWrite: 800)))
         l.record(UsageRecord(at: now.addingTimeInterval(-2 * 86400), feature: .box, model: "sonnet", tokens: TokenCount(input: 9000, output: 90)))
         XCTAssertEqual(l.total(on: now, calendar: cal).counted, 550)
         XCTAssertEqual(l.total(lastDays: 7, now: now, calendar: cal).counted, 640)
         XCTAssertEqual(l.byFeature(on: now, calendar: cal).map(\.tokens), [400, 150])
         XCTAssertEqual(l.byFeature(on: now, calendar: cal).first?.feature, .box)
         XCTAssertEqual(l.fractionUsed(now: now, calendar: cal), 0.55, accuracy: 0.001)
-        XCTAssertTrue(l.allows(.reads, now: now, calendar: cal), "20k tokens read, but only 550 written")
+        XCTAssertTrue(l.allows(.taxonomy, now: now, calendar: cal), "20k tokens read, but only 550 written")
         l.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(input: 60, output: 450)))
-        XCTAssertFalse(l.allows(.reads, now: now, calendar: cal), "background AI pauses over budget")
+        XCTAssertFalse(l.allows(.taxonomy, now: now, calendar: cal), "background AI pauses over budget")
         XCTAssertTrue(l.allows(.box, now: now, calendar: cal), "the box always works")
         XCTAssertEqual(l.daily(lastDays: 3, now: now, calendar: cal).map(\.tokens), [90, 0, 1000])
     }
@@ -51,7 +51,7 @@ final class UsageTests: XCTestCase {
 
     func testRequestEncodesMessagesAPIShape() throws {
         let req = AIRequest(system: "s", messages: [AIMessage(role: "user", content: "hi")],
-                            schema: Schemas.cards, maxTokens: 300, cacheTTL: 60)
+                            schema: Schemas.decomposition, maxTokens: 300, cacheTTL: 60)
         let obj = try JSONSerialization.jsonObject(with: JSONEncoder().encode(req)) as! [String: Any]
         XCTAssertEqual(obj["model"] as? String, "sonnet")
         XCTAssertEqual(obj["max_tokens"] as? Int, 300)
@@ -83,5 +83,13 @@ final class RoutingTests: XCTestCase {
                             effort: AIFeature.review.route.effort)
         let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(req)) as! [String: Any]
         XCTAssertEqual((json["output_config"] as? [String: Any])?["effort"] as? String, "low")
+    }
+
+    func testRetiredFeaturesInOldRecordsStillDecode() throws {
+        let old = #"{"at": 0, "feature": "flashcards", "model": "sonnet", "tokens": {"input": 1, "output": 2, "cacheRead": 0, "cacheWrite": 0}}"#
+        let r = try JSONDecoder().decode(UsageRecord.self, from: Data(old.utf8))
+        XCTAssertEqual(r.feature, .review, "counted with the background budget's history")
+        let reads = try JSONDecoder().decode(UsageRecord.self, from: Data(old.replacingOccurrences(of: "flashcards", with: "reads").utf8))
+        XCTAssertEqual(reads.feature, .review)
     }
 }

@@ -17,40 +17,27 @@ public enum AlarmPlanner {
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
-    public static func wakeTitle(_ w: WakePlan, timeLabel: (Date) -> String) -> String {
-        w.leaveBy.map { "Leave by \(timeLabel($0))" } ?? "Good morning"
+    /// The whole wanted list: alarms Entries asked for (the wake alarm is the planned Sleep's `alert`, O4), plus
+    /// bedtime / leave / missed-start (Alarms for the Important Ones). An off toggle means none of its alarms, so
+    /// they get cancelled. Entries' alarms ring only once approved (Part J): `EntryAlerts.alarms` drops the rest.
+    public static func desired(_ input: NudgeInput, entryAlarms: [PlannedAlarm] = [],
+                               timeLabel: ((Date) -> String)? = nil) -> [PlannedAlarm] {
+        var out: [PlannedAlarm] = []
+        var taken = Set<Int>()
+        // Entry alarms first: a wake alarm at the minute of a leave alarm is the same alarm.
+        for a in entryAlarms.sorted(by: { ($0.at, $0.key) < ($1.at, $1.key) }) where a.at > input.now && taken.insert(minute(a.at)).inserted {
+            out.append(a)
+        }
+        for a in NudgePlanner.alarms(input) where taken.insert(minute(a.at)).inserted { out.append(a) }
+        return out.sorted { ($0.at, $0.key) < ($1.at, $1.key) }
     }
 
-    /// The whole wanted list: wake alarms (Wake-Up Alarms) plus bedtime / leave / missed-start
-    /// (Alarms for the Important Ones). Either toggle off means none of its alarms, so they get cancelled.
-    public static func desired(_ input: NudgeInput, wake: Bool, entryAlarms: [PlannedAlarm] = [],
-                               timeLabel: ((Date) -> String)? = nil) -> [PlannedAlarm] {
-        let label = timeLabel ?? input.timeLabel ?? { NudgePlanner.clock($0, input.calendar) }
-        var out: [PlannedAlarm] = []
-        if wake {
-            let upcoming = input.plan.wakePlans.filter { $0.wake > input.now }.sorted { $0.wake < $1.wake }
-            var seen = Set<String>()
-            for w in upcoming {
-                let key = "wake.\(dayKey(w.wake, input.calendar))"
-                guard seen.insert(key).inserted else { continue }
-                out.append(PlannedAlarm(key: key, kind: .wake, at: w.wake, title: wakeTitle(w, timeLabel: label)))
-                if out.count == wakeCount { break }
-            }
-        }
-        var nudges = NudgePlanner.alarms(input)
-        // A wake alarm already rings at that minute: a second one is noise.
-        let wakeMinutes = Set(out.map { minute($0.at) })
-        nudges.removeAll { wakeMinutes.contains(minute($0.at)) }
-        let all = AlarmRules.apply(out + nudges, rules: input.alarmRules, items: input.items, plan: input.plan, dayRules: input.dayRules,
-                                   now: input.now, calendar: input.calendar, startedBlock: input.startedBlockId, label: label)
-        // Alarms an Entry asked for (`EntryAlerts`). One at the minute of another alarm is noise (a Sleep entry's wake
-        // alarm and the planner's own wake alarm are the same alarm until the separate wake path goes, O4).
-        var taken = Set(all.map { minute($0.at) })
-        var extra: [PlannedAlarm] = []
-        for a in entryAlarms.sorted(by: { ($0.at, $0.key) < ($1.at, $1.key) }) where a.at > input.now && taken.insert(minute(a.at)).inserted {
-            extra.append(a)
-        }
-        return (all + extra).sorted { $0.at < $1.at }
+    /// The next `wakeCount` days of entry alarms (wake alarms and the ones you set), as the device should have them.
+    public static func entryAlarms(_ entries: [Entry], now: Date, allowed: Bool, wake: Bool, book: DayRuleBook = DayRuleBook(),
+                                   calendar cal: Calendar) -> [PlannedAlarm] {
+        let soon = DateInterval(start: now, duration: Double(wakeCount) * 86400)
+        let wanted = entries.filter { wake || !($0.source == .plan && $0.category == CategoryTree.sleep) }
+        return EntryAlerts.alarms(Days.expand(wanted, in: soon, now: now, book: book, calendar: cal), now: now, allowed: allowed)
     }
 
     static func minute(_ d: Date) -> Int { Int((d.timeIntervalSince1970 / 60).rounded(.down)) }

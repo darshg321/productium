@@ -5,14 +5,13 @@ import ProductiumCore
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var tab = 0
-    @State private var showGap = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
             if model.state.onboarded {
                 TabView(selection: $tab) {
-                    TodayView(showGap: $showGap)
+                    TodayView()
                         .tabItem { Label("Today", systemImage: "sun.max.fill") }.tag(0)
                     ScheduleView()
                         .tabItem { Label("Schedule", systemImage: "calendar.day.timeline.left") }.tag(1)
@@ -60,16 +59,13 @@ struct RootView: View {
         }
         .animation(.spring(duration: 0.35), value: model.toast)
         .animation(.spring(duration: 0.35), value: model.rewardMoment)
-        .sheet(isPresented: $showGap) { GapView() }
-        .fullScreenCover(isPresented: Binding(get: { model.focus != nil }, set: { _ in })) { FocusView() }
         .onChange(of: model.deepLink) { _, link in open(link) }
         .onAppear { open(model.deepLink) }
     }
 
     private func open(_ link: String?) {
         guard let link, model.state.onboarded else { return }
-        if link.hasPrefix("productium://gap") { showGap = true }
-        else if link.hasPrefix("productium://week") || link.hasPrefix("productium://schedule") { tab = 1 }
+        if link.hasPrefix("productium://week") || link.hasPrefix("productium://schedule") { tab = 1 }
         else if link.hasPrefix("productium://tasks") { tab = 2 }
         else if link.hasPrefix("productium://review") { tab = 3 }
         else if link.hasPrefix("productium://settings") { tab = 4 }

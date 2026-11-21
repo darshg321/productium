@@ -3,67 +3,60 @@ import UserNotifications
 import ProductiumCore
 
 enum NotificationService {
-    static let blockCategory = "BLOCK_END"
-    static let startCategory = "BLOCK_START"
-    static let leadCategory = "LEAD_UP"
-    static let checkInCategory = "CHECK_IN"
-    static let markerCategory = "MARKER"
-    static let scrollCategory = "SCROLL"
-    static let deadlineCategory = "DEADLINE"
-    static let gapCategory = "GAP"
+    static let scrollCategory = NotificationCategory.scroll.rawValue
+    /// N7: a plan-vs-reality question ("You're home, but school's on until 3") has its own fixed answers.
+    static let planQuestionCategory = "QUESTION_PLAN"
 
-    static func register() {
-        let done = UNNotificationAction(identifier: "done", title: "Done ✓", options: [])
-        let partial = UNNotificationAction(identifier: "partial", title: "Partly", options: [])
-        let skipped = UNNotificationAction(identifier: "skipped", title: "Didn't get to it", options: [])
-        let block = UNNotificationCategory(identifier: blockCategory, actions: [done, partial, skipped], intentIdentifiers: [], options: [])
+    /// The last start buttons offered on "What are you up to?" (its actions are re-registered with them).
+    private static var buttons: [String] = []
 
-        let startNow = UNNotificationAction(identifier: "focus.start", title: "Start Focus", options: [.foreground],
-                                            icon: UNNotificationActionIcon(systemImageName: "play.fill"))
-        let snooze = UNNotificationAction(identifier: "focus.snooze", title: "In 10 Minutes", options: [],
-                                          icon: UNNotificationActionIcon(systemImageName: "clock.arrow.circlepath"))
-        let cant = UNNotificationAction(identifier: "focus.cant", title: "Can't Today", options: [.destructive],
-                                        icon: UNNotificationActionIcon(systemImageName: "arrow.uturn.forward"))
-        let start = UNNotificationCategory(identifier: startCategory, actions: [startNow, snooze, cant], intentIdentifiers: [], options: [])
-        let early = UNNotificationAction(identifier: "focus.start", title: "Start Now", options: [.foreground],
-                                         icon: UNNotificationActionIcon(systemImageName: "play.fill"))
-        let lead = UNNotificationCategory(identifier: leadCategory, actions: [early], intentIdentifiers: [], options: [])
-
-        let reply = UNTextInputNotificationAction(identifier: "reply", title: "Reply", options: [],
-                                                  textInputButtonTitle: "Send", textInputPlaceholder: "e.g. good day, bio quiz thursday")
-        let great = UNNotificationAction(identifier: "mood5", title: "😊 Good", options: [])
-        let ok = UNNotificationAction(identifier: "mood3", title: "😐 Okay", options: [])
-        let low = UNNotificationAction(identifier: "mood1", title: "😔 Rough", options: [])
-        let checkIn = UNNotificationCategory(identifier: checkInCategory, actions: [reply, great, ok, low], intentIdentifiers: [], options: [])
-        let yes = UNNotificationAction(identifier: "marker.yes", title: "Yes", options: [])
-        let marker = UNNotificationCategory(identifier: markerCategory, actions: [yes], intentIdentifiers: [], options: [])
-
-        let still = UNNotificationAction(identifier: "scroll.yes", title: "Yes", options: [])
-        let stop = UNNotificationAction(identifier: "scroll.stop", title: "No, I Stopped", options: [])
-        let showMe = UNNotificationAction(identifier: "scroll.gap", title: "Something Better", options: [.foreground])
-        let scroll = UNNotificationCategory(identifier: scrollCategory, actions: [still, stop, showMe], intentIdentifiers: [], options: [])
-
-        let finished = UNNotificationAction(identifier: "item.done", title: "It's Done", options: [])
-        let workNow = UNNotificationAction(identifier: "item.focus", title: "Work on It Now", options: [.foreground])
-        let deadline = UNNotificationCategory(identifier: deadlineCategory, actions: [workNow, finished], intentIdentifiers: [], options: [])
-
-        let gapReply = UNTextInputNotificationAction(identifier: "gap.reply", title: "Answer", options: [],
-                                                     textInputButtonTitle: "Send", textInputPlaceholder: "e.g. gym, homework, with friends")
-        let gap = UNNotificationCategory(identifier: gapCategory, actions: [gapReply], intentIdentifiers: [], options: [])
-
-        UNUserNotificationCenter.current().setNotificationCategories([block, start, lead, checkIn, marker, scroll, deadline, gap])
+    /// Categories, with the current top start buttons as the untracked prompt's one-tap answers (A8: every question
+    /// has a text field *and* one-tap answers).
+    static func register(buttons new: [String]? = nil) {
+        if let new { buttons = Array(new.prefix(3)) }
+        func a(_ id: String, _ title: String, _ symbol: String? = nil, foreground: Bool = false, destructive: Bool = false) -> UNNotificationAction {
+            var o: UNNotificationActionOptions = []
+            if foreground { o.insert(.foreground) }
+            if destructive { o.insert(.destructive) }
+            return UNNotificationAction(identifier: id, title: title, options: o, icon: symbol.map { UNNotificationActionIcon(systemImageName: $0) })
+        }
+        func text(_ id: String, _ title: String, _ placeholder: String) -> UNTextInputNotificationAction {
+            UNTextInputNotificationAction(identifier: id, title: title, options: [], textInputButtonTitle: "Send", textInputPlaceholder: placeholder)
+        }
+        func cat(_ c: NotificationCategory, _ actions: [UNNotificationAction]) -> UNNotificationCategory {
+            UNNotificationCategory(identifier: c.rawValue, actions: actions, intentIdentifiers: [], options: [])
+        }
+        let start = cat(.start, [a("focus.start", "Start", "play.fill"), a("focus.snooze", "10 Min Later", "clock.arrow.circlepath"),
+                                  a("task.notToday", "Not Today", "arrow.uturn.forward", destructive: true)])
+        let lead = cat(.lead, [a("focus.start", "Start Now", "play.fill")])
+        let checkIn = cat(.checkIn, [text("reply", "Reply", "e.g. good day, bio quiz thursday"), a("mood5", "😊 Good"), a("mood3", "😐 Okay"),
+                                     a("mood1", "😔 Rough")])
+        let scroll = cat(.scroll, [a("scroll.yes", "Yes"), a("scroll.stop", "No, I Stopped"), a("scroll.gap", "Something Better", foreground: true)])
+        let deadline = cat(.deadline, [a("item.focus", "Start It Now", "play.fill"), a("item.done", "It's Done", "checkmark")])
+        let untracked = cat(.untracked, buttons.enumerated().map { a("track.\($0.offset)", $0.element) }
+                            + [text("track.reply", "Something Else", "e.g. gym with Sam, homework")])
+        let sleep = cat(.sleepConfirm, [a("sleep.yes", "Yes"), text("sleep.reply", "Change", "e.g. 11:40 to 7:10")])
+        let question = cat(.question, [a("q.yes", "Yes"), text("q.reply", "Something Else", "What happened?")])
+        let planQ = UNNotificationCategory(identifier: planQuestionCategory, actions: [
+            a("q.sick", "Sick"), a("q.noSchool", "No School Today"), a("q.skipped", "Skipped"),
+            text("q.reply", "Something Else", "What happened?"),
+        ], intentIdentifiers: [], options: [])
+        let running = cat(.running, [a("run.stop", "Done", "stop.fill"), text("run.switch", "Switch", "What are you doing now?")])
+        UNUserNotificationCenter.current().setNotificationCategories([start, lead, checkIn, scroll, deadline, untracked, sleep,
+                                                                      question, planQ, running])
     }
 
     static func requestAuthorization() async -> Bool {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
     }
 
+    /// Replaces everything Productium scheduled (plan nudges, tracking prompts, the running notification).
     static func schedule(_ nudges: [PlannedNudge]) {
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { pending in
-            let ours = pending.map(\.identifier).filter { $0.hasPrefix("plan.") }
+            let ours = pending.map(\.identifier).filter { $0.hasPrefix("plan.") || $0.hasPrefix("track.") || $0.hasPrefix("running.") }
             center.removePendingNotificationRequests(withIdentifiers: ours)
-            for n in nudges { add(center, n.id, content(n), at: n.at) }
+            for n in nudges { add(center, n.id, content(n), at: n.at, sound: n.kind != .running) }
         }
     }
 
@@ -71,26 +64,39 @@ enum NotificationService {
         let c = UNMutableNotificationContent()
         c.title = n.title
         c.body = n.body
-        var info: [String: String] = [:]
+        var info: [String: Any] = ["kind": n.kind.rawValue, "question": n.title]
         if let b = n.blockId { info["blockId"] = b.uuidString }
         if let i = n.itemId { info["itemId"] = i.uuidString }
-        if let m = n.marker { info["marker"] = m }
         if let d = n.deeplink { info["deeplink"] = d }
-        info["kind"] = n.kind.rawValue
+        if let w = n.window { info["start"] = w.start.timeIntervalSince1970; info["end"] = w.end.timeIntervalSince1970 }
+        if !n.actions.isEmpty { info["actions"] = n.actions }
         c.userInfo = info
-        switch n.kind {
-        case .start, .followUp: c.categoryIdentifier = startCategory
-        case .leadUp: c.categoryIdentifier = leadCategory
-        case .end: c.categoryIdentifier = blockCategory
-        case .checkIn: c.categoryIdentifier = checkInCategory
-        case .marker: c.categoryIdentifier = markerCategory
-        case .deadline: c.categoryIdentifier = deadlineCategory
-        default: break
-        }
+        if let cat = n.kind.category { c.categoryIdentifier = cat.rawValue }
+        if n.kind == .question, n.id.hasPrefix("q.plan") { c.categoryIdentifier = planQuestionCategory }
         if let b = n.blockId { c.threadIdentifier = b.uuidString }
-        c.interruptionLevel = .active
+        if n.kind == .running { c.threadIdentifier = "running" }
+        c.interruptionLevel = n.kind == .running ? .passive : .active
         c.relevanceScore = n.urgent ? 0.9 : 0.4
         return c
+    }
+
+    /// A quiet answer to a reply typed into a notification (A9): what was logged, or that it's saved for later.
+    static func receipt(_ title: String, body: String?) {
+        let c = UNMutableNotificationContent()
+        c.title = title
+        if let body { c.body = body }
+        c.interruptionLevel = .passive
+        c.threadIdentifier = "receipts"
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "receipt.\(UUID().uuidString)", content: c, trigger: nil))
+    }
+
+    /// Drops delivered tracking prompts and running notices (after an answer, a start or a stop).
+    static func clearDelivered(prefixes: [String]) {
+        let center = UNUserNotificationCenter.current()
+        center.getDeliveredNotifications { delivered in
+            let ids = delivered.map(\.request.identifier).filter { id in prefixes.contains { id.hasPrefix($0) } }
+            center.removeDeliveredNotifications(withIdentifiers: ids)
+        }
     }
 
     static func snooze(blockId: UUID, title: String, minutes: Int = 10) {
@@ -99,7 +105,7 @@ enum NotificationService {
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = "Snoozed. Start now, or tap Can't Today and it moves to a better slot."
-        c.categoryIdentifier = startCategory
+        c.categoryIdentifier = NotificationCategory.start.rawValue
         c.userInfo = ["blockId": blockId.uuidString, "deeplink": "productium://now", "kind": "snooze"]
         c.threadIdentifier = blockId.uuidString
         c.interruptionLevel = .active
@@ -116,8 +122,8 @@ enum NotificationService {
             center.removePendingNotificationRequests(withIdentifiers: ids)
         }
         center.getDeliveredNotifications { delivered in
-            let ids = delivered.filter { ($0.request.content.userInfo["blockId"] as? String) == blockId.uuidString
-                && ($0.request.content.userInfo["kind"] as? String) != NudgeKind.end.rawValue }.map(\.request.identifier)
+            let ids = delivered.filter { ($0.request.content.userInfo["blockId"] as? String) == blockId.uuidString }
+                .map(\.request.identifier)
             center.removeDeliveredNotifications(withIdentifiers: ids)
         }
     }
@@ -159,25 +165,12 @@ enum NotificationService {
         }
     }
 
-    private static func add(_ center: UNUserNotificationCenter, _ id: String, _ content: UNMutableNotificationContent, at date: Date) {
-        content.sound = .default
+    private static func add(_ center: UNUserNotificationCenter, _ id: String, _ content: UNMutableNotificationContent, at date: Date,
+                            sound: Bool = true) {
+        if sound { content.sound = .default }
         let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
         center.add(UNNotificationRequest(identifier: id, content: content,
                                          trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
-    }
-
-    static func scheduleGapQuestion(_ question: String, start: Date, end: Date, at date: Date) {
-        cancelGapQuestion()
-        let c = UNMutableNotificationContent()
-        c.title = question
-        c.body = "One line is enough. It fills in your day."
-        c.categoryIdentifier = gapCategory
-        c.userInfo = ["kind": "gap", "start": start.timeIntervalSince1970, "end": end.timeIntervalSince1970]
-        add(UNUserNotificationCenter.current(), "gap.next", c, at: date)
-    }
-
-    static func cancelGapQuestion() {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["gap.next"])
     }
 
     static func notify(_ title: String, _ body: String, deeplink: String? = nil, blockId: UUID? = nil) {
@@ -187,7 +180,7 @@ enum NotificationService {
         c.sound = .default
         var info: [String: String] = [:]
         if let deeplink { info["deeplink"] = deeplink }
-        if let blockId { info["blockId"] = blockId.uuidString; c.categoryIdentifier = startCategory }
+        if let blockId { info["blockId"] = blockId.uuidString; c.categoryIdentifier = NotificationCategory.start.rawValue }
         c.userInfo = info
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
     }

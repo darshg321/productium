@@ -109,7 +109,7 @@ public enum BoxSchema {
         "repeats": anyObject, "from": str, "until": str, "open": bool, "alert": str, "task": str,
         "due": str, "minutes": int, "kind": Schemas.strEnum(TaskKind.allCases.map(\.rawValue)), "difficulty": int,
         "importance": int, "maxMinutesPerDay": int, "firstStep": str, "notBefore": str,
-        "text": str, "said": str, "limits": anyObject, "mood": int, "energy": int,
+        "text": str, "said": str, "limits": anyObject, "mood": int, "energy": int, "target": int, "period": str, "atMost": bool, "colour": str,
         "screen": open([
             "minutes": int, "period": str, "dateLabelShown": str, "date": str, "partial": bool, "pickups": int,
             "firstPickup": str, "notifications": int,
@@ -153,6 +153,8 @@ public struct BoxContextInput: Sendable {
     public var planned: [Entry]
     public var aboutMe: String
     public var settings: String
+    /// H2: how tasks of each kind usually end (`TaskHistory.summary`).
+    public var trackRecord: [String] = []
 
     public init(now: Date, calendar: Calendar, state: BoxState, planned: [Entry] = [], aboutMe: String = "", settings: String = "") {
         self.now = now
@@ -239,6 +241,19 @@ public enum BoxContext {
         if !recent.isEmpty {
             l.append("Recently closed: " + recent.map { "\(Ref.task($0.id)) \"\($0.title)\" \($0.state.rawValue)" }.joined(separator: "; "))
         }
+        if !c.trackRecord.isEmpty { l.append("Track record: " + c.trackRecord.joined(separator: "; ")) }
+        if !s.goals.isEmpty {
+            l.append("Goals: " + s.goals.map { g in
+                let p = Goals.progress(g, entries: s.entries, tree: s.categories, items: s.items, now: now, book: s.dayRules, calendar: cal)
+                return "\(g.ref) \(p.line) (\(g.period.rawValue))"
+            }.joined(separator: "; "))
+        }
+        let here = s.here.flatMap { s.places.place(for: $0) }
+        let named = s.places.places.filter { $0.name != nil || $0.id == here?.id }
+        if !named.isEmpty || s.here != nil {
+            l.append("Places: " + (named.map { "\($0.ref) \($0.title)\($0.id == here?.id ? " (here)" : "")" }
+                + (s.here != nil && here == nil ? ["(here: an unnamed spot)"] : [])).joined(separator: "; "))
+        }
         let rules = Rules.active(s.rules, at: now, calendar: cal)
         if !rules.isEmpty {
             l.append("Rules:")
@@ -283,31 +298,33 @@ public enum BoxPrompt {
         The app is time entries:
         - An entry is a stretch of time: past (it happened), running (one at a time), or future (planned). It can \
         repeat on any day rule. Refs: e1a2b3c is an entry or a whole series; e1a2b3c@2026-11-20 is one day of a series.
-        - Past entries are assumed (classes, calendar events, things said ahead, planned routines) unless confirmed. \
+        - Past entries are assumed (classes, calendar, things said ahead, planned routines) unless confirmed. \
         Planned study that wasn't started is "not started": it never counts as done.
         - Tasks (t…) have a due time and minutes; the planner spreads them before the due as planned entries, \
         respecting maxMinutesPerDay, notBefore, difficulty, and open time (spares, lunch: light work only).
         - Rules (u…) change how the planner fills days for a while (wake, windDownMinutes, capacityFactor, \
         maxBlockMinutes, noStudyAfter, mute / muteAll). Anything else is an entry, a task field, or a fact.
-        - You can change anything, past included: the student may have forgotten to track or want to correct something. \
-        The app asks the student before big removals or new alarms; just send the op.
+        - You can change anything, past included (they may have forgotten to track, or want a correction). The app \
+        asks before big removals or new alarms; just send the op.
 
-        Ops: {noun, verb, ref?, fields}. Nouns entry, task, rule, setting, mood, screen_time. Verbs:
+        Ops: {noun, verb, ref?, fields}:
         - entry add: title, start, end (no end + start now or earlier = running), category, topics, note, repeats, \
         from, until, open, alert, task. entry change (ref, or ref@date for one day only): any of those. entry remove \
         (a series ref removes all of it; ref@date or a calendar event just that day). entry skip (ref or ref@date: \
         didn't / won't happen; or fields category + day to skip everything in it that day). entry confirm (ref@date: \
         yes, it happened). entry start (title, category) / entry stop (end?).
         - task add: title, due, minutes, kind, difficulty 1-3, importance 1-5, category, maxMinutesPerDay, notBefore, \
-        firstStep, topics, note. task change (ref): any of those. task start (ref): start working on it now. task done / \
-        task drop / task remove (ref).
+        firstStep, topics, note. task change (ref): any of those. task start / done / drop / remove (ref).
         - rule add: text, said, from, until, repeats (which days), limits. rule change / remove (ref).
         - setting change: title = the setting (nudgeLevel, windDownMinutes, wakeAlarms, schoolDays…), text = value. \
         mood add: mood 1-5, energy, note. screen_time add: screen {minutes, apps, date…} read off a screenshot.
+        - goal add: category (or "tasks"), target (min or count), period day|week, atMost; change/remove. place add: title \
+        (names where they are); change title / remove. category add (title, category=parent) / change (ref=id; title, \
+        category=parent, colour) / remove (ref; category=merge into).
         Formats: start / end / due "HH:mm" with day "yyyy-MM-dd" (or "yyyy-MM-dd HH:mm", or "now"); dates \
         "yyyy-MM-dd". category: an id from the list, or a path "Work › Extracurricular › Volleyball" (missing levels \
         are created, at most 3 deep). repeats is a day rule: {"weekdays":[2,3,4,5,6]} (1=Sun..7=Sat), \
-        {"dateParity":"odd"}, {"all":[rule, rule]}, {"any":[…]}, {"not":rule}, {"on":["2026-11-20"]}, \
+        {"dateParity":"odd"}, {"all":[rule, rule]}, {"not":rule}, {"on":["2026-11-20"]}, \
         {"weekParity":{"anchor":"2026-11-16","odd":false}}, {"nthOf":{"sequence":"school","mod":2,"eq":0}}. \
         alert: "notify", "notify:10" (minutes before), "alarm:30", "alarm@end", "none".
 
@@ -330,17 +347,18 @@ public enum BoxPrompt {
         ref@date. A calendar event is never edited in Calendar: skip it here, or change it (it becomes the student's own).
         - Logging the past: entry add with start and end, filed in the closest category. Use the context: "end of \
         school" is when today's last class ends; "my usual walk" is how long the last ones took.
-        - What happens on the side (music, babysitting while doing homework) goes in note; one active entry at a time. \
+        - What happens on the side (music, babysitting) goes in note; one active entry at a time. \
         Scrolling is Unproductive › Scrolling whatever the app.
         - A standing preference ("spares are for easy work") becomes fields (open time, task difficulty), not a rule.
+        - A task like ones the track record says they drop: say so with its numbers; set a small firstStep.
 
         queries (optional), when asked about their time: {id "q1", range {last "28d" | preset "this week" | from, to}, \
         filter {categories, groups, topics, tasks, titles, weekdays, hours, confirmedOnly}, groupBy, measure, compare \
         "previous", chart}. Never write numbers about their time yourself: write {q1.total}, {q1.avgPerDay}, \
         {q1.top}, {q1.rows}, {q1.days}, {q1.previous}, {q1.change} in the reply and the app fills them in. "Math \
         class" is the category School › Math; "math" overall is topics ["math"].
-        facts (optional): what they said about themselves or their life, for About the student. section Stated.
-        gap (optional): only if you couldn't do part of what they asked: what and why.
+        facts (optional): what they said about themselves or their life (section Stated).
+        gap (optional): only if you couldn't do part of it: what and why.
         reply: 1-3 short plain sentences: what changed (only what your ops did), or the answer, or one question if \
         the message could mean two different changes. If you guessed something (a time, a length), say so.
         """

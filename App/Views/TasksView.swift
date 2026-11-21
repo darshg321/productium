@@ -6,7 +6,7 @@ struct TasksView: View {
     @AppStorage("tasks.grouping") private var grouping: TaskGrouping = .due
     @AppStorage("tasks.showDone") private var showDone = false
     @State private var query = ""
-    @State private var editing: WorkItem?
+    @State private var clearing: WorkItem?
 
     var body: some View {
         NavigationStack {
@@ -18,7 +18,7 @@ struct TasksView: View {
                     if query.isEmpty { Section { TaskSummaryCard(now: now) } }
                     ForEach(sections) { s in
                         Section {
-                            ForEach(s.items) { item in TaskRow(item: item, now: now, onEdit: { editing = $0 }) }
+                            ForEach(s.items) { item in TaskRow(item: item, now: now, onClear: { clearing = $0 }) }
                         } header: {
                             sectionHeader(s)
                         }
@@ -29,9 +29,7 @@ struct TasksView: View {
                                 ContentUnavailableView {
                                     Label("No Tasks", systemImage: "checklist")
                                 } description: {
-                                    Text("Tap + to add one, or tell the Inbox on Today, like “bio quiz thursday on cells”.")
-                                } actions: {
-                                    Button("Add Task") { editing = newItem() }.buttonStyle(.borderedProminent)
+                                    Text("Tell the box on Today, like “bio quiz thursday on cells”, or send a screenshot of the assignment.")
                                 }
                             } else {
                                 ContentUnavailableView.search(text: query)
@@ -55,19 +53,9 @@ struct TasksView: View {
                         Label("View Options", systemImage: "line.3.horizontal.decrease.circle")
                     }
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button { editing = newItem() } label: { Label("Add Task", systemImage: "plus") }
-                }
             }
-            .sheet(item: $editing) { e in TaskEditor(item: e, isNew: !model.state.items.contains { $0.id == e.id }) }
+            .sheet(item: $clearing) { ClearSheet(item: $0) }
         }
-    }
-
-    private func newItem() -> WorkItem {
-        let cal = model.cal
-        let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
-        let due = cal.date(bySettingHour: 8, minute: 30, second: 0, of: tomorrow) ?? tomorrow
-        return WorkItem(title: "", kind: .assignment, due: due)
     }
 
     @ViewBuilder private func sectionHeader(_ s: TaskSection) -> some View {
@@ -132,7 +120,7 @@ struct TaskRow: View {
     @Environment(AppModel.self) private var model
     let item: WorkItem
     let now: Date
-    var onEdit: (WorkItem) -> Void = { _ in }
+    var onClear: (WorkItem) -> Void = { _ in }
 
     var body: some View {
         let steps = model.state.items.filter { $0.parentId == item.id }
@@ -162,10 +150,10 @@ struct TaskRow: View {
                         Label(item.kind.title, systemImage: item.kind.symbol).labelStyle(.iconOnly)
                             .foregroundStyle(Theme.color(for: item, in: model.state))
                         Text(subtitle(steps: steps))
-                            .foregroundStyle(!item.isDone && item.due < now ? Theme.alert : .secondary)
+                            .foregroundStyle(item.isOpen && item.due < now ? Theme.alert : .secondary)
                     }
                     .font(.caption)
-                    if !item.isDone {
+                    if item.isOpen {
                         if let n = next {
                             Label("\(n.start.relativeDay.capitalized), \(n.start.hm)", systemImage: "calendar.badge.clock")
                                 .font(.caption).foregroundStyle(Theme.focus)
@@ -176,7 +164,7 @@ struct TaskRow: View {
                     }
                 }
                 Spacer(minLength: 0)
-                if !item.isDone {
+                if item.isOpen {
                     VStack(alignment: .trailing, spacing: 4) {
                         if short {
                             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -202,18 +190,18 @@ struct TaskRow: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) { model.delete(item.id) } label: { Label("Delete", systemImage: "trash") }
-            Button { onEdit(item) } label: { Label("Edit", systemImage: "pencil") }.tint(.orange)
-            if !item.isDone {
-                Button { model.focusNow(on: item) } label: { Label("Now", systemImage: "play.fill") }.tint(Theme.focus)
+            if item.isOpen {
+                Button { onClear(item) } label: { Label("Clear", systemImage: "xmark.circle") }.tint(.orange)
+                Button { model.startTask(item) } label: { Label("Start", systemImage: "play.fill") }.tint(Theme.focus)
             }
         }
         .contextMenu {
-            if !item.isDone {
-                Button { model.focusNow(on: item) } label: { Label("Work on It Now", systemImage: "play.fill") }
-                Button { model.complete(item.id) } label: { Label("Mark as Done", systemImage: "checkmark.circle") }
+            if item.isOpen {
+                Button { model.startTask(item) } label: { Label("Start", systemImage: "play.fill") }
+                Button { model.complete(item.id) } label: { Label("Done", systemImage: "checkmark.circle") }
+                Button { onClear(item) } label: { Label("Clear (not doing it)", systemImage: "xmark.circle") }
             }
-            Button { onEdit(item) } label: { Label("Edit", systemImage: "pencil") }
-            Button(role: .destructive) { model.delete(item.id) } label: { Label("Delete", systemImage: "trash") }
+            Button(role: .destructive) { model.delete(item.id) } label: { Label("Delete (made by mistake)", systemImage: "trash") }
         }
     }
 
@@ -223,140 +211,7 @@ struct TaskRow: View {
         else { parts.append("Due \(item.due.relativeDay) \(item.due.hm)") }
         if let s = item.subject, !s.isEmpty { parts.append(s.capitalized) }
         if !steps.isEmpty { parts.append("\(steps.filter(\.isDone).count)/\(steps.count) steps") }
-        if !item.isDone, let p = item.putOffLabel { parts.append(p) }
+        if item.isOpen, let p = item.putOffLabel { parts.append(p) }
         return parts.joined(separator: " · ")
-    }
-}
-
-struct TaskEditor: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var item: WorkItem
-    let isNew: Bool
-    @State private var subject = ""
-    @State private var topics = ""
-    @State private var notes = ""
-    @State private var confirmDelete = false
-    @FocusState private var titleFocused: Bool
-
-    init(item: WorkItem, isNew: Bool) {
-        _item = State(initialValue: item)
-        self.isNew = isNew
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("Title (e.g. Bio quiz on cells)", text: $item.title)
-                        .focused($titleFocused)
-                    Picker("Type", selection: $item.kind) {
-                        ForEach(TaskKind.allCases, id: \.self) { k in
-                            Label(k.title, systemImage: k.symbol).tag(k)
-                        }
-                    }
-                    TextField("Subject", text: $subject)
-                        .textInputAutocapitalization(.words)
-                    if !subjects.isEmpty && subject.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack {
-                                ForEach(subjects, id: \.self) { s in
-                                    Button(s) { subject = s }.buttonStyle(.bordered).controlSize(.small)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Section {
-                    DatePicker("Due", selection: $item.due, displayedComponents: [.date, .hourAndMinute])
-                    Stepper(value: $item.estimateMinutes, in: 5...1200, step: item.estimateMinutes < 60 ? 5 : 15) {
-                        LabeledContent("Takes about", value: durationLabel(item.estimateMinutes))
-                    }
-                    if item.completedMinutes > 0 || !isNew {
-                        Stepper(value: $item.completedMinutes, in: 0...max(item.estimateMinutes * 2, 60), step: 15) {
-                            LabeledContent("Done so far", value: durationLabel(item.completedMinutes))
-                        }
-                    }
-                } footer: {
-                    let f = model.state.learned.estimateFactor(for: item.kind)
-                    if abs(f - 1) > 0.05 {
-                        Text("Your \(item.kind.plural.lowercased()) usually take \(Int((f * 100).rounded()))% of the estimate, so about \(durationLabel(Int(Double(item.estimateMinutes) * f))) gets planned.")
-                    } else {
-                        Text("Change the type and the estimate starts from a typical \(item.kind.title.lowercased()).")
-                    }
-                }
-
-                Section("Priority") {
-                    Picker("How much it matters", selection: $item.importance) {
-                        ForEach(Array(["Low", "Some", "Normal", "High", "Huge"].enumerated()), id: \.offset) { i, name in
-                            Text(name).tag(i + 1)
-                        }
-                    }
-                    Picker("How hard", selection: $item.difficulty) {
-                        ForEach(Array(["Easy", "Medium", "Hard"].enumerated()), id: \.offset) { i, name in
-                            Text(name).tag(i + 1)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                Section {
-                    ColorChoice(color: $item.color, automatic: Theme.color(for: item.kind))
-                }
-
-                Section {
-                    TextField("Topics, separated by commas", text: $topics, axis: .vertical)
-                    TextField("Notes", text: $notes, axis: .vertical).lineLimit(2...6)
-                } footer: {
-                    if item.kind.isMemoryBased {
-                        Text("Topics for a quiz or test turn into flashcards for spare minutes.")
-                    }
-                }
-
-                if !isNew {
-                    Section {
-                        Button("Delete Task", role: .destructive) { confirmDelete = true }
-                    }
-                }
-            }
-            .navigationTitle(isNew ? "New Task" : "Edit Task")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isNew ? "Add" : "Save") { save() }
-                        .disabled(item.title.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-            .onChange(of: item.kind) { old, new in
-                if item.estimateMinutes == old.defaultEstimate { item.estimateMinutes = new.defaultEstimate }
-            }
-            .onAppear {
-                subject = item.subject ?? ""
-                topics = item.topics.joined(separator: ", ")
-                notes = item.notes ?? ""
-                if isNew { titleFocused = true }
-            }
-            .confirmationDialog("Delete “\(item.title)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                Button("Delete", role: .destructive) { model.delete(item.id); dismiss() }
-            }
-        }
-    }
-
-    private var subjects: [String] {
-        Array(Set(model.state.items.compactMap { $0.subject?.capitalized }.filter { !$0.isEmpty })).sorted().prefix(8).map { $0 }
-    }
-
-    private func save() {
-        item.title = item.title.trimmingCharacters(in: .whitespaces)
-        let s = subject.trimmingCharacters(in: .whitespaces)
-        item.subject = s.isEmpty ? nil : s
-        item.topics = topics.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let n = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        item.notes = n.isEmpty ? nil : n
-        if isNew { model.addManually(item) } else { model.update(item) }
-        model.toast = isNew ? "Added. The plan has made room for it." : "Saved. The plan has adjusted."
-        dismiss()
     }
 }

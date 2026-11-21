@@ -2,49 +2,6 @@ import SwiftUI
 import PhotosUI
 import ProductiumCore
 
-struct TodayView: View {
-    @Environment(AppModel.self) private var model
-    @Binding var showGap: Bool
-
-    var body: some View {
-        NavigationStack {
-            TimelineView(.periodic(from: .now, by: 30)) { ctx in
-                let now = ctx.date
-                let bed = bedtime(now)
-                let rest = model.state.plan.blocks.filter { $0.end > now && $0.start < bed && $0.kind != .sleep }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text(now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .textCase(.uppercase)
-                        DumpBox()
-                        if let g = model.dueGap { GapQuestionCard(gap: g) }
-                        if let o = model.placeOffer { PlaceOfferCard(offer: o) }
-                        NowCard(now: now, showGap: $showGap)
-                        Attention(now: now)
-                        if Calendar.current.component(.hour, from: now) >= 16 { MoodCard() }
-                        SectionTitle("Rest of Today")
-                        DayNumbers(blocks: rest, now: now, bed: bed)
-                        ScheduleCard(blocks: rest, from: now, bed: bed)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 32)
-                }
-                .scrollDismissesKeyboard(.interactively)
-            }
-            .background(Theme.background)
-            .refreshable { await model.refresh() }
-            .navigationTitle("Today")
-            .usageMeter()
-        }
-    }
-
-    private func bedtime(_ now: Date) -> Date {
-        model.state.plan.blocks.first { $0.kind == .sleep && $0.end > now }?.start ?? now.addingTimeInterval(16 * 3600)
-    }
-}
-
 struct DumpBox: View {
     @Environment(AppModel.self) private var model
     @State private var picks: [PhotosPickerItem] = []
@@ -110,7 +67,7 @@ struct DumpBox: View {
         let t = model.draftText, imgs = model.draftImages.map(\.ai)
         focused = false
         Task {
-            if await model.dump(t, images: imgs) {
+            if await model.submit(t, images: imgs, source: .app) {
                 model.clearDraft()
                 picks = []
             }
@@ -233,17 +190,8 @@ struct TurnView: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
-            if model.heldTurnId == turn.id, !model.held.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(model.held.enumerated()), id: \.offset) { _, h in
-                        Label(h.why, systemImage: "hand.raised").font(.footnote).foregroundStyle(.orange)
-                    }
-                    HStack {
-                        Button("Approve") { withAnimation { model.approveHeld() } }.buttonStyle(.borderedProminent)
-                        Button("Decline") { withAnimation { model.declineHeld() } }.buttonStyle(.bordered)
-                    }
-                    .font(.subheadline)
-                }
+            ForEach(model.approvals.filter { $0.turnId == turn.id }) { a in
+                ApprovalRow(approval: a)
             }
             HStack(spacing: 16) {
                 if model.undoTurnId == turn.id { Button("Undo") { withAnimation { model.undo() } } }
@@ -267,288 +215,25 @@ struct TurnView: View {
     }
 }
 
-struct PlaceOfferCard: View {
+/// One Approve / Decline (0.3, J2): a risky box change or an alarm the insight pass proposed.
+struct ApprovalRow: View {
     @Environment(AppModel.self) private var model
-    let offer: PlaceOffer
-    @State private var name = ""
+    let approval: Approval
 
     var body: some View {
-        Card {
-            CardHeader(title: offer.needsName ? "A place you keep going to" : "Save this as \(offer.name)?",
-                       symbol: "mappin.and.ellipse", color: .blue)
-            Text(offer.reason).font(.subheadline).foregroundStyle(.secondary)
-            if offer.needsName {
-                TextField("Name (e.g. Gym)", text: $name).textFieldStyle(.roundedBorder)
-            }
-            HStack {
-                Button(offer.needsName ? "Save" : "Save \(offer.name)") {
-                    model.acceptPlaceOffer(name: offer.needsName ? name : nil)
-                }
-                .disabled(offer.needsName && name.trimmingCharacters(in: .whitespaces).isEmpty)
-                Spacer()
-                Button("Not Now", role: .cancel) { model.declinePlaceOffer() }.foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-            .font(.subheadline)
-        }
-    }
-}
-
-struct GapQuestionCard: View {
-    @Environment(AppModel.self) private var model
-    let gap: MysteryGap
-    @State private var answer = ""
-
-    var body: some View {
-        Card {
-            CardHeader(title: GapDetector.question(gap, calendar: .current), symbol: "questionmark.circle.fill", color: .purple)
-            HStack {
-                TextField("e.g. gym, homework, with friends", text: $answer)
-                    .submitLabel(.send)
-                    .onSubmit(send)
-                Button("Send", action: send).disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button { model.dismissGap(gap) } label: { Image(systemName: "xmark") }
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Not now")
-            }
-            .buttonStyle(.borderless)
-        }
-    }
-
-    private func send() {
-        let t = answer
-        answer = ""
-        Task { await model.answerGap(t, gap: gap) }
-    }
-}
-
-struct NowCard: View {
-    @Environment(AppModel.self) private var model
-    let now: Date
-    @Binding var showGap: Bool
-
-    var body: some View {
-        let current = model.state.plan.current(at: now)
-        let next = model.state.plan.next(after: now)
-        Card {
-            if let b = current {
-                CardHeader(title: "Now", symbol: Theme.symbol(for: b.kind), color: Theme.color(for: b),
-                           detail: "until \(b.end.hm)")
-            } else {
-                CardHeader(title: "Now", symbol: "clock.fill", color: .secondary)
-            }
-            content(current)
-            if let n = next, n.kind != .sleep {
-                Divider()
-                HStack(spacing: 8) {
-                    Circle().fill(Theme.color(for: n)).frame(width: 8, height: 8)
-                    Text("Next: \(blockLabel(n))").font(.subheadline).lineLimit(1)
-                    Spacer()
-                    Text(n.start.hm).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private func content(_ current: PlannedBlock?) -> some View {
-        if let b = current, b.isStudy {
-            Text(b.title).font(.title2.weight(.bold)).fixedSize(horizontal: false, vertical: true)
-            Text("\(minutesLeft(b)) min left" + (b.hint.map { " · \($0)" } ?? ""))
-                .font(.subheadline).foregroundStyle(.secondary)
-            ProgressView(value: progress(b)).tint(Theme.color(for: b))
-            Button { model.startFocus(b) } label: {
-                Text("Start Focus").font(.headline).frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.top, 4)
-        } else if let b = current, b.kind == .gap || b.kind == .breakTime || (b.kind == .free && minutesLeft(b) <= 20) {
-            BigValue(value: "\(minutesLeft(b))", unit: "free minutes")
-            Button { showGap = true } label: {
-                Text("Use Them for Something Short").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-        } else if let b = current, b.kind == .free {
-            Text("Free time").font(.title2.weight(.bold))
-            Text("Nothing to do until \(b.end.hm). Enjoy it.").font(.subheadline).foregroundStyle(.secondary)
-        } else if let b = current {
-            Text(blockLabel(b)).font(.title2.weight(.bold))
-            ProgressView(value: progress(b)).tint(Theme.color(for: b))
-        } else {
-            Text("Nothing planned").font(.title2.weight(.bold))
-            Text("Tell the Inbox what's coming up and it'll plan it.").font(.subheadline).foregroundStyle(.secondary)
-        }
-    }
-
-    private func minutesLeft(_ b: PlannedBlock) -> Int { max(1, Int(b.end.timeIntervalSince(now) / 60)) }
-
-    private func progress(_ b: PlannedBlock) -> Double {
-        let total = b.end.timeIntervalSince(b.start)
-        return total > 0 ? min(1, max(0, now.timeIntervalSince(b.start) / total)) : 0
-    }
-}
-
-func blockLabel(_ b: PlannedBlock) -> String {
-    switch b.kind {
-    case .free, .gap: return "Free time"
-    case .breakTime: return "Break"
-    case .windDown: return "Wind down, screens off"
-    case .sleep: return "Bed"
-    default: return b.title
-    }
-}
-
-struct Attention: View {
-    @Environment(AppModel.self) private var model
-    let now: Date
-
-    var body: some View {
-        if let b = model.pendingOutcomes.last {
-            Card {
-                CardHeader(title: "Check-in", symbol: "checkmark.bubble.fill", color: .green, detail: b.start.relativeDay.capitalized)
-                Text("Did you get to \(b.title)?").font(.headline).fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    Button { model.logOutcome(blockId: b.id, status: .done) } label: { Text("Yes").frame(maxWidth: .infinity) }
-                        .buttonStyle(.borderedProminent)
-                    Button { model.logOutcome(blockId: b.id, status: .partial) } label: { Text("Partly").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered)
-                    Button { model.logOutcome(blockId: b.id, status: .skipped) } label: { Text("No").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered)
-                }
-                .controlSize(.regular)
-            }
-        }
-        if let expiry = model.signatureExpiry, expiry.timeIntervalSince(now) < 2 * 86400 {
-            Card {
-                CardHeader(title: "Refresh Needed", symbol: "exclamationmark.triangle.fill", color: Theme.alert)
-                Text("This build stops opening \(expiry.relativeDay) at \(expiry.hm). Refresh it in SideStore.")
-                    .font(.subheadline)
-            }
-        } else if model.supportSuggested {
-            Card {
-                CardHeader(title: "Checking In", symbol: "heart.fill", color: .pink)
-                Text(Wellbeing.crisisText).font(.subheadline).foregroundStyle(.secondary)
-            }
-        } else if let w = model.activeWarnings.first(where: { $0.level != .info }) ?? model.activeWarnings.first {
-            Card {
-                CardHeader(title: "Heads Up", symbol: w.level == .critical ? "exclamationmark.triangle.fill" : "info.circle.fill",
-                           color: w.level == .critical ? Theme.alert : .orange)
-                Text(w.message).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                Button("Dismiss") { model.state.dismissed.insert(w.message); model.save() }
-                    .font(.subheadline)
-                    .buttonStyle(.borderless)
-            }
-        }
-    }
-}
-
-struct DayNumbers: View {
-    let blocks: [PlannedBlock]
-    let now: Date
-    let bed: Date
-
-    var body: some View {
-        let work = blocks.filter(\.isStudy).reduce(0) { $0 + remaining($1) }
-        let free = blocks.filter { $0.kind == .free || $0.kind == .gap }.reduce(0) { $0 + remaining($1) }
-        HStack(spacing: 10) {
-            stat("Work", "pencil.line", Theme.focus, work > 0 ? durationLabel(work) : "Done")
-            stat("Free", "sun.max.fill", Theme.free, durationLabel(free))
-            stat("Bed", "moon.fill", Theme.sleep, bed.hm)
-        }
-    }
-
-    private func remaining(_ b: PlannedBlock) -> Int { max(0, Int(b.end.timeIntervalSince(max(b.start, now)) / 60)) }
-
-    private func stat(_ title: String, _ symbol: String, _ color: Color, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: symbol).font(.caption.weight(.semibold)).foregroundStyle(color)
-            Text(value).font(.system(.headline, design: .rounded)).monospacedDigit()
-                .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-        .accessibilityElement(children: .combine)
-    }
-}
-
-struct ScheduleCard: View {
-    let blocks: [PlannedBlock]
-    let from: Date
-    let bed: Date
-
-    var body: some View {
-        let shown = blocks.filter { $0.kind != .breakTime && $0.minutes >= 10 }
-        Card {
-            DayStrip(blocks: blocks, start: from, end: bed)
+            Label(approval.why, systemImage: approval.addsAlarm ? "alarm" : "hand.raised")
+                .font(.footnote).foregroundStyle(.orange)
+            if approval.addsAlarm && !model.state.integrations.alarms {
+                Text("Full-Screen Alarms are off. Allow turns them on.").font(.caption).foregroundStyle(.secondary)
+            }
             HStack {
-                Text(from.hm)
-                Spacer()
-                Text(bed.hm)
+                Button(approval.addsAlarm ? "Allow" : "Approve") { withAnimation { model.approve(approval.id) } }
+                    .buttonStyle(.borderedProminent)
+                Button(approval.addsAlarm ? "No" : "Decline") { withAnimation { model.decline(approval.id) } }
+                    .buttonStyle(.bordered)
             }
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-            if shown.isEmpty {
-                Text("Nothing else before bed.").font(.subheadline).foregroundStyle(.secondary).padding(.vertical, 4)
-            }
-            ForEach(shown) { b in
-                Divider()
-                BlockRow(block: b, from: from)
-            }
-        }
-    }
-}
-
-struct BlockRow: View {
-    let block: PlannedBlock
-    var from: Date = .distantPast
-
-    var body: some View {
-        let start = max(block.start, from)
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 2).fill(Theme.color(for: block)).frame(width: 4, height: 34)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(blockLabel(block))
-                    .font(block.isStudy ? .body.weight(.semibold) : .body)
-                    .foregroundStyle(block.isStudy ? .primary : .secondary)
-                    .lineLimit(2)
-                Text("\(start.hm) – \(block.end.hm) · \(durationLabel(max(1, Int(block.end.timeIntervalSince(start) / 60))))")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                if block.borrowsSleep {
-                    Label("Uses an hour of sleep, only because it's due.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(Theme.alert)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// One tap for how today felt (v1.1 G5). Shown from late afternoon; the answer feeds the Mood tile.
-struct MoodCard: View {
-    @Environment(AppModel.self) private var model
-    private let faces = [(1, "😞", "Rough"), (2, "😕", "Low"), (3, "😐", "Okay"), (4, "🙂", "Good"), (5, "😄", "Great")]
-
-    var body: some View {
-        Card {
-            if let m = model.todayMood {
-                CardHeader(title: "Today Felt", symbol: "face.smiling", color: .teal)
-                Text(faces.first { $0.0 == m.mood }.map { "\($0.1) \($0.2)" } ?? "Logged").font(.subheadline)
-            } else {
-                CardHeader(title: "How Was Today?", symbol: "face.smiling", color: .teal)
-                HStack {
-                    ForEach(faces, id: \.0) { f in
-                        Button { model.logMood(f.0, energy: nil, note: nil) } label: {
-                            VStack(spacing: 2) { Text(f.1).font(.title2); Text(f.2).font(.caption2) }.frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityLabel(f.2)
-                    }
-                }
-            }
+            .font(.subheadline)
         }
     }
 }

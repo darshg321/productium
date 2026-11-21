@@ -281,8 +281,10 @@ extension WorkItem {
 public enum PlanEntries {
     /// The plan's future blocks as `plan` Entries (O3). Blocks that came from an Entry are left out (they already
     /// are one), and so are free / gap / break windows: free time is the absence of an entry.
-    public static func from(_ plan: Plan, items: [WorkItem], now: Date) -> [Entry] {
+    public static func from(_ plan: Plan, items: [WorkItem], now: Date, calendar cal: Calendar = .current) -> [Entry] {
         let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // The wake alarm on a school morning says when to leave (it's the planned Sleep's end).
+        let leave = Dictionary(plan.wakePlans.compactMap { w in w.leaveBy.map { (w.wake, $0) } }, uniquingKeysWith: { a, _ in a })
         return plan.blocks.compactMap { b -> Entry? in
             guard b.end > now, !(b.sourceId?.hasPrefix("entry:") ?? false) else { return nil }
             let category: CategoryID
@@ -291,11 +293,15 @@ public enum PlanEntries {
             case .sleep: category = CategoryTree.sleep
             case .windDown: category = CategoryTree.windDown
             case .meal: category = CategoryTree.meals
-            case .routine: category = CategoryTree.gettingReady
+            case .routine:
+                if let s = b.sourceId, s.hasPrefix("habit:") { category = String(s.dropFirst(6)) }
+                else { category = b.sourceId?.hasSuffix("school") == true ? CategoryTree.travel : CategoryTree.gettingReady }
             case .commitment, .event: category = CategoryTree.other
             case .free, .gap, .breakTime: return nil
             }
-            return Entry(id: b.id, title: b.title, start: b.start, end: b.end, category: category, note: b.hint,
+            var note = b.hint
+            if b.kind == .sleep, let l = leave[b.end] { note = "Leave by \(NudgePlanner.clock(l, cal))" }
+            return Entry(id: b.id, title: b.title, start: b.start, end: b.end, category: category, note: note,
                          taskId: b.itemId, alert: b.kind == .sleep ? .wake : nil, source: .plan, createdAt: plan.generatedAt)
         }
     }
@@ -331,7 +337,8 @@ public enum EntryAlerts {
             guard at > now else { return nil }
             let title: String
             switch (a.edge, a.minutesBefore) {
-            case (.end, _) where o.category == CategoryTree.sleep: title = "Good morning"
+            case (.end, _) where o.category == CategoryTree.sleep:
+                title = o.entry.note.flatMap { $0.hasPrefix("Leave by") ? $0 : nil } ?? "Good morning"
             case (.start, 0): title = o.title
             case (.start, let m): title = "\(o.title) in \(minutesLabel(m))"
             case (.end, 0): title = "\(o.title) ends now"

@@ -50,13 +50,24 @@ public struct BoxFields: Codable, Hashable, Sendable {
     public var mood: Int?
     public var energy: Int?
     public var screen: BoxScreen?
+    // Goals (I2): target minutes (or a count of tasks), per "day" / "week", at most instead of at least.
+    public var target: Int?
+    public var period: String?
+    public var atMost: Bool?
+    /// A category's colour (K1: "make volleyball green"), a `CategoryPalette` name.
+    public var colour: String?
 
     public init(title: String? = nil, start: String? = nil, end: String? = nil, day: String? = nil, category: String? = nil,
                 topics: [String]? = nil, note: String? = nil, repeats: DayRule? = nil, from: String? = nil,
                 until: String? = nil, open: Bool? = nil, alert: String? = nil, task: String? = nil, due: String? = nil,
                 minutes: Int? = nil, kind: String? = nil, difficulty: Int? = nil, importance: Int? = nil,
                 maxMinutesPerDay: Int? = nil, firstStep: String? = nil, notBefore: String? = nil, text: String? = nil,
-                said: String? = nil, limits: PlannerLimits? = nil, mood: Int? = nil, energy: Int? = nil, screen: BoxScreen? = nil) {
+                said: String? = nil, limits: PlannerLimits? = nil, mood: Int? = nil, energy: Int? = nil, screen: BoxScreen? = nil,
+                target: Int? = nil, period: String? = nil, atMost: Bool? = nil, colour: String? = nil) {
+        self.colour = colour
+        self.target = target
+        self.period = period
+        self.atMost = atMost
         self.mood = mood
         self.energy = energy
         self.screen = screen
@@ -88,7 +99,7 @@ public struct BoxFields: Codable, Hashable, Sendable {
 }
 
 public struct BoxOp: Codable, Hashable, Sendable {
-    public enum Noun: String, Codable, CaseIterable, Sendable { case entry, task, rule, setting, mood, screen_time, query }
+    public enum Noun: String, Codable, CaseIterable, Sendable { case entry, task, rule, setting, mood, screen_time, query, goal, place, category }
     public enum Verb: String, Codable, CaseIterable, Sendable {
         case add, change, remove, start, stop, skip, confirm, done, drop
     }
@@ -125,6 +136,10 @@ public struct BoxReceipt: Hashable, Sendable {
     public var tasksBefore: [UUID: WorkItem?] = [:]
     public var categoriesBefore: CategoryTree?
     public var dayRulesBefore: DayRuleBook?
+    public var goalsBefore: [Goal]?
+    public var placesBefore: PlaceBook?
+    /// Planned entries this turn made yours (Undo puts them back in the plan).
+    public var plannedAdopted: [Entry] = []
     public init() {}
 }
 
@@ -136,6 +151,12 @@ public struct BoxState: Sendable {
     public var categories: CategoryTree
     public var dayRules: DayRuleBook
     public var sleepFloorMinutes: Int
+    /// v1.2 I2 / E3: goals, places, and where you are now (the open visit) for "this is the library".
+    public var goals: [Goal] = []
+    public var places = PlaceBook()
+    public var here: PlaceVisit?
+    /// The planner's future entries (shown in the context with refs). Editing or removing one makes it yours.
+    public var planned: [Entry] = []
 
     public init(entries: [Entry] = [], rules: [Rule] = [], items: [WorkItem] = [], categories: CategoryTree = CategoryTree(),
                 dayRules: DayRuleBook = DayRuleBook(), sleepFloorMinutes: Int = 420) {
@@ -177,7 +198,8 @@ public enum BoxApplier {
             return "Removes “\(gone.title)” every time it repeats"
         }
         func ownPast(_ es: [Entry], only ids: Set<UUID>) -> Int {
-            es.filter { $0.source == .you && $0.repeats == nil && ids.contains($0.id) && $0.marks.isEmpty }
+            // Skipped is gone; confirmed is still there (a "yes" must never look like a removal).
+            es.filter { $0.source == .you && $0.repeats == nil && ids.contains($0.id) && !$0.marks.values.contains(.skipped) }
                 .reduce(0) { $0 + max(0, Int((min($1.end ?? now, now).timeIntervalSince($1.start)) / 60)) }
         }
         let existing = Set(before.entries.map(\.id))
@@ -206,6 +228,9 @@ public enum BoxApplier {
         }
         if let t = r.categoriesBefore { s.categories = t }
         if let b = r.dayRulesBefore { s.dayRules = b }
+        if let g = r.goalsBefore { s.goals = g }
+        for e in r.plannedAdopted { var p = e; p.source = .plan; s.planned.append(p) }
+        if let p = r.placesBefore { s.places = p }
     }
 
     struct Ctx {
@@ -296,6 +321,9 @@ public enum BoxApplier {
             case (.task, .remove): removeTask(op, &s)
             case (.rule, .add): addRule(op.fields, &s)
             case (.rule, .change), (.rule, .remove): changeRule(op, &s)
+            case (.goal, .add), (.goal, .change), (.goal, .remove): goal(op, &s)
+            case (.place, .add), (.place, .change), (.place, .remove): place(op, &s)
+            case (.category, .add), (.category, .change), (.category, .remove): categoryOp(op, &s)
             default: problem("\(op.noun.rawValue) \(op.verb.rawValue) isn't handled here")
             }
         }
@@ -306,7 +334,8 @@ public enum BoxApplier {
             guard let title = f.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty,
                   let start = time(f.start, f) else { return problem("An entry needs a title and a start") }
             let end = time(f.end, f)
-            if let end, end <= start { return problem("“\(title)” ends before it starts") }
+            // end == start is a moment (an alarm, a reminder): it shows on the day but counts no time.
+            if let end, end < start { return problem("“\(title)” ends before it starts") }
             let ti = task(f.task, s)
             let fallback = ti.flatMap { s.items[$0].category } ?? CategoryTree.other
             let running = end == nil && f.repeats == nil && start <= now
@@ -334,8 +363,23 @@ public enum BoxApplier {
             return (hit.index, hit.occurrence)
         }
 
+        /// A ref, adopting a planned entry first if that's what it names (it's yours from now on).
+        mutating func find(_ ref: String?, _ s: inout BoxState) -> (Int, DayKey?)? {
+            if let hit = find(ref, s) { return hit }
+            guard let ref, let p = EntryRef.parse(ref), p.kind == .entry else { return nil }
+            let hits = s.planned.indices.filter { EntryRef.matches(p, s.planned[$0].id) }
+            guard hits.count == 1 else { return nil }
+            var e = s.planned.remove(at: hits[0])
+            e.source = .you
+            e.createdAt = now
+            r.before[e.id] = .some(nil)
+            r.plannedAdopted.append(e)
+            s.entries.append(e)
+            return (s.entries.count - 1, p.occurrence)
+        }
+
         mutating func changeEntry(_ op: BoxOp, _ s: inout BoxState) {
-            guard var (i, occ) = find(op.ref, s) else { return problem("Couldn't find entry \(op.ref ?? "?")") }
+            guard var (i, occ) = find(op.ref, &s) else { return problem("Couldn't find entry \(op.ref ?? "?")") }
             var f = op.fields
             // A bare "09:53" in a change means that time on the entry's own day (or the occurrence's), not today.
             if f.day == nil { f.day = occ ?? DayKeys.key(s.entries[i].start, cal) }
@@ -361,10 +405,12 @@ public enum BoxApplier {
             var e = s.entries[i]
             if let t = f.title { e.title = String(t.prefix(120)) }
             if let st = time(f.start, f) {
-                // Moving keeps the length unless an end is given.
+                // Moving keeps the length unless an end is given. Something that already happened keeps its end:
+                // "actually it started at 3:30" corrects the start, it doesn't move the whole stretch.
                 let len = (e.end ?? st).timeIntervalSince(e.start)
+                let happened = (e.end ?? .distantFuture) <= now && e.repeats == nil && occ == nil
                 e.start = st
-                if e.end != nil { e.end = st.addingTimeInterval(len) }
+                if e.end != nil && !happened { e.end = st.addingTimeInterval(len) }
             }
             if let en = time(f.end, f) { e.end = en }
             if let end = e.end, end <= e.start { s.entries = old; return problem("“\(e.title)” would end before it starts") }
@@ -389,7 +435,7 @@ public enum BoxApplier {
         }
 
         mutating func removeEntry(_ op: BoxOp, _ s: inout BoxState) {
-            guard let (i, occ) = find(op.ref, s) else { return problem("Couldn't find entry \(op.ref ?? "?")") }
+            guard let (i, occ) = find(op.ref, &s) else { return problem("Couldn't find entry \(op.ref ?? "?")") }
             let e = s.entries[i]
             let old = s.entries
             if e.source == .calendar || (occ != nil && e.repeats != nil) {
@@ -408,7 +454,7 @@ public enum BoxApplier {
             let f = op.fields
             let old = s.entries
             if let ref = op.ref {
-                guard let (i, occ) = find(ref, s) else { return problem("Couldn't find entry \(ref)") }
+                guard let (i, occ) = find(ref, &s) else { return problem("Couldn't find entry \(ref)") }
                 let key = occ ?? Days.key(s.entries[i], on: dayDate(f), cal)
                 s.entries[i].marks[key] = .skipped
                 snapAll(old, s.entries)
@@ -545,6 +591,121 @@ public enum BoxApplier {
             if let d = f.repeats { s.rules[i].days = d }
             if let l = f.limits { s.rules[i].limits = l.clamped }
             r.lines.append("Rule changed: \(s.rules[i].text)")
+        }
+
+        // MARK: Goals (I2)
+
+        mutating func goal(_ op: BoxOp, _ s: inout BoxState) {
+            let f = op.fields
+            if r.goalsBefore == nil { r.goalsBefore = s.goals }
+            if op.verb != .add {
+                guard let ref = op.ref, let i = s.goals.firstIndex(where: { Ref.matches(ref, prefix: "g", full: $0.id.uuidString) }) else {
+                    return problem("Couldn't find goal \(op.ref ?? "?")")
+                }
+                if op.verb == .remove { r.lines.append("Removed goal: \(s.goals[i].title)"); s.goals.remove(at: i); return }
+                if let t = f.target ?? f.minutes { s.goals[i].target = max(0, t) }
+                if let p = f.period.flatMap(Goal.Period.init(rawValue:)) { s.goals[i].period = p }
+                if let m = f.atMost { s.goals[i].direction = m ? .atMost : .atLeast }
+                if let t = f.title { s.goals[i].title = t }
+                s.goals[i].origin = .you
+                return r.lines.append("Goal: \(describe(s.goals[i], s))")
+            }
+            guard let raw = f.category?.trimmingCharacters(in: .whitespaces), !raw.isEmpty, let target = f.target ?? f.minutes else {
+                return problem("A goal needs what it counts (category) and a target")
+            }
+            let measure: Goal.Measure
+            var title = f.title
+            if raw.lowercased() == "tasks" { measure = .tasksDone; title = title ?? "Tasks done" }
+            else if let g = CategoryGroup(rawValue: raw.lowercased()) { measure = .group(g); title = title ?? g.title }
+            else {
+                let c = category(raw, fallback: CategoryTree.other, &s)
+                measure = .category(c)
+                title = title ?? s.categories.node(c)?.name ?? raw
+            }
+            let g = Goal(title: title ?? raw, measure: measure, period: f.period.flatMap(Goal.Period.init(rawValue:)) ?? .day, target: target,
+                         direction: f.atMost == true ? .atMost : .atLeast, origin: .you, createdAt: now)
+            s.goals.removeAll { $0.measure == g.measure && $0.period == g.period && $0.direction == g.direction }
+            s.goals.append(g)
+            r.lines.append("Goal: \(describe(g, s))")
+        }
+
+        func describe(_ g: Goal, _ s: BoxState) -> String {
+            let amount = g.isCount ? "\(g.target)" : minutesLabel(g.target)
+            return "\(g.title) \(g.direction == .atMost ? "at most" : "at least") \(amount) a \(g.period.rawValue)"
+        }
+
+        // MARK: Places (E3)
+
+        mutating func place(_ op: BoxOp, _ s: inout BoxState) {
+            if r.placesBefore == nil { r.placesBefore = s.places }
+            let name = op.fields.title?.trimmingCharacters(in: .whitespaces)
+            switch op.verb {
+            case .add:
+                guard let name, !name.isEmpty else { return problem("A place needs a name") }
+                guard let v = s.here else { return problem("I don't know where you are right now (location is off or hasn't settled)") }
+                if s.places.place(for: v) == nil { s.places.cluster([PlaceVisit(latitude: v.latitude, longitude: v.longitude, arrival: v.arrival,
+                                                                                departure: v.arrival.addingTimeInterval(PlaceBook.minStay))], now: now) }
+                guard let p = s.places.place(for: v) else { return problem("Couldn't make a place here") }
+                s.places.name(p.id, name)
+                r.lines.append("Named this place \(name)")
+            case .change, .remove:
+                guard let ref = op.ref, let p = s.places.places.first(where: { Ref.matches(ref, prefix: "p", full: $0.id.uuidString) }) else {
+                    return problem("Couldn't find place \(op.ref ?? "?")")
+                }
+                if op.verb == .remove {
+                    let old = s.entries
+                    s.places.forget(p.id, entries: &s.entries)
+                    snapAll(old, s.entries)
+                    return r.lines.append("Forgot \(p.title)")
+                }
+                guard let name, !name.isEmpty else { return problem("Rename \(p.title) to what?") }
+                s.places.name(p.id, name)
+                r.lines.append("Renamed \(p.title) to \(name)")
+            default: problem("place \(op.verb.rawValue) isn't handled here")
+            }
+        }
+
+        // MARK: Categories (C3): yours once you've said so
+
+        mutating func categoryOp(_ op: BoxOp, _ s: inout BoxState) {
+            let f = op.fields
+            if r.categoriesBefore == nil { r.categoriesBefore = s.categories }
+            switch op.verb {
+            case .add:
+                let path = [f.category, f.title].compactMap { $0 }.joined(separator: " › ")
+                let id = category(path, fallback: CategoryTree.other, &s)
+                if let i = s.categories.nodes.firstIndex(where: { $0.id == id }) { s.categories.nodes[i].yours = true }
+            case .change:
+                guard let id = op.ref.flatMap({ s.categories.node($0)?.id ?? s.categories.find($0)?.id }),
+                      let i = s.categories.nodes.firstIndex(where: { $0.id == id }) else { return problem("Couldn't find category \(op.ref ?? "?")") }
+                if let t = f.title?.trimmingCharacters(in: .whitespaces), !t.isEmpty { s.categories.nodes[i].name = t }
+                if let c = f.colour?.lowercased().trimmingCharacters(in: .whitespaces), !c.isEmpty { s.categories.nodes[i].colour = c }
+                if let p = f.category {
+                    let parent = category(p, fallback: CategoryTree.other, &s)
+                    guard !s.categories.isUnder(parent, id), s.categories.depth(parent) + 1 <= CategoryTree.maxDepth else {
+                        return problem("Can't put \(s.categories.nodes[i].name) there")
+                    }
+                    s.categories.nodes[i].parentId = parent
+                    s.categories.nodes[i].group = s.categories.node(parent)?.group ?? s.categories.nodes[i].group
+                }
+                s.categories.nodes[i].yours = true
+                r.lines.append("Category: \(s.categories.pathText(id))")
+            case .remove:
+                guard let id = op.ref.flatMap({ s.categories.node($0)?.id ?? s.categories.find($0)?.id }) else {
+                    return problem("Couldn't find category \(op.ref ?? "?")")
+                }
+                guard !TaxonomyPass.seedIds.contains(id) else { return problem("\(s.categories.pathText(id)) is one the app needs") }
+                let into = category(f.category, fallback: s.categories.node(id)?.parentId ?? CategoryTree.other, &s)
+                guard into != id, !s.categories.isUnder(into, id) else { return problem("Merge it into what?") }
+                let old = s.entries
+                for k in s.entries.indices where s.entries[k].category == id { s.entries[k].category = into }
+                for c in s.categories.children(id) { if let j = s.categories.nodes.firstIndex(where: { $0.id == c.id }) { s.categories.nodes[j].parentId = into } }
+                let name = s.categories.pathText(id)
+                s.categories.nodes.removeAll { $0.id == id }
+                snapAll(old, s.entries)
+                r.lines.append("Merged \(name) into \(s.categories.pathText(into))")
+            default: problem("category \(op.verb.rawValue) isn't handled here")
+            }
         }
 
         // MARK: Sleep floor (applied, with a warning)

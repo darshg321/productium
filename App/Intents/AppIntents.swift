@@ -9,35 +9,111 @@ struct TellProductiumIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         AppModel.shared.log(.intent, "TellProductiumIntent")
-        await AppModel.shared.dump(text)
+        await AppModel.shared.submit(text, source: .shortcut)
         let reply = AppModel.shared.state.conversation.turns.last?.reply ?? "Got it."
         return .result(dialog: "\(reply)")
     }
 }
 
-enum CheckInPhrase: String, AppEnum {
-    case leftHome = "left home", atSchool = "at school", leftSchool = "left school", home = "home"
-    case startHomework = "starting homework", finishedHomework = "finished homework"
-    case wokeUp = "woke up", bed = "going to bed"
+// MARK: - v1.2 M1–M4: start and stop the time log from anywhere
 
-    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Check-in"
-    static var caseDisplayRepresentations: [CheckInPhrase: DisplayRepresentation] = [
-        .leftHome: "Left home", .atSchool: "At school", .leftSchool: "Left school", .home: "Home",
-        .startHomework: "Starting homework", .finishedHomework: "Finished homework",
-        .wokeUp: "Woke up", .bed: "Going to bed",
-    ]
+/// A start button as Siri, Spotlight and Shortcuts see it. Anything typed works too ("Start Laundry").
+struct ActivityEntity: AppEntity {
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Activity"
+    static var defaultQuery = ActivityQuery()
+    var id: String
+    var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(id)") }
 }
 
-struct CheckInIntent: AppIntent {
-    static var title: LocalizedStringResource = "Check in"
-    static var description = IntentDescription("Log where you are or what you're starting, so Productium learns your routine. Works well from a Wi-Fi, NFC or alarm automation.")
-    @Parameter(title: "Where / what") var phrase: CheckInPhrase
+struct ActivityQuery: EntityStringQuery {
+    @MainActor
+    func entities(for identifiers: [String]) async throws -> [ActivityEntity] { identifiers.map { ActivityEntity(id: $0) } }
+
+    @MainActor
+    func entities(matching string: String) async throws -> [ActivityEntity] {
+        let mine = AppModel.shared.state.quickStarts.buttons.filter { !$0.removed && $0.title.localizedCaseInsensitiveContains(string) }
+        return [ActivityEntity(id: string)] + mine.map { ActivityEntity(id: $0.title) }.filter { $0.id != string }
+    }
+
+    @MainActor
+    func suggestedEntities() async throws -> [ActivityEntity] {
+        AppModel.shared.startButtons().row.map { ActivityEntity(id: $0.title) }
+    }
+}
+
+/// "Start Shower": an NFC sticker, the Action button, a Focus automation, Siri. Runs in the app, no screen needed.
+struct StartActivityIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Start Activity"
+    static var description = IntentDescription("Starts tracking something (a start button, a task, or any name). Use it from an NFC sticker, the Action button, or a Focus turning on.")
+    @Parameter(title: "Activity") var activity: ActivityEntity
+
+    init() {}
+    init(_ title: String) { activity = ActivityEntity(id: title) }
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        AppModel.shared.log(.intent, "CheckInIntent")
-        AppModel.shared.logMarker(phrase.rawValue, source: .voice)
-        return .result(dialog: "Logged.")
+        AppModel.shared.log(.intent, "StartActivityIntent", ["activity": activity.id])
+        AppModel.shared.start(title: activity.id, source: "intent")
+        return .result(dialog: "Started \(activity.id).")
+    }
+}
+
+struct StopActivityIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Stop Activity"
+    static var description = IntentDescription("Stops whatever is being tracked. Use it from Back Tap, a sticker, or a Focus turning off.")
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        AppModel.shared.log(.intent, "StopActivityIntent")
+        let title = AppModel.shared.running?.title
+        AppModel.shared.stopRunning(source: "intent")
+        return .result(dialog: title.map { "Stopped \($0)." } ?? "Nothing was running.")
+    }
+}
+
+/// One NFC sticker on the shower door: the first tap starts Shower, the next stops it.
+struct ToggleActivityIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Start or Stop Activity"
+    static var description = IntentDescription("Stops it if it's what's running, otherwise starts it. One NFC sticker per thing.")
+    @Parameter(title: "Activity") var activity: ActivityEntity
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let m = AppModel.shared
+        m.log(.intent, "ToggleActivityIntent", ["activity": activity.id])
+        if ActivityToggle.ops(activity.id, running: m.running).first?.verb == .stop {
+            m.stopRunning(source: "toggle")
+            return .result(dialog: "Stopped \(activity.id).")
+        }
+        m.start(title: activity.id, source: "toggle")
+        return .result(dialog: "Started \(activity.id).")
+    }
+}
+
+/// N4: an alarm stopped (Productium's own alarm's Stop, or the Shortcuts "When alarm is stopped" automation).
+struct AlarmStoppedIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Alarm Stopped"
+    static var description = IntentDescription("Tells Productium when you turned your alarm off, so it knows when you woke up.")
+    @Parameter(title: "When it rang") var ringAt: Date?
+
+    init() {}
+    init(ringAt: Date) { self.ringAt = ringAt }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        AppModel.shared.log(.intent, "AlarmStoppedIntent")
+        AppModel.shared.alarmStopped(ringAt: ringAt)
+        return .result()
+    }
+}
+
+/// M4: donate what you start and stop, so iOS can suggest it on the Lock Screen and in Spotlight at the usual time.
+enum Donations {
+    static func started(_ title: String) {
+        Task { _ = try? await IntentDonationManager.shared.donate(intent: StartActivityIntent(title)) }
+    }
+    static func stopped() {
+        Task { _ = try? await IntentDonationManager.shared.donate(intent: StopActivityIntent()) }
     }
 }
 
@@ -257,10 +333,14 @@ struct ProductiumShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: TellProductiumIntent(), phrases: ["Tell \(.applicationName)", "Add to \(.applicationName)"],
                     shortTitle: "Tell Productium", systemImageName: "text.bubble")
-        AppShortcut(intent: CheckInIntent(), phrases: ["\(.applicationName) \(\.$phrase)", "Check in with \(.applicationName)"],
-                    shortTitle: "Check in", systemImageName: "location")
+        AppShortcut(intent: StartActivityIntent(), phrases: ["Start \(\.$activity) in \(.applicationName)",
+                                                             "Track \(\.$activity) in \(.applicationName)"],
+                    shortTitle: "Start Activity", systemImageName: "play.fill")
+        AppShortcut(intent: StopActivityIntent(), phrases: ["Stop in \(.applicationName)", "I'm done in \(.applicationName)"],
+                    shortTitle: "Stop Activity", systemImageName: "stop.fill")
+        AppShortcut(intent: ToggleActivityIntent(), phrases: ["Toggle \(\.$activity) in \(.applicationName)"],
+                    shortTitle: "Start or Stop", systemImageName: "playpause.fill")
         AppShortcut(intent: LogMoodIntent(), phrases: ["Log mood in \(.applicationName)"], shortTitle: "Log mood", systemImageName: "face.smiling")
-        AppShortcut(intent: StartFocusIntent(), phrases: ["Start focus in \(.applicationName)"], shortTitle: "Start focus", systemImageName: "leaf")
         AppShortcut(intent: CurrentPlanIntent(), phrases: ["What's the plan in \(.applicationName)", "What should I do in \(.applicationName)"],
                     shortTitle: "Plan Now", systemImageName: "clock")
     }

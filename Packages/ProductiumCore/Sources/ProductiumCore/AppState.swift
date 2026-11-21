@@ -25,6 +25,10 @@ public struct Integrations: Codable, Hashable, Sendable {
     public var notifications = false
     public var motion = false
     public var healthNeedsRequest = false
+    /// v1.2 M9: open tasks mirrored into a "Productium" list in Reminders.
+    public var reminders = false
+    /// v1.2 M5: new Screen Time screenshots read on the phone.
+    public var photos = false
 
     public init() {}
 
@@ -35,6 +39,7 @@ public struct Integrations: Codable, Hashable, Sendable {
         location = v(.location, false); alarms = v(.alarms, false)
         notifications = v(.notifications, false); motion = v(.motion, false)
         healthNeedsRequest = v(.healthNeedsRequest, false)
+        reminders = v(.reminders, false); photos = v(.photos, false)
     }
 }
 
@@ -66,35 +71,54 @@ public struct AppState: Codable, Sendable {
     public var dayPlans: [DayKey: [UUID: Int]] = [:]
     /// v1.2 F3: charts pinned to Review. Only the query is kept; the numbers are computed live from the log.
     public var pinnedCharts: [PinnedChart] = []
+    /// v1.2 C5: the taxonomy pass's runs (each can be reverted).
+    public var taxonomy = TaxonomyLog()
+    /// v1.2 P2: the patterns the last insight pass chose (shown in Review → Today and the Weekly Note).
+    public var patterns: [Pattern] = []
+    /// v1.2 Part N: what the phone noticed, asked and learned.
+    public var inference = InferenceState()
+    /// v1.2 Part H: how every task ended (kept after the task is deleted).
+    public var taskHistory = TaskHistory()
+    /// v1.2 Part I: your goals and the AI's (the built-in tracking goal is `Goal.trackingGaps`, not stored).
+    public var goals: [Goal] = []
+    /// v1.2 D4 / A7: what the tracking prompts asked and when you answered.
+    public var prompts = PromptLog()
+    /// v1.2 D2: start buttons.
+    public var quickStarts = QuickStarts()
+    /// v1.2 A9: replies saved before they're sent; removed once applied.
+    public var outbox = Outbox()
+    /// v1.2 C2: learned title → category rules and your corrections.
+    public var categoryRules = CategoryRules()
     /// v1.2 Part T: the development log, in every backup.
     public var telemetry = Telemetry()
     public var prefs = Preferences()
     public var items: [WorkItem] = []
-    public var routines: [Routine] = Routine.defaults
     public var planHistory: [String: [PlannedBlock]] = [:]
     /// Planned bedtime per night, keyed by the morning (for "in bed on time").
     public var plannedBedtimes: [String: Date] = [:]
     public var progress: [ProgressEntry] = []
     public var moods: [MoodEntry] = []
     public var health: [HealthDay] = []
+    /// v1.2 A6: what the last Health reads did (errors, sample counts, the night's source).
+    public var healthReads = HealthReadLog()
     public var motion: [MotionSpan] = []
     public var screen: [ScreenDay] = []
     public var screenAverages: [ScreenDay] = []
     public var scrollingApps: [String: Bool] = [:]
     /// Named day sequences (A/B rotations) and labels ("exam-week", "no-school").
     public var dayRules = DayRuleBook()
-    /// Things the student said that the app couldn't act on (v1.2's backlog).
-    /// Alarms added, moved or switched off by the box or the insight pass (`AlarmRules`).
-    public var alarmRules: [AlarmRule] = []
+    /// v1.2 J: changes waiting for your Approve / Decline (risky box ops, alarms the insight pass proposes).
+    public var approvals: [Approval] = []
     public var learned = LearnedModel()
     public var beliefs = Beliefs()
     public var policy = BehaviourPolicy()
     public var taper = ScreenTaper()
-    public var flashcards: [Flashcard] = []
-    public var reads: [ReadPiece] = []
     public var plan: Plan = .empty
     public var places: [SavedPlace] = []
     public var visits: [PlaceVisit] = []
+    /// v1.2 Part E: places that name themselves, and the location history (180 days).
+    public var placeBook = PlaceBook()
+    public var trace = LocationTrace()
     @SortedSet public var declinedPlaces: Set<String> = []
     public var integrations = Integrations()
     public var review: WeeklyReview?
@@ -112,18 +136,15 @@ public struct AppState: Codable, Sendable {
     /// Which Life Metrics tiles show on Review, in order (G3).
     public var metricTiles: [MetricID] = MetricID.defaultTiles
     public var rewardSettings = RewardSettings()
-    public var gaps = GapLog()
     public var appOpens: [Date] = []
     public var usage = UsageLedger()
     public var snoozed: [UUID: Date] = [:]
 
     public var dumpState: DumpState {
         get {
-            var ds = DumpState(items: items,
-                      routines: routines, moods: moods, screen: screen, prefs: prefs, policy: policy,
+            var ds = DumpState(items: items, moods: moods, screen: screen, prefs: prefs, policy: policy,
                       progress: progress, beliefs: beliefs, scrollingApps: scrollingApps, screenAverages: screenAverages)
             ds.dayRules = dayRules
-            ds.alarmRules = alarmRules
             ds.metricTiles = metricTiles
             ds.alarmsAllowed = integrations.alarms
             ds.rewardSettings = rewardSettings
@@ -131,7 +152,6 @@ public struct AppState: Codable, Sendable {
         }
         set {
             items = newValue.items
-            routines = newValue.routines
             moods = newValue.moods
             screen = newValue.screen
             prefs = newValue.prefs
@@ -141,7 +161,6 @@ public struct AppState: Codable, Sendable {
             scrollingApps = newValue.scrollingApps
             screenAverages = newValue.screenAverages
             dayRules = newValue.dayRules
-            alarmRules = newValue.alarmRules
             metricTiles = newValue.metricTiles
             rewardSettings = newValue.rewardSettings
         }
@@ -162,30 +181,39 @@ public struct AppState: Codable, Sendable {
         categories = v(.categories, d.categories)
         dayPlans = v(.dayPlans, d.dayPlans)
         telemetry = v(.telemetry, d.telemetry)
+        outbox = v(.outbox, d.outbox)
+        prompts = v(.prompts, d.prompts)
+        goals = v(.goals, d.goals)
+        taskHistory = v(.taskHistory, d.taskHistory)
+        inference = v(.inference, d.inference)
+        taxonomy = v(.taxonomy, d.taxonomy)
+        patterns = v(.patterns, d.patterns)
+        quickStarts = v(.quickStarts, d.quickStarts)
+        categoryRules = v(.categoryRules, d.categoryRules)
         pinnedCharts = v(.pinnedCharts, d.pinnedCharts)
         prefs = v(.prefs, d.prefs)
         items = v(.items, d.items)
-        routines = v(.routines, d.routines)
         planHistory = v(.planHistory, d.planHistory)
         plannedBedtimes = v(.plannedBedtimes, d.plannedBedtimes)
         progress = v(.progress, d.progress)
         moods = v(.moods, d.moods)
         health = v(.health, d.health)
+        healthReads = v(.healthReads, d.healthReads)
         motion = v(.motion, d.motion)
         screen = v(.screen, d.screen)
         screenAverages = v(.screenAverages, d.screenAverages)
         scrollingApps = v(.scrollingApps, d.scrollingApps)
         dayRules = v(.dayRules, d.dayRules)
-        alarmRules = v(.alarmRules, d.alarmRules)
+        approvals = v(.approvals, d.approvals)
         learned = v(.learned, d.learned)
         beliefs = v(.beliefs, d.beliefs)
         policy = v(.policy, d.policy)
         taper = v(.taper, d.taper)
-        flashcards = v(.flashcards, d.flashcards)
-        reads = v(.reads, d.reads)
         plan = v(.plan, d.plan)
         places = v(.places, d.places)
         visits = v(.visits, d.visits)
+        placeBook = v(.placeBook, d.placeBook)
+        trace = v(.trace, d.trace)
         declinedPlaces = v(.declinedPlaces, d.declinedPlaces)
         integrations = v(.integrations, d.integrations)
         review = v(.review, d.review)
@@ -199,7 +227,6 @@ public struct AppState: Codable, Sendable {
         rewards = v(.rewards, d.rewards)
         metricTiles = v(.metricTiles, d.metricTiles)
         rewardSettings = v(.rewardSettings, d.rewardSettings)
-        gaps = v(.gaps, d.gaps)
         appOpens = v(.appOpens, d.appOpens)
         usage = v(.usage, d.usage)
         snoozed = v(.snoozed, d.snoozed)
@@ -208,6 +235,11 @@ public struct AppState: Codable, Sendable {
     public mutating func prune(now: Date) {
         snoozed = snoozed.filter { $0.value > now.addingTimeInterval(-3600) }
         telemetry.prune(now: now)
+        outbox.prune(now: now)
+        prompts.prune(now: now)
+        trace.prune(now: now)
+        inference.prune(now: now)
+        approvals = Approvals.live(approvals, now: now)
     }
 
     public mutating func restore(full s: AppState, keepingDevice: Bool = true) {

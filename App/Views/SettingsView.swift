@@ -33,21 +33,22 @@ struct SettingsView: View {
             }
 
             Section {
-                row("Schedule", "calendar", .red, "\(model.legacyCommitments.count)") { ScheduleSettings() }
                 row("Sleep", "bed.double.fill", Theme.sleep, durationLabel(p.sleepNeedMinutes)) { SleepSettings() }
-                row("Study", "book.fill", .blue, nil) { StudySettings() }
                 row("Screen Time", "hourglass", Theme.screen, model.state.taper.targetMinutes.map { durationLabel($0) }) { ScreenTimeSettings() }
+                row("Notifications", "bell.badge.fill", .red, model.state.integrations.notifications ? p.nudges.level.title : "Off") { NudgeSettingsView() }
+                row("Alarms", "alarm.fill", .orange, model.state.integrations.alarms ? "On" : "Off") { AlarmsSettings() }
             }
 
             Section {
-                row("Notifications", "bell.badge.fill", .red, model.state.integrations.notifications ? p.nudges.level.title : "Off") { NudgeSettingsView() }
-                row("Shortcuts & Automations", "square.stack.3d.up.fill", .indigo, nil) { ShortcutsGuideView() }
+                row("Goals", "target", .orange, "\(model.goalsAll.count)") { GoalsSettings() }
+                row("Categories", "square.grid.2x2.fill", .blue, "\(model.state.categories.nodes.count)") { CategoriesSettings() }
+                row("Celebrations", "party.popper.fill", .pink, model.state.rewardSettings.level.title) { CelebrationSettings() }
             }
 
             Section {
                 row("Connections", "link", .green, nil) { ConnectionSettings() }
-                row("Places", "location.fill", .blue, model.state.integrations.location ? "On" : "Off") { PlacesSettings() }
-                row("Celebrations", "party.popper.fill", .pink, model.state.rewardSettings.level.title) { CelebrationSettings() }
+                row("Shortcuts & Automations", "square.stack.3d.up.fill", .indigo, nil) { ShortcutsGuideView() }
+                row("Privacy", "hand.raised.fill", .blue, nil) { PrivacySettings() }
                 row("What Productium Thinks", "brain.head.profile", .orange, nil) { ThinksView() }
                 row("About You", "person.text.rectangle.fill", .teal, nil) { AboutYouView() }
             }
@@ -292,53 +293,6 @@ struct UsageView: View {
     }
 }
 
-struct ScheduleSettings: View {
-    @Environment(AppModel.self) private var model
-    @State private var editing: Commitment?
-
-    var body: some View {
-        @Bindable var m = model
-        List {
-            Section {
-                WeekdayToggles(days: $m.state.prefs.schoolDays, label: "School Days")
-            }
-            Section {
-                let sorted = model.legacyCommitments.sorted { ($0.kind == .school ? 0 : 1, $0.start, $0.title) < ($1.kind == .school ? 0 : 1, $1.start, $1.title) }
-                ForEach(sorted) { c in
-                    Button { editing = c } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Circle().fill(Theme.named(model.state.prefs.colors[c.kind.rawValue] ?? model.state.prefs.colors["activity"]) ?? Theme.fixed)
-                                    .frame(width: 8, height: 8)
-                                Text(c.title).foregroundStyle(.primary)
-                            }
-                            Text("\(c.weekdays.sorted().map { Calendar.current.shortWeekdaySymbols[$0 - 1] }.joined(separator: " ")), \(c.start.label) to \(c.end.label)")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .onDelete { offsets in
-                    let ids = Set(offsets.map { sorted[$0].id })
-                    m.state.entries.removeAll { ids.contains($0.id) }
-                    model.replan()
-                }
-                Button {
-                    editing = Commitment(title: "", kind: .extracurricular, weekdays: [2, 4], start: TimeOfDay(16), end: TimeOfDay(17, 30))
-                } label: { Label("Add Class or Activity", systemImage: "plus") }
-            } header: { Text("Classes & Activities") } footer: {
-                Text("Or just tell the Inbox: “soccer mon and wed 4 to 5:30”, or “split school into my periods” with your timetable.")
-            }
-            Section {
-                NavigationLink { ColorSettings() } label: { Label("Colours", systemImage: "paintpalette") }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle("Schedule")
-        .sheet(item: $editing) { c in CommitmentEditor(commitment: c) }
-        .onChange(of: model.state.prefs) { _, _ in model.replan() }
-    }
-}
-
 struct SleepSettings: View {
     @Environment(AppModel.self) private var model
 
@@ -363,6 +317,18 @@ struct SleepSettings: View {
                 }
             } header: { Text("Wake Up") } footer: {
                 Text("Keeping free-day wake within about an hour of school days avoids “social jet lag”.")
+            }
+            Section {
+                let r = model.state.healthReads
+                LabeledContent("Source", value: r.lastSleepSource ?? "Nothing measured yet")
+                LabeledContent("Last read", value: r.lastSuccess.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never")
+                if let n = r.lastSleepSamples { LabeledContent("Sleep samples", value: "\(n)") }
+                if let e = r.lastError, let at = r.lastErrorAt, at > (r.lastSuccess ?? .distantPast) {
+                    Label("Last read failed \(at.formatted(date: .omitted, time: .shortened)): \(e)", systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
+            } header: { Text("Where Sleep Comes From") } footer: {
+                Text("An Apple Watch gives sleep stages; an iPhone alone gives time in bed (Sleep schedule). With neither, sleep is estimated from when the phone went still, and you're asked to confirm it in the morning. A read that finds nothing never wipes a night.")
             }
         }
         .listStyle(.insetGrouped)
@@ -589,23 +555,40 @@ struct ConnectionSettings: View {
                     m.state.integrations.motion = on ? await MotionService.shared.requestAccess() : false
                     await model.refresh(full: false)
                 }
+                toggle("Location", "location.fill", .blue, model.state.integrations.location) { on in
+                    m.state.integrations.location = on
+                    LocationService.shared.visitsWanted = on
+                    if on { LocationService.shared.requestAlways() }
+                    LocationService.shared.monitorVisits(on)
+                    model.save()
+                }
+                toggle("Reminders", "checklist", .orange, model.state.integrations.reminders) { on in
+                    m.state.integrations.reminders = on ? await ReminderService.shared.requestAccess() : false
+                    await ReminderService.shared.sync(model)
+                }
+                toggle("Screenshots", "photo.on.rectangle", .purple, model.state.integrations.photos) { on in
+                    m.state.integrations.photos = on ? await ScreenshotWatcher.shared.requestAccess() : false
+                    if m.state.integrations.photos { ScreenshotWatcher.shared.start() }
+                    model.save()
+                }
                 if model.state.integrations.health {
                     LabeledContent("Health Status", value: model.healthStatus.title)
                 }
             } footer: {
-                Text("Health brings in sleep, steps and daylight. Motion notices walks and rides (not where), so your commute is learned and your day fills in by itself. The plan is written to a separate “Productium” calendar.")
+                Text("""
+                Health: sleep (Watch or iPhone), workouts, steps, heart rate. Calendar: events become time the plan works around. \
+                Motion: walks and rides log themselves. Location: each entry knows where it happened, places name themselves, and \
+                Productium notices when your day differs from the plan. Reminders: your open tasks in a “Productium” list (its \
+                widget, your Watch and Siri show them). Screenshots: Screen Time screenshots are read on the phone by themselves.
+                """)
             }
             Section {
                 toggle("Notifications", "bell.badge.fill", .red, model.state.integrations.notifications) { on in
                     m.state.integrations.notifications = on ? await NotificationService.requestAuthorization() : false
                     model.replan()
                 }
-                toggle("Wake-Up Alarms", "alarm.fill", .orange, model.state.integrations.alarms) { on in
-                    m.state.integrations.alarms = on ? await AlarmService.requestAuthorization() : false
-                    model.replan()
-                }
             } footer: {
-                Text("Wake-Up Alarms: one real alarm each morning, set from your first class and your usual commute. Bedtime, leave-by and missed-start alarms are a separate switch in Nudges (“Alarms for the Important Ones”).")
+                Text("Full-screen alarms are in Settings → Alarms.")
             }
         }
         .listStyle(.insetGrouped)
@@ -617,92 +600,6 @@ struct ConnectionSettings: View {
         Toggle(isOn: Binding(get: { value }, set: { on in Task { await set(on) } })) {
             SettingsLabel(title: title, symbol: symbol, color: color)
         }
-    }
-}
-
-struct PlacesSettings: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var m = model
-        List {
-            Section {
-                Toggle("Auto Check-in with Places", isOn: Binding(get: { model.state.integrations.location }, set: { on in
-                    m.state.integrations.location = on
-                    LocationService.shared.visitsWanted = on
-                    if on { LocationService.shared.requestAlways() }
-                    LocationService.shared.monitorVisits(on)
-                    LocationService.shared.monitor(on ? model.state.places : [])
-                    model.save()
-                }))
-                LabeledContent("Location Access", value: LocationService.shared.statusText)
-                if LocationService.shared.needsSettings {
-                    Button("Open Settings → Location → Always") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-                    }
-                }
-            } footer: {
-                Text(LocationService.shared.status == .authorizedWhenInUse
-                     ? "Only While Using: leaving home and arriving at school are missed when the app is closed. Choose Always in Settings so they're noticed on their own."
-                     : "Leaving home and arriving at school get logged on their own, so your commute is learned without tapping. Only arrive/leave events are kept, never a location history.")
-            }
-            Section("Saved Places") {
-                ForEach(["home", "school"], id: \.self) { id in
-                    Button {
-                        Task {
-                            guard let loc = await LocationService.shared.currentLocation() else { model.toast = "Couldn't get your location."; return }
-                            m.state.places.removeAll { $0.id == id }
-                            m.state.places.append(SavedPlace(id: id, name: id.capitalized, latitude: loc.coordinate.latitude, longitude: loc.coordinate.longitude))
-                            LocationService.shared.monitor(model.state.places)
-                            model.toast = "\(id.capitalized) saved."
-                            model.save()
-                        }
-                    } label: {
-                        LabeledContent {
-                            Text(model.state.places.contains { $0.id == id } ? "Saved" : "Not Set")
-                        } label: {
-                            SettingsLabel(title: "I'm at \(id.capitalized) Now", symbol: id == "home" ? "house.fill" : "graduationcap.fill",
-                                          color: id == "home" ? .blue : .orange)
-                                .foregroundStyle(.primary)
-                        }
-                    }
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle("Places")
-    }
-}
-
-struct RoutineSettings: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var m = model
-        List {
-            Section {
-                ForEach($m.state.routines) { $r in
-                    Toggle(isOn: $r.enabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(r.name)
-                            Text(r.disagreement ?? "\(r.confidence.title) · \(r.minutes) min")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            } footer: {
-                Text("Durations are learned from your check-ins and places.")
-            }
-            Section {
-                Button("Re-learn Routines", role: .destructive) {
-                    for i in m.state.routines.indices { m.state.routines[i].samples = []; m.state.routines[i].stated = nil; m.state.routines[i].learnedFrom = [] }
-                    model.replan()
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle("Routines")
-        .onChange(of: model.state.routines) { _, _ in model.replan() }
     }
 }
 
@@ -912,41 +809,6 @@ struct TimePicker: View {
             get: { Calendar.current.date(bySettingHour: time.hour, minute: time.minute, second: 0, of: Date()) ?? Date() },
             set: { let c = Calendar.current.dateComponents([.hour, .minute], from: $0); time = TimeOfDay(c.hour ?? 0, c.minute ?? 0) }),
                    displayedComponents: .hourAndMinute)
-    }
-}
-
-struct CommitmentEditor: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State var commitment: Commitment
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                TextField("Name (e.g. Soccer)", text: $commitment.title)
-                Picker("Type", selection: $commitment.kind) {
-                    ForEach(CommitmentKind.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
-                }
-                WeekdayToggles(days: $commitment.weekdays, label: "Days")
-                TimePicker(label: "Starts", time: $commitment.start)
-                TimePicker(label: "Ends", time: $commitment.end)
-            }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        var entries = model.state.entries, tree = model.state.categories
-                        Timetable.write(commitment, into: &entries, tree: &tree,
-                                        anchor: model.cal.startOfDay(for: Date()), calendar: model.cal)
-                        model.state.entries = entries
-                        model.state.categories = tree
-                        model.replan()
-                        dismiss()
-                    }
-                    .disabled(commitment.title.isEmpty || commitment.weekdays.isEmpty || commitment.end <= commitment.start)
-                }
-            }
-        }
     }
 }
 

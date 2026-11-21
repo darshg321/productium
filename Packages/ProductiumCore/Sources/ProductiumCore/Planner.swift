@@ -20,6 +20,10 @@ public struct PlannerInput: Sendable {
     /// v1.2: rules whose `limits` change the planner on their days.
     public var rules: [Rule]
     public var categories: CategoryTree
+    /// v1.2 D7: things done on most days at a similar time get their slot (`Habits.detect`).
+    public var habits: [Habit] = []
+    /// v1.2 H3: tasks like ones you usually drop (`TaskHistory.atRisk`): a starter session first, early, and weighted up.
+    public var atRisk: Set<UUID> = []
 
     public init(now: Date, calendar: Calendar = .current, items: [WorkItem],
                 preferences: Preferences = Preferences(),
@@ -228,7 +232,8 @@ public enum Planner {
                 var fixed: [PlannedBlock] = []
                 if let r = routine("get_ready", on: day) {
                     fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: wakeT,
-                                              end: wakeT.addingTimeInterval(Double(r.minutes) * 60), title: r.name))
+                                              end: wakeT.addingTimeInterval(Double(r.minutes) * 60), title: r.name,
+                                              sourceId: "routine:\(r.id)"))
                 }
                 let todays = fixedEntries(on: day).filter { $0.taskId == nil }.map {
                     (start: $0.start, end: $0.end,
@@ -244,7 +249,8 @@ public enum Planner {
                     }
                     if let s, let e {
                         busy.append(Interval(start: s, end: e))
-                        fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: s, end: e, title: r.name))
+                        fixed.append(PlannedBlock(id: stableId("r", r.id, day), kind: .routine, start: s, end: e, title: r.name,
+                                                  sourceId: "routine:\(r.id)"))
                     }
                 }
                 for de in fixedEntries(on: day) {
@@ -259,7 +265,9 @@ public enum Planner {
                 }
                 let beliefs = input.beliefs
                 let dinnerMinutes = beliefs.minutes("routines.dinnerMinutes")
-                if dinnerMinutes > 0 {
+                // "Dinner 7:30" said as an entry is your dinner: the learned one steps aside.
+                let ownMeal = fixedEntries(on: day).contains { input.categories.isUnder($0.category, CategoryTree.meals) }
+                if dinnerMinutes > 0 && !ownMeal {
                     let dinner = TimeOfDay(minutes: beliefs.minutes("routines.dinnerTime"))
                     let s = at(day, dinner), e = s.addingTimeInterval(Double(dinnerMinutes) * 60)
                     if !busy.contains(where: { $0.start < e && s < $0.end }) {
@@ -267,6 +275,15 @@ public enum Planner {
                         fixed.append(PlannedBlock(id: stableId("m", "dinner", day), kind: .meal,
                                                   start: s, end: e, title: "Dinner"))
                     }
+                }
+
+                // D7: habits keep their usual slot when it's free (planned and assumed, like any routine).
+                for h in input.habits {
+                    let s = at(day, h.start), e = s.addingTimeInterval(Double(h.minutes) * 60)
+                    guard s >= wakeT, e <= bedtime, !busy.contains(where: { $0.start < e && s < $0.end }) else { continue }
+                    busy.append(Interval(start: s, end: e))
+                    fixed.append(PlannedBlock(id: stableId("h", h.key, day), kind: .routine, start: s, end: e, title: h.title,
+                                              hint: Habits.note, sourceId: "habit:\(h.category)"))
                 }
 
                 let studyFrom = windowStart
@@ -357,6 +374,21 @@ public enum Planner {
                         if ds[k].preferredDay.map({ $0 < dayIndex(of: nb) }) == true { ds[k].preferredDay = dayIndex(of: nb) }
                     }
                 }
+                // H3: a kind you usually drop gets a short starter as soon as possible (the first step named), and
+                // the rest of it weighs more when slots are handed out.
+                if input.atRisk.contains(item.id), !item.kind.isMemoryBased, let first = ds.first {
+                    var boosted = item
+                    boosted.importance = min(5, item.importance + 1)
+                    for k in ds.indices { ds[k].item = boosted }
+                    if ds[0].minutes >= Planner.minChunk * 2 { ds[0].minutes -= Planner.minChunk } else { ds.removeFirst() }
+                    let from = max(input.now, item.notBefore ?? input.now)
+                    let endOfTomorrow = cal.date(byAdding: .day, value: 2, to: cal.startOfDay(for: from)) ?? item.due
+                    let starter = Demand(item: boosted, minutes: Planner.minChunk, earliest: from, latest: min(item.due, endOfTomorrow),
+                                         preferredDay: dayIndex(of: from), isReview: false, title: item.title,
+                                         hint: "Starter: " + (item.firstStep ?? "just open it and do the first small part"))
+                    _ = first
+                    ds.insert(starter, at: 0)
+                }
                 out += ds
             }
             return out
@@ -400,7 +432,7 @@ public enum Planner {
                 } else if last {
                     hint = "Do a timed practice test, mark it, and fix only what you missed. Then sleep: it's when today's studying gets stored."
                 } else {
-                    hint = "Retrieval practice: questions or flashcards from memory first, notes only to check."
+                    hint = "Retrieval practice: answer questions from memory first, notes only to check."
                 }
                 for chunk in split(sessionsMinutes[k], focus: min(50, input.policy.maxBlockMinutes)) {
                     out.append(Demand(item: item, minutes: chunk, earliest: max(input.now, windowStart),
@@ -803,4 +835,14 @@ public enum Planner {
 public func minutesLabel(_ m: Int) -> String {
     if m < 60 { return "\(m)m" }
     return m % 60 == 0 ? "\(m / 60)h" : "\(m / 60)h \(m % 60)m"
+}
+
+extension PlannerInput {
+    /// The same input with D7's habits and H3's at-risk tasks.
+    public func with(habits: [Habit], atRisk: Set<UUID>) -> PlannerInput {
+        var x = self
+        x.habits = habits
+        x.atRisk = atRisk
+        return x
+    }
 }

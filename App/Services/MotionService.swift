@@ -44,6 +44,14 @@ final class MotionService {
         return MotionSample(at: a.startDate, kind: kind, confidence: conf)
     }
 
+    /// Steps over one stretch (a walk), for its cadence (N5).
+    func steps(from: Date, to: Date) async -> Int? {
+        guard CMPedometer.isStepCountingAvailable(), to > from else { return nil }
+        return await withCheckedContinuation { c in
+            CMPedometer().queryPedometerData(from: from, to: to) { data, _ in c.resume(returning: data?.numberOfSteps.intValue) }
+        }
+    }
+
     /// Steps per day from the phone itself (no Health permission), up to 7 days back.
     func stepsByDay(back n: Int, calendar cal: Calendar) async -> [Date: Int] {
         guard CMPedometer.isStepCountingAvailable() else { return [:] }

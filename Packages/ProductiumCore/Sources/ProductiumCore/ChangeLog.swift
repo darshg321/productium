@@ -13,8 +13,6 @@ public enum InsightChange: Codable, Hashable, Sendable {
     case aboutMe(section: AboutMeSection, text: String)
     /// Celebrations turned down because they made no difference (F6). Revert restores `from`.
     case celebrations(to: CelebrationLevel, from: CelebrationLevel)
-    /// An alarm the insight pass adds or moves (a nudge to start earlier, a bedtime alarm 15 minutes sooner).
-    case alarm(AlarmRule)
 
     var isAboutMe: Bool { if case .aboutMe = self { return true }; return false }
     var isBeliefGroup: Bool { if case .beliefGroup = self { return true }; return false }
@@ -28,7 +26,6 @@ public enum InsightChange: Codable, Hashable, Sendable {
         case .beliefGroup: return "group"
         case .aboutMe(_, let t): return "about:\(t.prefix(40))"
         case .celebrations: return "celebrations"
-        case .alarm(let r): return "alarm:\(r.kind.rawValue):\(r.target?.rawValue ?? r.itemId?.uuidString ?? r.label)"
         }
     }
 }
@@ -55,6 +52,8 @@ public struct LoggedChange: Codable, Hashable, Identifiable, Sendable {
     public var created: UUID?
     /// The knob's value before (restored on revert).
     public var previous: Double?
+    /// The task's first step before (restored on revert).
+    public var previousText: String?
 
     public init(id: UUID = UUID(), runId: UUID, change: InsightChange, from: String = "", to: String = "", reason: String,
                 evidence: [String] = [], model: String, at: Date, status: ChangeStatus = .applied) {
@@ -73,12 +72,11 @@ public struct LoggedChange: Codable, Hashable, Identifiable, Sendable {
     public var title: String {
         switch change {
         case .knob(let k, _): return "\(Registry.knob(k)?.note.capitalizedFirst ?? k): \(from) → \(to)"
-        case .starterStep(_, let t, let m, _): return "Added a \(m)-minute first step: \(t)"
+        case .starterStep(_, let t, _, _): return "Named a first step: \(t)"
         case .intention(let i): return "Reminds you: \(i.text)"
         case .beliefGroup(let g, _): return "Started noticing: \(g.title)"
         case .aboutMe(let s, let t): return "About You (\(s.rawValue)): \(t)"
         case .celebrations(let to, _): return "Celebrations: \(to.title)"
-        case .alarm(let r): return "Alarm: \(r.summary(calendar: Calendar(identifier: .gregorian)))"
         }
     }
 
@@ -204,18 +202,6 @@ public struct ChangeLog: Codable, Hashable, Sendable {
                 return "One new group a week"
             }
             guard !s.beliefs.groups.contains(where: { $0.id == g.id }) else { return "\(g.title) already exists" }
-        case .alarm(var r):
-            r.source = .reflection
-            r.createdAt = now
-            if r.kind == .shift || r.kind == .suppress {
-                guard let t = r.target, t != .wake || r.kind == .shift else { return "The morning alarm is the student's to remove" }
-                if r.kind == .shift { r.minutes = max(-30, min(30, r.minutes)); guard r.minutes != 0 else { return "No change to the alarm" } }
-                _ = t
-            }
-            guard s.alarmRules.filter({ $0.source == .reflection }).count < 6 else { return "Six alarm changes already" }
-            guard r.kind != .clock || r.when != nil else { return "A repeating alarm needs days" }
-            p.change = .alarm(r)
-            p.to = r.summary(items: s.items, calendar: Calendar(identifier: .gregorian))
         case .celebrations(let to, let from):
             guard to == .subtle, from == .full, s.rewardSettings.level == .full else { return "Celebrations are already turned down" }
             p.from = from.title
@@ -230,12 +216,11 @@ public struct ChangeLog: Codable, Hashable, Sendable {
         case .knob(let key, let to):
             p.previous = Knobs.value(key, in: s.policy)
             guard case .changed = Knobs.set(key, String(to), by: .reflection, in: &s) else { return "\(key) couldn't be set" }
-        case .starterStep(let parent, let title, let minutes, let due):
-            guard let task = s.items.first(where: { $0.id == parent }) else { return "No task" }
-            let step = WorkItem(title: title, kind: .chore, subject: task.subject, due: min(due, task.due), estimateMinutes: minutes,
-                                importance: task.importance, difficulty: 1, parentId: parent, source: .ai, createdAt: now)
-            s.items.append(step)
-            p.created = step.id
+        case .starterStep(let parent, let title, _, _):
+            // v1.2 H4: the first step is named on the task itself (reminders say it), not added as another task.
+            guard let i = s.items.firstIndex(where: { $0.id == parent }) else { return "No task" }
+            p.previousText = s.items[i].firstStep
+            s.items[i].firstStep = title
         case .intention(let intent):
             s.policy.intentions.append(intent)
         case .beliefGroup(let g, let ev):
@@ -244,8 +229,6 @@ public struct ChangeLog: Codable, Hashable, Sendable {
             g.createdAt = now
             g.note = ev.joined(separator: "; ")
             s.beliefs.groups.append(g)
-        case .alarm(let r):
-            s.alarmRules.append(r)
         case .celebrations(let to, _):
             s.rewardSettings.level = to
         case .aboutMe(let section, let text):
@@ -263,15 +246,13 @@ public struct ChangeLog: Codable, Hashable, Sendable {
         case .knob(let key, _):
             guard let prev = p.previous else { return false }
             Knobs.write(key, prev, in: &s.policy)
-        case .starterStep:
-            if let c = p.created { s.items.removeAll { $0.id == c && !$0.isDone } }
+        case .starterStep(let parent, let title, _, _):
+            if let i = s.items.firstIndex(where: { $0.id == parent }), s.items[i].firstStep == title { s.items[i].firstStep = p.previousText }
         case .intention(let intent):
             s.policy.intentions.removeAll { $0.id == intent.id }
         case .beliefGroup(let g, _):
             s.beliefs.groups.removeAll { $0.id == g.id }
             s.beliefs.items.removeAll { $0.group == g.id }
-        case .alarm(let r):
-            s.alarmRules.removeAll { $0.id == r.id }
         case .celebrations(_, let from):
             s.rewardSettings.level = from
         case .aboutMe(let section, let text):

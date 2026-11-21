@@ -94,21 +94,31 @@ enum Theme {
     static func color(for f: AIFeature) -> Color {
         switch f {
         case .box: return .blue
-        case .flashcards: return .orange
-        case .reads: return .brown
         case .breakdown: return .purple
         case .review: return .teal
+        case .taxonomy: return .orange
         }
     }
 
     static func symbol(for f: AIFeature) -> String {
         switch f {
         case .box: return "tray.and.arrow.down.fill"
-        case .flashcards: return "rectangle.on.rectangle"
-        case .reads: return "text.book.closed.fill"
         case .breakdown: return "list.bullet.indent"
         case .review: return "sparkles"
+        case .taxonomy: return "square.stack.3d.up"
         }
+    }
+
+    /// A category's colour (its node's palette name; Untracked is a neutral fill).
+    static func color(category id: CategoryID, tree: CategoryTree) -> Color {
+        if id == CategoryTree.untracked { return Color(.systemGray4) }
+        return named(tree.node(id)?.colour ?? tree.path(id).first?.colour) ?? Color(.systemGray)
+    }
+
+    static func color(group g: CategoryGroup?) -> Color { g.flatMap { named($0.colour) } ?? Color(.systemGray4) }
+
+    static func symbol(category id: CategoryID, tree: CategoryTree) -> String {
+        id == CategoryTree.untracked ? "questionmark.circle" : (tree.node(id)?.symbol ?? "circle")
     }
 
     static func meter(_ fraction: Double) -> Color {

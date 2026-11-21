@@ -138,7 +138,7 @@ struct OnboardingView: View {
                         Text("\(c.title), \(c.weekdays.sorted().map { Calendar.current.shortWeekdaySymbols[$0 - 1] }.joined(separator: " ")), \(c.start.label) to \(c.end.label)")
                             .font(.subheadline)
                     }
-                    ForEach(model.state.items.filter { !$0.isDone && $0.parentId == nil }) { i in
+                    ForEach(model.state.items.filter { $0.isOpen && $0.parentId == nil }) { i in
                         Text("\(i.title), due \(i.due.relativeDay)").font(.subheadline)
                     }
                 }
@@ -153,7 +153,7 @@ struct OnboardingView: View {
         let wake = WakePlanner.plan(for: monday, events: model.legacyCommitments.compactMap { c in
                                         Calendar.current.date(bySettingHour: c.start.hour, minute: c.start.minute, second: 0, of: monday)
                                             .map { FixedEvent(id: c.id.uuidString, title: c.title, start: $0, end: $0.addingTimeInterval(3600), kind: c.kind) }
-                                    }, routines: model.state.routines,
+                                    }, routines: model.routines,
                                     prefs: model.state.prefs, calendar: .current)
         return VStack(alignment: .leading, spacing: 18) {
             IconTile(symbol: "bed.double.fill", color: Theme.sleep, size: 56)

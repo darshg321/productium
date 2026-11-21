@@ -42,4 +42,60 @@ public enum EntryBuilder {
         }
         return written
     }
+
+    /// A5 / B2: nights and naps as Sleep entries. Measured by Health = `health` (outranks the planned Sleep and
+    /// anything assumed); estimated from the phone (stillness, first pickup, the charger) = `sensor`. Nights from your
+    /// own check-ins are already entries. Ids come from the morning's day, so a re-read replaces the night in place and
+    /// keeps your marks. Returns the ids written.
+    @discardableResult
+    public static func sleep(_ days: [HealthDay], entries: inout [Entry], now: Date, calendar cal: Calendar) -> [UUID] {
+        var written: [UUID] = []
+        func put(_ e: Entry) {
+            if let j = entries.firstIndex(where: { $0.id == e.id }) {
+                var x = e
+                x.marks = entries[j].marks
+                if entries[j] != x { entries[j] = x }
+            } else {
+                entries.append(e)
+            }
+            written.append(e.id)
+        }
+        for d in days {
+            guard let bed = d.bedtime, let wake = d.wake, wake > bed, wake <= now.addingTimeInterval(3600),
+                  let src = d.sleepSource ?? (d.sleepMinutes != nil ? .health : nil), src == .health || src == .motion else { continue }
+            let key = DayKeys.key(d.day, cal)
+            put(Entry(id: Entry.sensorId("sleep|\(key)"), title: "Sleep", start: bed, end: min(wake, now), category: CategoryTree.sleep,
+                      note: d.sleepDevice ?? (src == .motion ? "estimated from the phone" : nil),
+                      source: src == .health ? .health : .sensor, createdAt: wake))
+            for n in d.naps ?? [] where n.end <= now {
+                put(Entry(id: Entry.sensorId("nap|\(Int(n.start.timeIntervalSince1970))"), title: "Nap", start: n.start, end: n.end,
+                          category: CategoryTree.sleep, note: d.sleepDevice, source: .health, createdAt: n.end))
+            }
+        }
+        return written
+    }
+
+    /// B2 / N: scrolling sessions (the Shortcuts open / close automations) as `sensor` Scrolling entries; one counted
+    /// only from its check-in or an estimate is still Scrolling, just less sure. Ids from the session, so rebuilds replace.
+    @discardableResult
+    public static func scrolling(_ sessions: [ScrollSession], entries: inout [Entry], now: Date, since: Date) -> [UUID] {
+        var out: [UUID] = []
+        for s in sessions where s.openedAt >= since {
+            guard let end = s.endedAt, end > s.openedAt, end <= now, end.timeIntervalSince(s.openedAt) >= 60 else { continue }
+            let id = Entry.sensorId("scroll|\(s.id.uuidString)")
+            let e = Entry(id: id, title: s.app, start: s.openedAt, end: end, category: CategoryTree.scrolling,
+                          note: s.endSource?.observed == false ? "estimated end" : nil, source: .sensor, createdAt: end)
+            if let j = entries.firstIndex(where: { $0.id == id }) {
+                var x = e
+                x.marks = entries[j].marks
+                x.category = entries[j].category
+                x.filedByYou = entries[j].filedByYou
+                if entries[j] != x { entries[j] = x }
+            } else {
+                entries.append(e)
+            }
+            out.append(id)
+        }
+        return out
+    }
 }

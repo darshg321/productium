@@ -136,37 +136,6 @@ public enum MarkerCategory {
     }
 }
 
-public enum RoutineLearner {
-    public static func learn(day events: [CheckIn], healthWake: Date?, routines: [Routine]) -> [Routine] {
-        var out = routines
-        let sorted = events.sorted { $0.at < $1.at }
-        func observe(_ id: String, from a: Date?, to b: CheckIn?) {
-            guard let a, let b, b.at > a, let idx = out.firstIndex(where: { $0.id == id }),
-                  !out[idx].learnedFrom.contains(b.id) else { return }
-            if out[idx].observe(Int((b.at.timeIntervalSince(a) / 60).rounded())) { out[idx].learnedFrom.insert(b.id) }
-        }
-        func first(_ activity: String, _ phase: MarkerPhase, after: Date? = nil) -> CheckIn? {
-            sorted.first { $0.activity == activity && $0.phase == phase && (after == nil || $0.at > after!) }
-        }
-        let leftHome = first("to_school", .start)
-        observe("to_school", from: leftHome?.at, to: first("to_school", .end, after: leftHome?.at))
-        let leftSchool = first("from_school", .start)
-        observe("from_school", from: leftSchool?.at, to: first("from_school", .end, after: leftSchool?.at))
-        let wake = first("wake", .end)?.at ?? first("sleep", .end)?.at ?? healthWake
-        if let wake, let leftHome, leftHome.at.timeIntervalSince(wake) < 3 * 3600 {
-            observe("get_ready", from: wake, to: leftHome)
-        }
-        return out
-    }
-
-    public static func observedDuration(of activity: String, in events: [CheckIn]) -> Int? {
-        let s = events.sorted { $0.at < $1.at }
-        guard let a = s.first(where: { $0.activity == activity && $0.phase == .start }),
-              let b = s.first(where: { $0.activity == activity && $0.phase == .end && $0.at > a.at }) else { return nil }
-        return Int(b.at.timeIntervalSince(a.at) / 60)
-    }
-}
-
 public struct Segment: Codable, Hashable, Sendable {
     public var start: Date
     public var end: Date

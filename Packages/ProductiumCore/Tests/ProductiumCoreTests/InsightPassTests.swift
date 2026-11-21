@@ -49,13 +49,14 @@ final class InsightPassTests: XCTestCase {
         XCTAssertEqual(out.review.suggestions.count, 2, "the note keeps at most 2 suggestions")
         let run = InsightRun(at: Fx.mon(9), note: out.headline, model: "sonnet")
         let drafts = InsightPass.drafts(out, runId: run.id, items: [essay], now: Fx.mon(9), model: "sonnet", calendar: cal)
-        var s = DumpState(items: [essay], routines: Routine.defaults,
+        var s = DumpState(items: [essay],
                           moods: [], screen: [], prefs: Preferences())
         var log = ChangeLog()
         let problems = log.apply(run, drafts, to: &s, now: Fx.mon(9))
         XCTAssertEqual(log.applied.count, 4, "3 changes + the Patterns line, applied at once; \(problems)")
         XCTAssertEqual(problems.count, 2, "sleep need and the Stated line are refused: \(problems)")
-        XCTAssertEqual(s.items.count, 2)
+        XCTAssertEqual(s.items.count, 1, "the starter step is the task's firstStep, not a new task")
+        XCTAssertNotNil(s.items[0].firstStep)
         XCTAssertEqual(s.policy.maxBlockMinutes, 45, "bounded: 55 → 30 asked, -10 applied")
         XCTAssertEqual(s.prefs.sleepNeedMinutes, 540, "sleep need is never Productium's to change")
         XCTAssertEqual(s.policy.intentions.first?.itemId, essay.id)
@@ -117,31 +118,42 @@ final class InsightSituationTests: XCTestCase {
 
 }
 
-final class InsightAlarmTests: XCTestCase {
-    let cal = Fx.cal
-    func changes(_ cs: [InsightPass.Output.Change], items: [WorkItem] = []) -> (ChangeLog, DumpState, [String]) {
-        let out = InsightPass.Output(headline: "h", wins: [], suggestions: [], changes: cs, about_me: nil)
-        let drafts = InsightPass.drafts(out, runId: UUID(), items: items, now: Fx.mon(9), model: "sonnet", calendar: cal)
-        var s = DumpState(items: items, routines: Routine.defaults,
-                          moods: [], screen: [], prefs: Preferences())
-        var log = ChangeLog()
-        let problems = log.apply(InsightRun(at: Fx.mon(9), note: "", model: "sonnet"), drafts, to: &s, now: Fx.mon(9))
-        return (log, s, problems)
-    }
-
-    func testInsightPassCanAddAndMoveAlarmsButNotRemoveTheMorningOne() {
-        let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(23, plusDays: 5))
-        let t = Ref.task(essay.id)
-        var (log, s, problems) = changes([
-            .init(type: "alarm", task: t, minutes: 5, alarm_kind: "before_blocks", label: "Essay time", reason: "missed the last 4 Essay blocks"),
-            .init(type: "alarm", minutes: -45, alarm_kind: "shift", alarm_target: "bedtime", scope: #"{"weekdays":[6]}"#, reason: "late nights on Fridays"),
-            .init(type: "alarm", alarm_kind: "off", alarm_target: "wake", reason: "x")], items: [essay])
-        XCTAssertEqual(s.alarmRules.count, 2, "\(problems)")
-        XCTAssertEqual(s.alarmRules.first { (r: AlarmRule) in r.kind == AlarmRule.Kind.shift }?.minutes, -30, "at most 30 minutes")
-        XCTAssertEqual(problems.count, 1, "removing the morning alarm is refused: \(problems)")
-        XCTAssertTrue(s.alarmRules.allSatisfy { (r: AlarmRule) in r.source == Writer.reflection })
-        XCTAssertTrue(log.revert(log.applied[0].id, in: &s, now: Fx.mon(10)))
-        XCTAssertEqual(s.alarmRules.count, 1)
-        _ = (log, problems)
+/// v1.2 P2 / I2 / I5 / H6 / J4.
+final class InsightV12Tests: XCTestCase {
+    func testPatternsGoalsAndTrackRecordGoIntoThePassAndComeBackChecked() {
+        let cal = Fx.cal
+        let pat = Pattern(id: "after|x", kind: .after, text: "You lose about 40m after practice on Tuesdays (scrolling, 4 of the last 4)",
+                          evidence: ["Nov 3: 41m"], strength: 160)
+        var g = Goal(title: "Studying", measure: .category(CategoryTree.studying), period: .day, target: 120, origin: .ai, createdAt: Fx.mon(0))
+        let mine = Goal(title: "Scrolling", measure: .category(CategoryTree.scrolling), period: .day, target: 60, direction: .atMost, origin: .you,
+                        createdAt: Fx.mon(0))
+        var input = InsightInput(now: Fx.mon(9), calendar: cal, trigger: .weekly)
+        input.patterns = [pat]
+        input.trackRecord = ["reading: dropped 4 of 5"]
+        input.goals = ["Studying 1h 30m of 2h"]
+        input.aiGoals = [g]
+        input.answers = ["No school today (Tue)"]
+        let text = InsightPass.request(input)
+        XCTAssertTrue(text.contains("Goals this week: Studying 1h 30m of 2h"))
+        XCTAssertTrue(text.contains("- after|x: You lose about 40m"))
+        XCTAssertTrue(text.contains("How tasks ended (track record): reading: dropped 4 of 5"))
+        XCTAssertTrue(text.contains("they said: No school today (Tue)"))
+        XCTAssertTrue(InsightPass.system().contains("goal_changes"))
+        XCTAssertFalse(InsightPass.system().contains("   "), "no stray runs of spaces")
+        let out = InsightPass.Output(headline: "h", wins: [], suggestions: [], changes: [], about_me: nil,
+                                     patterns: [.init(id: "after|x", text: "Tuesdays after practice: about 40m of scrolling, 4 of 4"),
+                                                .init(id: "made-up", text: "x"), .init(id: "after|x", text: "again"),
+                                                .init(id: "weekday|5", text: "Thursdays have 3h less study")],
+                                     goal_changes: [.init(goal: g.ref, target: 200), .init(goal: mine.ref, target: 30)])
+        let thu = Pattern(id: "weekday|5", kind: .weekday, text: "Thursdays have 1h 10m less study than your other days",
+                          evidence: ["Thursday: 20m"], strength: 50)
+        let chosen = InsightPass.patterns(out, candidates: [pat, thu])
+        XCTAssertEqual(chosen.map(\.text), ["Tuesdays after practice: about 40m of scrolling, 4 of 4", thu.text],
+                       "an unknown id is dropped; a changed number keeps the code's text")
+        var goals = [g, mine]
+        XCTAssertEqual(InsightPass.goalChanges(out, goals: &goals), ["Studying goal: 2h → 2h 12m"])
+        XCTAssertEqual(goals[1].target, 60, "the student's goal is never moved")
+        g = goals[0]
+        XCTAssertEqual(g.target, 132)
     }
 }

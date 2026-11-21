@@ -271,23 +271,6 @@ public struct WeeklyReview: Codable, Hashable, Sendable {
     }
 }
 
-public struct CardBatch: Codable, Hashable, Sendable {
-    public struct Card: Codable, Hashable, Sendable { public var front: String; public var back: String }
-    public var cards: [Card]
-    public var usable: [Card] { cards.filter { !$0.front.isEmpty && !$0.back.isEmpty } }
-}
-
-public struct ReadBatch: Codable, Hashable, Sendable {
-    public struct Piece: Codable, Hashable, Sendable {
-        public var title: String
-        public var body: String
-        public var subject: String?
-        public var question: String?
-    }
-    public var pieces: [Piece]
-    public var usable: [Piece] { pieces.filter { !$0.title.isEmpty && !$0.body.isEmpty } }
-}
-
 public enum Schemas {
     static func obj(_ props: [String: JSONValue], required: [String]) -> JSONValue {
         .object(["type": .string("object"), "properties": .object(props),
@@ -304,12 +287,6 @@ public enum Schemas {
         "rationale": str,
     ], required: ["steps", "rationale"])
 
-    public static let cards: JSONValue = obj(["cards": arr(obj(["front": str, "back": str], required: ["front", "back"]))],
-                                             required: ["cards"])
-
-    public static let reads: JSONValue = obj(["pieces": arr(obj(["title": str, "body": str, "subject": str, "question": str],
-                                                                required: ["title", "body", "question"]))],
-                                             required: ["pieces"])
 }
 
 // System prompts must stay byte-identical across requests (server cache and session key); variable data goes in the user turn.
@@ -338,29 +315,6 @@ public enum Prompts {
         "Now \(iso(now, timeZone)). Task: \(item.title) (\(item.kind.rawValue)), due \(iso(item.due, timeZone)), " +
             "about \(item.estimateMinutes) min total." + (item.notes.map { " Notes: \($0.prefix(300))" } ?? "")
             + (aboutMe.isEmpty ? "" : "\n" + aboutMe.promptText)
-    }
-
-    public static func flashcards() -> String {
-        """
-        Make flashcards for a high-school student. Front: a recall question (not yes/no or multiple choice). \
-        Back: exact answer, 25 words max. Mix definitions, "why" questions and an application problem.
-        """
-    }
-
-    public static func flashcardsRequest(subject: String?, topics: [String], count: Int) -> String {
-        "\(count) cards on: \(topics.joined(separator: "; "))" + (subject.map { " (\($0))" } ?? "")
-    }
-
-    public static func reads() -> String {
-        """
-        Write short reads (120-180 words) a curious high-schooler finishes in two minutes instead of scrolling. \
-        Accurate, vivid, one surprising fact each, no fluff. question: one "why/how" question to think about.
-        """
-    }
-
-    public static func readsRequest(interests: [String], subjects: [String], count: Int) -> String {
-        "\(count) reads. Half on their subjects (\(subjects.isEmpty ? "any" : subjects.joined(separator: ", "))), half on " +
-            "their interests (\(interests.isEmpty ? "science, history, how things work" : interests.joined(separator: ", ")))."
     }
 
     public static func context(now: Date, items: [WorkItem], plan: Plan, summary: PeriodSummary?, moods: [MoodEntry],

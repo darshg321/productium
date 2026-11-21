@@ -5,28 +5,13 @@ final class EvidenceTests: XCTestCase {
     let cal = Fx.cal
 
     func state(items: [WorkItem] = []) -> DumpState {
-        DumpState(items: items,                   routines: Routine.defaults, moods: [], screen: [], prefs: Preferences())
+        DumpState(items: items, moods: [], screen: [], prefs: Preferences())
     }
 
 
 
 
 
-
-    func testDuplicateStartsGiveOneSampleOnce() {
-        let day = Fx.mon(0)
-        func at(_ h: Int, _ m: Int, _ sec: Int = 0) -> Date { day.addingTimeInterval(Double(h * 3600 + m * 60 + sec)) }
-        let markers = [
-            CheckIn(at: at(13, 2), phrase: "leaving for school", activity: "to_school", category: .commute, phase: .start, source: .voice),
-            CheckIn(at: at(13, 7, 58), phrase: "left home", activity: "to_school", category: .commute, phase: .start, source: .geofence),
-            CheckIn(at: at(13, 8, 16), phrase: "left home", activity: "to_school", category: .commute, phase: .start, source: .geofence),
-            CheckIn(at: at(13, 16), phrase: "at school", activity: "to_school", category: .commute, phase: .end, source: .voice),
-        ]
-        var routines = RoutineLearner.learn(day: markers, healthWake: nil, routines: Routine.defaults)
-        XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
-        routines = RoutineLearner.learn(day: markers, healthWake: nil, routines: routines)
-        XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
-    }
 
 }
 
@@ -57,12 +42,6 @@ final class MotionTests: XCTestCase {
         XCTAssertFalse(segs.contains { $0.label == "To school" && $0.inferred && $0.start < Fx.mon(8, 16) && $0.end > Fx.mon(8, 2) },
                        "the walk beats the assumed routine")
 
-        var routines = MotionTimeline.learnRoutines(spans, day: Fx.mon(0), commitments: [Fx.school], routines: Routine.defaults, calendar: cal)
-        XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
-        XCTAssertEqual(routines.first { $0.id == "from_school" }?.samples, [22])
-        let again = MotionTimeline.spans(recs, until: Fx.mon(18), previous: spans)
-        routines = MotionTimeline.learnRoutines(again, day: Fx.mon(0), commitments: [Fx.school], routines: routines, calendar: cal)
-        XCTAssertEqual(routines.first { $0.id == "to_school" }?.samples, [14])
         XCTAssertEqual(MotionTimeline.summary(spans, on: Fx.mon(0), calendar: cal), "walk 14 min 08:02, in a vehicle 22 min 15:05")
     }
 
