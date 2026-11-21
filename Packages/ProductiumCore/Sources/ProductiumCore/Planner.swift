@@ -432,7 +432,7 @@ public enum Planner {
                 } else if last {
                     hint = "Do a timed practice test, mark it, and fix only what you missed. Then sleep: it's when today's studying gets stored."
                 } else {
-                    hint = "Retrieval practice: questions or flashcards from memory first, notes only to check."
+                    hint = "Retrieval practice: answer questions from memory first, notes only to check."
                 }
                 for chunk in split(sessionsMinutes[k], focus: min(50, input.policy.maxBlockMinutes)) {
                     out.append(Demand(item: item, minutes: chunk, earliest: max(input.now, windowStart),

@@ -22,15 +22,16 @@ public struct TokenCount: Codable, Hashable, Sendable {
 }
 
 public enum AIFeature: String, Codable, CaseIterable, Sendable {
-    case box, flashcards, reads, breakdown, review
+    case box, breakdown, review
+    /// v1.2 C5: the category tree's daily tidy.
+    case taxonomy
 
     public var title: String {
         switch self {
         case .box: return "Inbox"
-        case .flashcards: return "Flashcards"
-        case .reads: return "Short reads"
         case .breakdown: return "Project steps"
         case .review: return "Weekly note"
+        case .taxonomy: return "Category tidy-up"
         }
     }
 
@@ -42,7 +43,11 @@ public enum AIFeature: String, Codable, CaseIterable, Sendable {
     /// v1.0 logged the reflection as its own feature; it's the weekly note's insight pass now.
     public init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
-        self = raw == "reflection" ? .review : (AIFeature(rawValue: raw) ?? .box)
+        // v1.2 K2: flashcards and short reads are gone; their old records stay in the background budget's history.
+        switch raw {
+        case "reflection", "flashcards", "reads": self = .review
+        default: self = AIFeature(rawValue: raw) ?? .box
+        }
     }
 }
 

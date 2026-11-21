@@ -114,14 +114,6 @@ final class LearningTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(t.targetMinutes!, 153)
     }
 
-    func testLeitner() {
-        var c = Flashcard(front: "Q", back: "A")
-        c = Leitner.review(c, correct: true, now: Fx.mon(9))
-        XCTAssertEqual(c.box, 2)
-        XCTAssertEqual(c.due, Fx.mon(9, plusDays: 2))
-        c = Leitner.review(c, correct: false, now: Fx.mon(9))
-        XCTAssertEqual(c.box, 1)
-    }
 
     func testExportsAndBackupRoundTrip() throws {
         let csv = Exporter.csv(["a", "b"], [["x,y", "say \"hi\""]])

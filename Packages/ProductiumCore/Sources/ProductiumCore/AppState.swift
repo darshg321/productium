@@ -106,8 +106,6 @@ public struct AppState: Codable, Sendable {
     public var beliefs = Beliefs()
     public var policy = BehaviourPolicy()
     public var taper = ScreenTaper()
-    public var flashcards: [Flashcard] = []
-    public var reads: [ReadPiece] = []
     public var plan: Plan = .empty
     public var places: [SavedPlace] = []
     public var visits: [PlaceVisit] = []
@@ -131,7 +129,6 @@ public struct AppState: Codable, Sendable {
     /// Which Life Metrics tiles show on Review, in order (G3).
     public var metricTiles: [MetricID] = MetricID.defaultTiles
     public var rewardSettings = RewardSettings()
-    public var gaps = GapLog()
     public var appOpens: [Date] = []
     public var usage = UsageLedger()
     public var snoozed: [UUID: Date] = [:]
@@ -204,8 +201,6 @@ public struct AppState: Codable, Sendable {
         beliefs = v(.beliefs, d.beliefs)
         policy = v(.policy, d.policy)
         taper = v(.taper, d.taper)
-        flashcards = v(.flashcards, d.flashcards)
-        reads = v(.reads, d.reads)
         plan = v(.plan, d.plan)
         places = v(.places, d.places)
         visits = v(.visits, d.visits)
@@ -224,7 +219,6 @@ public struct AppState: Codable, Sendable {
         rewards = v(.rewards, d.rewards)
         metricTiles = v(.metricTiles, d.metricTiles)
         rewardSettings = v(.rewardSettings, d.rewardSettings)
-        gaps = v(.gaps, d.gaps)
         appOpens = v(.appOpens, d.appOpens)
         usage = v(.usage, d.usage)
         snoozed = v(.snoozed, d.snoozed)
