@@ -66,6 +66,8 @@ public struct AppState: Codable, Sendable {
     public var dayPlans: [DayKey: [UUID: Int]] = [:]
     /// v1.2 F3: charts pinned to Review. Only the query is kept; the numbers are computed live from the log.
     public var pinnedCharts: [PinnedChart] = []
+    /// v1.2 C5: the taxonomy pass's runs (each can be reverted).
+    public var taxonomy = TaxonomyLog()
     /// v1.2 Part N: what the phone noticed, asked and learned.
     public var inference = InferenceState()
     /// v1.2 Part H: how every task ended (kept after the task is deleted).
@@ -180,6 +182,7 @@ public struct AppState: Codable, Sendable {
         goals = v(.goals, d.goals)
         taskHistory = v(.taskHistory, d.taskHistory)
         inference = v(.inference, d.inference)
+        taxonomy = v(.taxonomy, d.taxonomy)
         quickStarts = v(.quickStarts, d.quickStarts)
         categoryRules = v(.categoryRules, d.categoryRules)
         pinnedCharts = v(.pinnedCharts, d.pinnedCharts)
