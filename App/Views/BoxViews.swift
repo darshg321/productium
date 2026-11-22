@@ -6,16 +6,14 @@ struct DumpBox: View {
     @Environment(AppModel.self) private var model
     @State private var picks: [PhotosPickerItem] = []
     @FocusState private var focused: Bool
+    /// Typing stays in the view: writing each keystroke to `model.state` re-rendered every screen reading the state.
+    /// The draft is saved once typing pauses, on send, and when the box goes away.
+    @State private var text = ""
+    @State private var loaded = false
+    @State private var saveDraft: Task<Void, Never>?
 
     var body: some View {
         Card {
-            CardHeader(title: "Inbox", symbol: "tray.and.arrow.down.fill", color: .blue,
-                       detail: model.busy.contains("dump") ? "Reading…" : nil)
-            TextField("What's due, what happened, what changed?", text: Binding(get: { model.draftText }, set: { model.draftText = $0 }),
-                      axis: .vertical)
-                .font(.body)
-                .lineLimit(2...8)
-                .focused($focused)
             let images = model.draftImages
             if !images.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -37,18 +35,23 @@ struct DumpBox: View {
                     }
                 }
             }
-            HStack {
+            HStack(alignment: .bottom, spacing: 10) {
                 PhotosPicker(selection: $picks, maxSelectionCount: 6, matching: .images) {
-                    Image(systemName: "photo.on.rectangle").font(.title3)
+                    Image(systemName: "photo.on.rectangle.angled").font(.title3).frame(height: 36)
                 }
                 .accessibilityLabel("Add screenshots")
-                Spacer()
+                TextField("What's due, what happened, what changed?", text: $text, axis: .vertical)
+                    .font(.body)
+                    .lineLimit(1...8)
+                    .focused($focused)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 if model.busy.contains("dump") {
-                    ProgressView()
+                    ProgressView().frame(width: 32, height: 36)
                 } else {
                     Button(action: send) {
-                        Image(systemName: "arrow.up.circle.fill").font(.title)
-                            .symbolRenderingMode(.hierarchical)
+                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 30))
+                            .foregroundStyle(canSend ? Color.accentColor : Color(.systemGray3))
                     }
                     .disabled(!canSend)
                     .accessibilityLabel("Send")
@@ -59,16 +62,41 @@ struct DumpBox: View {
         }
         .animation(.easeOut(duration: 0.2), value: model.state.conversation.turns.count)
         .onChange(of: picks) { _, items in Task { await load(items) } }
+        .onAppear {
+            if !loaded { text = model.draftText; loaded = true }
+        }
+        .onChange(of: model.draftText) { _, new in if new != text && saveDraft == nil { text = new } }
+        .onChange(of: text) { _, new in
+            saveDraft?.cancel()
+            saveDraft = Task {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                guard !Task.isCancelled else { return }
+                storeDraft(new)
+            }
+        }
+        .onChange(of: focused) { _, on in
+            model.boxFocused = on
+            if !on { storeDraft(text) }
+        }
+        .onDisappear { storeDraft(text) }
     }
 
-    private var canSend: Bool { !model.state.draft.isEmpty }
+    private func storeDraft(_ t: String) {
+        saveDraft?.cancel()
+        saveDraft = nil
+        if model.draftText != t { model.draftText = t }
+    }
+
+    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.state.draft.imageFiles.isEmpty }
 
     private func send() {
-        let t = model.draftText, imgs = model.draftImages.map(\.ai)
+        let t = text, imgs = model.draftImages.map(\.ai)
+        storeDraft(t)
         focused = false
         Task {
             if await model.submit(t, images: imgs, source: .app) {
                 model.clearDraft()
+                text = ""
                 picks = []
             }
         }

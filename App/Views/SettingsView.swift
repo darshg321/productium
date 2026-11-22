@@ -54,7 +54,6 @@ struct SettingsView: View {
 
             Section {
                 row("Backup & Restore", "externaldrive.fill", .gray, nil) { BackupSettings() }
-                row("Debug", "ant.fill", .gray, "\(model.state.telemetry.events.count)") { DebugView() }
                 row("Keeping It Installed", "arrow.clockwise", .indigo,
                     UpdateChecker.shared.available.map { "\($0) available" } ?? "v\(UpdateChecker.installed)") { InstallSettings() }
             }
@@ -369,9 +368,11 @@ struct ScreenTimeSettings: View {
                 Section {
                     LabeledContent("Opened", value: "\(d.opens)×")
                     LabeledContent("Paused", value: "\(d.pauses)×")
-                    if log.measuresClosing {
-                        let mins = log.minutes(on: Date(), calendar: .current).values.reduce(0, +)
-                        LabeledContent("Time in those apps", value: durationLabel(mins))
+                    if log.measuresClosing || !model.appMinutesToday().isEmpty {
+                        let apps = model.appMinutesToday()
+                        let scrolling = apps.filter { model.appKind($0.app) == CategoryTree.scrolling }.reduce(0) { $0 + $1.minutes }
+                        LabeledContent("Scrolling", value: durationLabel(scrolling))
+                        LabeledContent("All apps", value: durationLabel(apps.reduce(0) { $0 + $1.minutes }))
                     }
                 } header: { Text("Today") } footer: {
                     Text("“App is closed” can miss going Home or locking the phone, so a session with no clear end counts as your usual length (marked estimated), never the whole evening.")
@@ -382,7 +383,7 @@ struct ScreenTimeSettings: View {
                     LabeledContent("Scrolling Apps", value: "\(model.state.scrollingApps.values.filter { $0 }.count) on")
                 }
             } footer: {
-                Text("This list, not a guess, decides what counts as scrolling in Your Week, Review and the plan.")
+                Text("This list, not a guess, decides what counts as scrolling in Review, the rings and the plan. Each scrolling app gets its own category under Scrolling; messaging apps go under Messaging.")
             }
         }
         .listStyle(.insetGrouped)
@@ -395,18 +396,27 @@ struct ScrollingAppsView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let apps = model.state.scrollingApps.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        let apps = model.state.scrollingApps.keys.sorted { a, b in
+            let x = model.state.scrollingApps[a] == true, y = model.state.scrollingApps[b] == true
+            return x != y ? x : a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+        }
         List {
             if apps.isEmpty {
                 Section { Text("Apps show up here once they appear in a Screen Time screenshot you send the Inbox, or in a Shortcuts automation.") }
             } else {
                 Section {
                     ForEach(apps, id: \.self) { name in
-                        Toggle(name, isOn: Binding(get: { model.state.scrollingApps[name] ?? false },
-                                                   set: { model.setScrolling(name, $0) }))
+                        Toggle(isOn: Binding(get: { model.state.scrollingApps[name] ?? false }, set: { model.setScrolling(name, $0) })) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(name)
+                                if model.state.scrollingApps[name] != true && AppKinds.isMessaging(name) {
+                                    Text("Messaging").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
                     }
                 } footer: {
-                    Text("On means it counts as scrolling. Social, video and games start on; you decide about browsers.")
+                    Text("On means it counts as scrolling (Scrolling › the app). Social and video start on; messaging apps count as Messaging; you decide about browsers. Every app you open shows up here once “Screen Time for Every App” is set up.")
                 }
             }
         }
@@ -664,6 +674,8 @@ struct BackupSettings: View {
                 Text("CSV files for your own analysis, plus your plan as an .ics calendar.")
             }
 
+            FeedbackSection()
+
             Section {
                 Button("Delete All Data", role: .destructive) { confirmDelete = true }
             }
@@ -703,6 +715,36 @@ struct BackupSettings: View {
             Button("Delete All Data", role: .destructive) { model.deleteEverything() }
         } message: {
             Text("Back up first if you might want it again.")
+        }
+    }
+}
+
+/// Notes for whoever builds Productium. Kept in the app's data, so they travel in every backup and export.
+struct FeedbackSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Section {
+            TextField("What's working, what isn't, what you'd change…", text: $text, axis: .vertical)
+                .lineLimit(3...8)
+                .focused($focused)
+            Button("Save Feedback") {
+                model.addFeedback(text)
+                text = ""
+                focused = false
+                model.toast = "Saved. It's in your next backup."
+            }
+            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            ForEach(model.state.feedback.suffix(3).reversed()) { f in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(f.text).font(.subheadline).lineLimit(3)
+                    Text(f.at.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        } header: { Text("Feedback") } footer: {
+            Text("Goes into your backups and exports, nowhere else. Send the export file to share it.")
         }
     }
 }

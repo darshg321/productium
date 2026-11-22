@@ -101,9 +101,31 @@ final class ScreenshotWatcher: NSObject, PHPhotoLibraryChangeObserver {
 
     func photoLibraryDidChange(_ changeInstance: PHChange) { Task { await check() } }
 
+    /// Two screenshots in a row fire two changes; the second check waits for the first instead of racing it (each
+    /// would read the same "last seen" and one screenshot could be missed or read twice).
+    private actor Gate {
+        var checking = false, again = false
+        func enter() -> Bool {
+            if checking { again = true; return false }
+            checking = true
+            return true
+        }
+        func next() -> Bool {
+            if again { again = false; return true }
+            checking = false
+            return false
+        }
+    }
+    private let gate = Gate()
+
     /// New screenshots since the last look: Vision reads them; Screen Time ones are applied on the phone, the image goes
     /// to the box only when the text can't be read; homework-looking ones are offered as tasks.
     func check() async {
+        guard await gate.enter() else { return }
+        repeat { await readNew() } while await gate.next()
+    }
+
+    private func readNew() async {
         let last = UserDefaults.standard.double(forKey: Self.seenKey)
         let opts = PHFetchOptions()
         opts.predicate = NSPredicate(format: "(mediaSubtypes & %d) != 0 AND creationDate > %@",
@@ -118,6 +140,7 @@ final class ScreenshotWatcher: NSObject, PHPhotoLibraryChangeObserver {
             guard let img = await image(a) else { continue }
             let text = await Self.ocr(img)
             await MainActor.run { AppModel.shared.screenshot(text: text, image: img) }
+            UserDefaults.standard.set(newest, forKey: Self.seenKey)
         }
         UserDefaults.standard.set(newest, forKey: Self.seenKey)
     }
@@ -143,8 +166,11 @@ final class ScreenshotWatcher: NSObject, PHPhotoLibraryChangeObserver {
             req.recognitionLevel = .accurate
             req.usesLanguageCorrection = false
             guard (try? VNImageRequestHandler(cgImage: cg).perform([req])) != nil else { return "" }
-            return (req.results ?? []).sorted { $0.boundingBox.minY > $1.boundingBox.minY }
-                .compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+            let boxes = (req.results ?? []).compactMap { r -> OCRLines.Box? in
+                guard let t = r.topCandidates(1).first?.string else { return nil }
+                return OCRLines.Box(text: t, x: r.boundingBox.minX, y: r.boundingBox.minY, height: r.boundingBox.height)
+            }
+            return OCRLines.join(boxes)
         }.value
     }
 }

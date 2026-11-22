@@ -67,12 +67,12 @@ struct WeekStrip: View {
                         Text(d.formatted(.dateTime.weekday(.narrow))).font(.caption2.weight(.semibold))
                         Text(d.formatted(.dateTime.day())).font(.headline.monospacedDigit())
                             .padding(6)
-                            .overlay { if today { Circle().strokeBorder(on ? Color(.systemBackground) : Color.primary, lineWidth: 1.5) } }
-                        Image(systemName: "flag.fill").font(.system(size: 8)).opacity(due ? 1 : 0)
+                            .foregroundStyle(today && !on ? Color.red : (on ? .white : .primary))
+                        Image(systemName: "flag.fill").font(.system(size: 8)).foregroundStyle(on ? .white : .orange).opacity(due ? 1 : 0)
                     }
-                    .foregroundStyle(on ? Color(.systemBackground) : .primary)
+                    .foregroundStyle(on ? .white : .primary)
                     .frame(maxWidth: .infinity, minHeight: 66)
-                    .background(on ? Color.primary : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(on ? (today ? Color.red : Color.accentColor) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).month().day()) + (today ? ", today" : "") + (due ? ", something due" : ""))
@@ -128,6 +128,8 @@ struct DayEntryList: View {
                 }
                 ForEach(rows) { d in
                     DayEntryRow(entry: d, now: now)
+                        .listRowBackground(Theme.color(category: d.category, tree: model.state.categories)
+                            .opacity(d.isPlannedSession || d.start > now ? 0.05 : 0.11))
                         .contentShape(Rectangle())
                         .onTapGesture { editing = d }
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
@@ -163,16 +165,21 @@ struct DayEntryRow: View {
     var body: some View {
         let tree = model.state.categories
         let colour = Theme.color(category: entry.category, tree: tree)
-        HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(entry.isPlannedSession || entry.start > now ? colour.opacity(0.3) : colour)
-                .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(colour, style: StrokeStyle(lineWidth: 1, dash: entry.assumed ? [3, 2] : [])))
-                .frame(width: 6)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Image(systemName: Theme.symbol(category: entry.category, tree: tree)).foregroundStyle(colour).font(.caption)
-                    Text(entry.title).font(.subheadline.weight(entry.taskId != nil ? .semibold : .regular)).lineLimit(1)
+        let ahead = entry.isPlannedSession || entry.start > now
+        HStack(spacing: 12) {
+            Image(systemName: Theme.symbol(category: entry.category, tree: tree))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(ahead ? colour : .white)
+                .frame(width: 32, height: 32)
+                .background(ahead ? AnyShapeStyle(colour.opacity(0.18)) : AnyShapeStyle(colour.gradient),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    if entry.assumed && entry.end <= now {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, dash: [3, 2]))
+                    }
                 }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title).font(.subheadline.weight(entry.taskId != nil ? .semibold : .medium)).lineLimit(1)
                 Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()

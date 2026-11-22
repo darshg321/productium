@@ -20,9 +20,12 @@ public struct ScrollSession: Codable, Hashable, Identifiable, Sendable {
     public var endSource: EndSource?
     public var confirmedUntil: Date?
     public var checkInAt: Date?
+    /// False for an app logged by the "Opened an App" automation that isn't on your scrolling list. Nil (older
+    /// sessions, the pause automation) is a scrolling app.
+    public var scrolling: Bool?
 
     public init(id: UUID = UUID(), app: String, openedAt: Date, endedAt: Date? = nil, endSource: EndSource? = nil,
-                confirmedUntil: Date? = nil, checkInAt: Date? = nil) {
+                confirmedUntil: Date? = nil, checkInAt: Date? = nil, scrolling: Bool? = nil) {
         self.id = id
         self.app = app
         self.openedAt = openedAt
@@ -30,11 +33,13 @@ public struct ScrollSession: Codable, Hashable, Identifiable, Sendable {
         self.endSource = endSource
         self.confirmedUntil = confirmedUntil
         self.checkInAt = checkInAt
+        self.scrolling = scrolling
     }
 
     public var isOpen: Bool { endedAt == nil }
     public var minutes: Int? { endedAt.map { max(0, Int(($0.timeIntervalSince(openedAt) / 60).rounded())) } }
     public var isEstimated: Bool { !(endSource?.observed ?? true) && endSource != .checkIn }
+    public var isScrolling: Bool { scrolling ?? true }
 }
 
 public struct ScrollLog: Codable, Hashable, Sendable {
@@ -109,6 +114,28 @@ public struct ScrollLog: Codable, Hashable, Sendable {
         bump(cal.startOfDay(for: now)) { $0.opens += 1; if paused { $0.pauses += 1 } }
     }
 
+    /// The "Opened an App" automation (any app): ends what was open and starts this app's session. The pause
+    /// automation may report the same opening a moment apart, so a repeat within `repeatWindow` is the same one.
+    public mutating func seen(_ app: String, at now: Date, scrolling: Bool) {
+        resolve(now: now)
+        if let i = sessions.indices.last, sessions[i].isOpen {
+            if sessions[i].app.plainKey == app.plainKey {
+                if now.timeIntervalSince(sessions[i].openedAt) <= Self.repeatWindow || sessions[i].scrolling == nil { return }
+            }
+            end(i, at: now, .otherApp)
+        }
+        sessions.append(ScrollSession(app: app, openedAt: now, scrolling: scrolling))
+    }
+
+    public static let repeatWindow: TimeInterval = 15
+
+    /// Sessions are kept 35 days; each finished day is already in `AppState.screen` by then.
+    public mutating func prune(now: Date) {
+        let cutoff = now.addingTimeInterval(-35 * 86400)
+        sessions.removeAll { $0.openedAt < cutoff && !$0.isOpen }
+        days.removeAll { $0.day < cutoff }
+    }
+
     @discardableResult
     public mutating func closed(_ app: String? = nil, at now: Date) -> Int {
         resolve(now: now)
@@ -170,9 +197,14 @@ public struct ScrollLog: Codable, Hashable, Sendable {
         let dayStarts = Set(days.map { cal.startOfDay(for: $0.day) } + sessions.map { cal.startOfDay(for: $0.openedAt) })
         return dayStarts.filter { $0 < today }.sorted().map { d in
             let apps = minutes(on: d, calendar: cal)
-            return ScreenDay(day: d, distractingMinutes: apps.values.reduce(0, +),
+            let scrollingApps = Set(sessions.filter { $0.isScrolling && cal.isDate($0.openedAt, inSameDayAs: d) }.map(\.app))
+            let everyApp = sessions.contains { !$0.isScrolling && cal.isDate($0.openedAt, inSameDayAs: d) }
+            return ScreenDay(day: d, distractingMinutes: apps.filter { scrollingApps.contains($0.key) }.values.reduce(0, +),
                              unlockRequests: days.first { cal.isDate($0.day, inSameDayAs: d) }?.opens ?? 0,
-                             apps: apps.isEmpty ? nil : apps.sorted { $0.key < $1.key }.map { AppUsage(name: $0.key, minutes: $0.value, distracting: true) },
+                             totalMinutes: everyApp ? apps.values.reduce(0, +) : nil,
+                             apps: apps.isEmpty ? nil : apps.sorted { $0.key < $1.key }.map {
+                                 AppUsage(name: $0.key, minutes: $0.value, distracting: scrollingApps.contains($0.key))
+                             },
                              source: "shortcuts")
         }
     }

@@ -100,7 +100,7 @@ final class ScreenSeriesTests: XCTestCase {
     func testScreenshotsWinOverShortcutsAndOldNumbersAreRecomputed() {
         let shot = ScreenDay(day: Fx.mon(0), distractingMinutes: 68, totalMinutes: 202,
                              apps: [AppUsage(name: "Instagram", minutes: 96, distracting: true),
-                                    AppUsage(name: "Discord", minutes: 35, distracting: true),
+                                    AppUsage(name: "Snapchat", minutes: 35, distracting: true),
                                     AppUsage(name: "Firefox", minutes: 97, distracting: false)], source: "screenshot")
         let est = ScreenDay(day: Fx.mon(0), distractingMinutes: 20, source: "shortcuts")
         let est2 = ScreenDay(day: Fx.mon(0, plusDays: 1), distractingMinutes: 25, source: "shortcuts")

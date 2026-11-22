@@ -110,7 +110,7 @@ extension CategoryGroup {
     public var colour: String {
         switch self {
         case .productive: return "blue"
-        case .essential: return "gray"
+        case .essential: return "green"
         case .rest: return "yellow"
         case .unproductive: return "teal"
         }

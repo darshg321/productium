@@ -2,45 +2,47 @@ import SwiftUI
 import Charts
 import ProductiumCore
 
-// v1.3 C1: Home is "now", top to bottom: the box, what's running and the activity grid, mood, a question from what the
-// phone noticed (N7), "What were you doing?" for today's untracked stretches, assumed time to confirm, today's rings,
-// then Up Next. Nothing appears twice; how the day and week went lives in Review.
+// v1.3 C1: Home is "now", top to bottom: the box, anything waiting on you, what's running, the activity grid, mood,
+// "What were you doing?", assumed time to confirm, today's rings, then Up Next. How the day and week went is Review.
 
 struct TodayView: View {
     @Environment(AppModel.self) private var model
+    @State private var now = Date()
+    /// The cards below the box recompute the day's log; they refresh every 30 s, but not while you type.
+    private let tick = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationStack {
-            TimelineView(.periodic(from: .now, by: 30)) { ctx in
-                ScrollViewReader { proxy in
+            ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text(ctx.date.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .textCase(.uppercase)
                         DumpBox()
-                        AlertCard(now: ctx.date)
+                        AlertCard(now: now)
                         ForEach(model.approvals.filter { $0.turnId == nil }) { a in Card { ApprovalRow(approval: a) } }
-                        if let r = model.running { RunningCard(entry: r, now: ctx.date) }
-                        ActivityGrid(now: ctx.date).id("grid")
-                        MoodButtons(now: ctx.date)
                         if let q = model.state.inference.pending.first { QuestionCard(question: q) }
                         if model.screenshotOffer != nil { ScreenshotOfferCard() }
-                        GapsCard(now: ctx.date).id("gaps")
-                        AssumedCard(now: ctx.date).id("assumed")
-                        RingsCard(now: ctx.date).id("ring")
-                        UpNextCard(now: ctx.date).id("upnext")
+                        if let r = model.running { RunningCard(entry: r, now: now) }
+                        ActivityGrid(now: now).id("grid")
+                        MoodButtons(now: now)
+                        GapsCard(now: now).id("gaps")
+                        AssumedCard(now: now).id("assumed")
+                        RingsCard(now: now).id("ring")
+                        UpNextCard(now: now).id("upnext")
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 32)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: model.scrollTarget) { _, t in if let t { proxy.scrollTo(t, anchor: .top) } }
-                }
             }
             .background(Theme.background)
-            .refreshable { await model.refresh() }
+            .refreshable { await model.refresh(); now = Date() }
+            .onReceive(tick) { t in if !model.boxFocused { now = t } }
+            .onChange(of: model.state.entries.count) { _, _ in now = Date() }
             .navigationTitle("Today")
             .usageMeter()
         }
@@ -57,34 +59,49 @@ struct RunningCard: View {
     @State private var next = ""
 
     var body: some View {
-        Card {
-            HStack(alignment: .firstTextBaseline) {
-                Label(entry.title, systemImage: Theme.symbol(category: entry.category, tree: model.state.categories))
-                    .font(.headline)
-                    .foregroundStyle(Theme.color(category: entry.category, tree: model.state.categories))
-                Spacer()
+        let tree = model.state.categories
+        let color = Theme.color(category: entry.category, tree: tree)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                IconTile(symbol: Theme.symbol(category: entry.category, tree: tree), color: color, size: 44)
+                    .symbolEffect(.pulse, options: .repeating)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.title).font(.headline).lineLimit(1)
+                    Text(tree.pathText(entry.category) + (model.placeName(entry.placeId).map { " · \($0)" } ?? ""))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
                 Text(timerInterval: entry.start...Date.distantFuture, countsDown: false)
-                    .font(.title3.monospacedDigit().weight(.semibold))
+                    .font(.system(.title2, design: .rounded).monospacedDigit().weight(.semibold))
+                    .foregroundStyle(color)
+                    .frame(maxWidth: 110, alignment: .trailing)
             }
-            Text(model.state.categories.pathText(entry.category) + (model.placeName(entry.placeId).map { " · \($0)" } ?? ""))
-                .font(.caption).foregroundStyle(.secondary)
-            if let g = model.goalLine(for: entry) { Text(g).font(.caption).foregroundStyle(Theme.focus) }
+            if let g = model.goalLine(for: entry) { Text(g).font(.caption).foregroundStyle(.secondary) }
             if switching {
                 HStack {
                     TextField("What now?", text: $next).textFieldStyle(.roundedBorder).onSubmit(doSwitch)
                     Button("Start", action: doSwitch).disabled(next.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-            HStack {
-                Button { model.stopRunning(source: "home") } label: { Label("Stop", systemImage: "stop.fill") }
-                    .buttonStyle(.borderedProminent)
+            HStack(spacing: 8) {
+                Button { model.stopRunning(source: "home") } label: { Label("Stop", systemImage: "stop.fill").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent).tint(color)
                 if let t = entry.taskId, model.state.items.contains(where: { $0.id == t && $0.isOpen }) {
-                    Button { model.complete(t) } label: { Label("Done", systemImage: "checkmark") }.buttonStyle(.bordered)
+                    Button { model.complete(t) } label: { Label("Done", systemImage: "checkmark").frame(maxWidth: .infinity) }
+                        .buttonStyle(.bordered).tint(color)
                 }
-                Button { withAnimation { switching.toggle() } } label: { Label("Switch", systemImage: "arrow.left.arrow.right") }
-                    .buttonStyle(.bordered)
+                Button { withAnimation { switching.toggle() } } label: {
+                    Label("Switch", systemImage: "arrow.left.arrow.right").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered).tint(color)
             }
-            .font(.subheadline)
+            .font(.subheadline.weight(.semibold))
+            .controlSize(.large)
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).fill(Theme.card)
+                .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous).fill(color.opacity(0.10)))
         }
     }
 
@@ -105,25 +122,32 @@ struct ActivityGrid: View {
     @State private var showMore = false
     @State private var editing: QuickStart?
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
 
     var body: some View {
         let ranked = model.startButtons(now: now)
         let running = model.running.map { CategoryRules.key($0.title) }
-        if ranked.row.isEmpty && ranked.more.isEmpty {
-            Text("Say “starting …” in the box once, and it gets a tile here.")
-                .font(.footnote).foregroundStyle(.secondary)
-        } else {
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(Array(ranked.row.enumerated()), id: \.element.id) { i, b in tile(b, slot: i, running: b.keys.contains(running ?? "")) }
-                Button { showMore = true } label: {
-                    TileLabel(title: "More", symbol: "ellipsis", color: .secondary, on: false)
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader("Start", action: "All") { showMore = true }
+            if ranked.row.isEmpty && ranked.more.isEmpty {
+                Card {
+                    Text("Say “starting …” in the box once, and it gets a tile here.")
+                        .font(.subheadline).foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+            } else {
+                LazyVGrid(columns: columns, spacing: 14) {
+                    ForEach(Array(ranked.row.enumerated()), id: \.element.id) { i, b in tile(b, slot: i, running: b.keys.contains(running ?? "")) }
+                    Button { showMore = true } label: {
+                        TileLabel(title: "More", symbol: "ellipsis", color: Color(.systemGray), on: false)
+                    }
+                    .buttonStyle(TilePress())
+                }
+                .padding(.vertical, 14).padding(.horizontal, 6)
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
             }
-            .sheet(isPresented: $showMore) { MoreButtonsSheet(buttons: ranked.row + ranked.more) }
-            .sheet(item: $editing) { b in ButtonEditor(button: b) }
         }
+        .sheet(isPresented: $showMore) { MoreButtonsSheet(buttons: ranked.row + ranked.more) }
+        .sheet(item: $editing) { b in ButtonEditor(button: b) }
     }
 
     private func tile(_ b: QuickStart, slot: Int, running: Bool) -> some View {
@@ -132,7 +156,7 @@ struct ActivityGrid: View {
             TileLabel(title: b.title, symbol: b.symbol ?? Theme.symbol(category: b.category, tree: model.state.categories),
                       color: color, on: running, pinned: b.isPinned)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TilePress())
         .accessibilityLabel(running ? "\(b.title), running" : "Start \(b.title)")
         .contextMenu {
             Button("Rename or Change Category", systemImage: "pencil") { editing = b }
@@ -146,7 +170,8 @@ struct ActivityGrid: View {
     }
 }
 
-/// Symbol over a word, Fitness-tile style. The running one is filled; colour is never the only cue (its label says so).
+/// A Home Screen icon: the category's colour, its symbol in white, the name under it. The running one has a ring
+/// around it and says "Running" (colour is never the only cue).
 struct TileLabel: View {
     let title: String
     let symbol: String
@@ -155,20 +180,39 @@ struct TileLabel: View {
     var pinned = false
 
     var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: symbol).font(.title3)
-            Text(title).font(.caption2.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+        VStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(.white)
+                .symbolEffect(.pulse, options: .repeating, isActive: on)
+                .frame(width: 58, height: 58)
+                .background(color.gradient, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                .shadow(color: color.opacity(on ? 0.45 : 0.2), radius: on ? 8 : 3, y: 2)
+                .padding(4)
+                .overlay {
+                    if on { RoundedRectangle(cornerRadius: 19, style: .continuous).strokeBorder(color, lineWidth: 2.5) }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if pinned {
+                        Image(systemName: "pin.fill").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                            .padding(4).background(Circle().fill(Color(.systemGray)))
+                    }
+                }
+            Text(on ? "Running" : title)
+                .font(.caption.weight(on ? .semibold : .regular))
+                .foregroundStyle(on ? color : .primary)
+                .lineLimit(1).minimumScaleFactor(0.75)
         }
-        .frame(maxWidth: .infinity, minHeight: 58)
-        .foregroundStyle(on ? Color.white : color)
-        .background(on ? AnyShapeStyle(color) : AnyShapeStyle(color.opacity(0.13)),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(alignment: .topTrailing) {
-            if pinned { Image(systemName: "pin.fill").font(.system(size: 8)).padding(5).foregroundStyle(.secondary) }
-        }
-        .overlay {
-            if on { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.4), lineWidth: 1.5) }
-        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// Icons shrink a little under the finger, like the Home Screen.
+struct TilePress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 
@@ -184,8 +228,10 @@ struct MoreButtonsSheet: View {
                 Section {
                     ForEach(buttons) { b in
                         Button { model.start(b); dismiss() } label: {
-                            Label(b.title, systemImage: b.symbol ?? Theme.symbol(category: b.category, tree: model.state.categories))
+                            SettingsLabel(title: b.title, symbol: b.symbol ?? Theme.symbol(category: b.category, tree: model.state.categories),
+                                          color: Theme.color(category: b.category, tree: model.state.categories))
                         }
+                        .foregroundStyle(.primary)
                         .swipeActions { Button("Hide", role: .destructive) { model.hideTile(b) } }
                     }
                 }
@@ -245,24 +291,29 @@ struct MoodButtons: View {
     static let faces: [(Int, String)] = [(1, "😞"), (2, "🙁"), (3, "😐"), (4, "🙂"), (5, "😄")]
 
     var body: some View {
-        if let m = model.todayMood, now.timeIntervalSince(m.at) < 2 * 3600 {
-            HStack {
-                Text("\(Self.faces.first { $0.0 == m.mood }?.1 ?? "🙂") at \(m.at.hm)").font(.subheadline)
-                Spacer()
-                Button("Change") { model.state.moods.removeAll { $0.id == m.id }; model.save() }.font(.subheadline).buttonStyle(.borderless)
-            }
-            .padding(.horizontal, 4)
-        } else {
-            HStack {
-                Text("How are you?").font(.subheadline).foregroundStyle(.secondary)
-                Spacer()
-                ForEach(Self.faces, id: \.0) { m, face in
-                    Button(face) { withAnimation { model.logMood(m, energy: nil, note: model.running?.title) } }
-                        .font(.title2).buttonStyle(.borderless)
-                        .accessibilityLabel("Mood \(m) of 5")
+        Card {
+            if let m = model.todayMood, now.timeIntervalSince(m.at) < 2 * 3600 {
+                HStack {
+                    Text(Self.faces.first { $0.0 == m.mood }?.1 ?? "🙂").font(.title2)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Feeling logged").font(.subheadline.weight(.semibold))
+                        Text("at \(m.at.hm)").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Change") { model.state.moods.removeAll { $0.id == m.id }; model.save() }
+                        .font(.subheadline).buttonStyle(.bordered).buttonBorderShape(.capsule)
+                }
+            } else {
+                HStack {
+                    Text("How are you feeling?").font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 4)
+                    ForEach(Self.faces, id: \.0) { m, face in
+                        Button(face) { withAnimation { model.logMood(m, energy: nil, note: model.running?.title) } }
+                            .font(.title2).buttonStyle(TilePress())
+                            .accessibilityLabel("Mood \(m) of 5")
+                    }
                 }
             }
-            .padding(.horizontal, 4)
         }
     }
 }
@@ -335,17 +386,27 @@ struct GapsCard: View {
         let gaps = TimeLog.untracked(slices, atLeast: 15)
             .filter { $0.start >= today.start.addingTimeInterval(6 * 3600) && $0.end < now.addingTimeInterval(-60) }
         if !gaps.isEmpty {
-            let tiles = model.startButtons(now: now).row.prefix(4)
-            Card {
-                CardHeader(title: "What Were You Doing?", symbol: "questionmark.circle", color: .orange)
-                ForEach(gaps, id: \.start) { g in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(g.start.hm)–\(g.end.hm) · \(durationLabel(g.minutes))").font(.subheadline)
-                        ScrollView(.horizontal, showsIndicators: false) {
+            let tiles = model.startButtons(now: now).row.prefix(5)
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader("What Were You Doing?")
+                Card {
+                    ForEach(Array(gaps.enumerated()), id: \.element.start) { i, g in
+                        if i > 0 { Divider() }
+                        VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                ForEach(Array(tiles)) { b in
-                                    Button(b.title) { model.logStretch(b.title, DateInterval(start: g.start, end: g.end)) }
-                                        .buttonStyle(.bordered).buttonBorderShape(.capsule).font(.caption)
+                                Text("\(g.start.hm) – \(g.end.hm)").font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text(durationLabel(g.minutes)).font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(Array(tiles)) { b in
+                                        let c = Theme.color(category: b.category, tree: model.state.categories)
+                                        Button { model.logStretch(b.title, DateInterval(start: g.start, end: g.end)) } label: {
+                                            Label(b.title, systemImage: b.symbol ?? Theme.symbol(category: b.category, tree: model.state.categories))
+                                        }
+                                        .buttonStyle(.bordered).buttonBorderShape(.capsule).tint(c).font(.caption.weight(.medium))
+                                    }
                                 }
                             }
                         }
@@ -360,6 +421,7 @@ struct AssumedCard: View {
     @Environment(AppModel.self) private var model
     let now: Date
     @State private var editing: DayEntry?
+    @State private var showAll = false
 
     var body: some View {
         let cal = Calendar.current
@@ -367,26 +429,35 @@ struct AssumedCard: View {
         let slices = TimeLog.past(model.state.entries, in: today, now: now, book: model.state.dayRules, calendar: cal)
         let assumed = TimeLog.assumed(slices).filter { $0.end <= now && !model.state.categories.isUnder($0.category, CategoryTree.sleep) }
         if !assumed.isEmpty {
-            Card {
-                HStack {
-                    CardHeader(title: "Did These Happen?", symbol: "checkmark.circle", color: .green)
-                    Button("Yes to All") { model.confirmAll(in: DateInterval(start: today.start, end: now)) }.font(.subheadline)
+            let tree = model.state.categories
+            let shown = showAll ? assumed : Array(assumed.suffix(5))
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader("Did These Happen?", action: "Yes to All") {
+                    model.confirmAll(in: DateInterval(start: today.start, end: now))
                 }
-                ForEach(assumed) { d in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(d.title).font(.subheadline)
-                            Text("\(d.start.hm)–\(d.end.hm)").font(.caption).foregroundStyle(.secondary)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture { editing = d }
-                        Spacer()
-                        Button { model.confirm(d) } label: { Image(systemName: "checkmark.circle.fill") }.foregroundStyle(.green)
-                            .accessibilityLabel("Yes, \(d.title) happened")
-                        Button { model.reject(d) } label: { Image(systemName: "xmark.circle.fill") }.foregroundStyle(.secondary)
-                            .accessibilityLabel("No, \(d.title) didn't happen")
+                Card {
+                    if assumed.count > shown.count {
+                        Button("Show \(assumed.count - shown.count) Earlier") { withAnimation { showAll = true } }
+                            .font(.subheadline).buttonStyle(.borderless)
                     }
-                    .font(.title3).buttonStyle(.borderless)
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { i, d in
+                        if i > 0 || assumed.count > shown.count { Divider() }
+                        HStack(spacing: 12) {
+                            IconTile(symbol: Theme.symbol(category: d.category, tree: tree), color: Theme.color(category: d.category, tree: tree))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(d.title).font(.subheadline.weight(.medium)).lineLimit(1)
+                                Text("\(d.start.hm) – \(d.end.hm) · \(tree.pathText(d.category))").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { editing = d }
+                            Spacer(minLength: 4)
+                            Button { model.confirm(d) } label: { Image(systemName: "checkmark.circle.fill") }.foregroundStyle(.green)
+                                .accessibilityLabel("Yes, \(d.title) happened")
+                            Button { model.reject(d) } label: { Image(systemName: "xmark.circle.fill") }.foregroundStyle(Color(.systemGray3))
+                                .accessibilityLabel("No, \(d.title) didn't happen")
+                        }
+                        .font(.title2).buttonStyle(.borderless)
+                    }
                 }
             }
             .sheet(item: $editing) { EntrySheet(day: $0) }
@@ -412,33 +483,45 @@ struct UpNextCard: View {
         let atRisk = Set(items.filter { $0.isOpen && model.state.taskHistory.atRisk($0) }.map(\.id))
         // H3: usually-dropped kinds first.
         let ordered = blocks.sorted { (atRisk.contains($0.itemId ?? UUID()) ? 0 : 1, $0.start) < (atRisk.contains($1.itemId ?? UUID()) ? 0 : 1, $1.start) }
-        Card {
-            CardHeader(title: "Up Next", symbol: "list.bullet", color: .blue)
-            Text(UpNext.summary(plan: model.state.plan, items: items, entries: model.state.entries, goals: model.state.goals,
-                                tree: model.state.categories, now: now, book: model.state.dayRules, calendar: cal))
-                .font(.subheadline).fixedSize(horizontal: false, vertical: true)
-            ForEach(ordered) { b in
-                let item = b.itemId.flatMap { id in items.first { $0.id == id } }
-                HStack(alignment: .center, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(b.title).font(.subheadline.weight(.semibold))
-                        Text("\(b.start.hm) · \(durationLabel(b.minutes))" + (item?.firstStep.map { " · \($0)" } ?? ""))
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        let tree = model.state.categories
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader("Up Next")
+            Card {
+                Text(UpNext.summary(plan: model.state.plan, items: items, entries: model.state.entries, goals: model.state.goals,
+                                    tree: tree, now: now, book: model.state.dayRules, calendar: cal))
+                    .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                ForEach(ordered) { b in
+                    let item = b.itemId.flatMap { id in items.first { $0.id == id } }
+                    let color = item.map { Theme.color(category: $0.category ?? CategoryTree.studying, tree: tree) } ?? Theme.focus
+                    Divider()
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text(b.start.hm).font(.subheadline.weight(.semibold).monospacedDigit())
+                            Text(durationLabel(b.minutes)).font(.caption2).foregroundStyle(.secondary)
+                        }
+                        .frame(width: 64, alignment: .trailing)
+                        Capsule().fill(color).frame(width: 4)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(b.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                            if let step = item?.firstStep { Text(step).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                        }
+                        Spacer(minLength: 4)
+                        if let item {
+                            Button { model.startTask(item) } label: { Image(systemName: "play.fill") }
+                                .buttonStyle(.borderedProminent).buttonBorderShape(.circle).tint(color)
+                                .accessibilityLabel("Start \(item.title)")
+                            Menu {
+                                Button("Done", systemImage: "checkmark") { model.complete(item.id) }
+                                Button("Not Today", systemImage: "arrow.uturn.forward") { model.notToday(blockId: b.id) }
+                                Button("Clear (not doing it)", systemImage: "xmark.circle") { clearing = item }
+                                Button("Delete (made by mistake)", systemImage: "trash", role: .destructive) { model.delete(item.id) }
+                            } label: { Image(systemName: "ellipsis.circle").font(.title3) }
+                        }
                     }
-                    Spacer()
-                    if let item {
-                        Button { model.startTask(item) } label: { Image(systemName: "play.fill") }
-                            .buttonStyle(.borderedProminent).accessibilityLabel("Start \(item.title)")
-                        Menu {
-                            Button("Done", systemImage: "checkmark") { model.complete(item.id) }
-                            Button("Not Today", systemImage: "arrow.uturn.forward") { model.notToday(blockId: b.id) }
-                            Button("Clear (not doing it)", systemImage: "xmark.circle") { clearing = item }
-                            Button("Delete (made by mistake)", systemImage: "trash", role: .destructive) { model.delete(item.id) }
-                        } label: { Image(systemName: "ellipsis.circle") }
-                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentShape(Rectangle())
+                    .onTapGesture { showing = item }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { showing = item }
             }
         }
         .sheet(item: $clearing) { ClearSheet(item: $0) }

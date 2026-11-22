@@ -204,6 +204,89 @@ struct BigValue: View {
     }
 }
 
+/// A section's title above its card, as in Health and Fitness, with an optional button on the right.
+struct SectionHeader: View {
+    let title: String
+    var action: String?
+    var perform: (() -> Void)?
+
+    init(_ title: String, action: String? = nil, perform: (() -> Void)? = nil) {
+        self.title = title
+        self.action = action
+        self.perform = perform
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).font(.title3.weight(.bold)).accessibilityAddTraits(.isHeader)
+            Spacer()
+            if let action, let perform { Button(action, action: perform).font(.subheadline) }
+        }
+        .padding(.top, 10)
+        .padding(.horizontal, 2)
+    }
+}
+
+/// A section title above a card (Health / Fitness style).
+struct TitledCard<Content: View>: View {
+    let title: String
+    var detail: String?
+    @ViewBuilder var content: Content
+
+    init(_ title: String, detail: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.detail = detail
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(.title3.weight(.bold)).accessibilityAddTraits(.isHeader)
+                Spacer()
+                if let detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
+            }
+            .padding(.top, 10)
+            .padding(.horizontal, 2)
+            Card { content }
+        }
+    }
+}
+
+/// One number on Review's grid: a coloured symbol and name, the value large, a line under it.
+struct StatTile: View {
+    let title: String
+    let symbol: String
+    let color: Color
+    let value: String
+    var unit: String?
+    var caption: String?
+    var progress: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: symbol)
+                .font(.footnote.weight(.semibold)).foregroundStyle(color).lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value).font(.system(.title2, design: .rounded).weight(.semibold)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                if let unit { Text(unit).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary) }
+            }
+            if let progress {
+                ProgressView(value: min(1, max(0, progress))).tint(color)
+            }
+            if let caption {
+                Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 struct SectionTitle: View {
     let text: String
     init(_ text: String) { self.text = text }

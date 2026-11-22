@@ -13,6 +13,9 @@ struct OnboardingView: View {
     @State private var showGuide = false
     /// A1: templates you unticked (title keys).
     @State private var unticked: Set<String> = []
+    /// The apps you scroll on (ticked on the Less Scrolling page).
+    @State private var scrollApps: Set<String> = []
+    @State private var otherApp = ""
     /// H2: a backup found in the folder remembered from before a reinstall.
     @State private var offer: RestorePreview?
     @State private var importing = false
@@ -87,6 +90,7 @@ struct OnboardingView: View {
     private func advance() {
         if page == pages.last {
             model.seedGrid(skipping: unticked)
+            model.setScrollingApps(scrollApps)
             model.state.onboarded = true
             model.save()
             Task { await model.refresh() }
@@ -138,7 +142,13 @@ struct OnboardingView: View {
                     Button {
                         if on { unticked.insert(key) } else { unticked.remove(key) }
                     } label: {
-                        TileLabel(title: t.title, symbol: t.symbol, color: on ? .accentColor : .secondary, on: on)
+                        TileLabel(title: t.title, symbol: t.symbol,
+                                  color: on ? Theme.color(category: t.category, tree: model.state.categories) : Color(.systemGray4), on: false)
+                            .opacity(on ? 1 : 0.6)
+                            .overlay(alignment: .topTrailing) {
+                                Image(systemName: on ? "checkmark.circle.fill" : "circle").foregroundStyle(on ? Color.accentColor : .secondary)
+                                    .background(Circle().fill(Theme.background)).offset(x: -6, y: -4)
+                            }
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(on ? .isSelected : [])
@@ -253,17 +263,39 @@ struct OnboardingView: View {
 
     @ViewBuilder private var scrolling: some View {
         VStack(alignment: .leading, spacing: 18) {
-            IconTile(symbol: "hourglass", color: Theme.screen, size: 56)
+            IconTile(symbol: "hourglass", color: .pink, size: 56)
             Text("Less Scrolling").font(.largeTitle.weight(.bold))
-            Text("Two small habits do the job of blocking apps.")
-                .lineSpacing(3)
-            Text("A pause before the apps you lose time in").font(.headline)
+            Text("Which apps do you scroll on?").font(.headline)
+            Text("Their time counts as Scrolling, each app on its own. Messaging apps like Discord count as Messaging. Change it any time in Settings → Screen Time.")
+                .font(.subheadline).foregroundStyle(.secondary)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 8) {
+                ForEach(ScrollingApps.common + scrollApps.filter { !ScrollingApps.common.contains($0) }.sorted(), id: \.self) { app in
+                    let on = scrollApps.contains(app)
+                    Button {
+                        if on { scrollApps.remove(app) } else { scrollApps.insert(app) }
+                    } label: {
+                        Label(app, systemImage: on ? "checkmark.circle.fill" : "circle")
+                            .font(.subheadline.weight(.medium)).lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10).padding(.vertical, 10)
+                            .background(on ? Color.pink.opacity(0.15) : Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .foregroundStyle(on ? Color.pink : .primary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+            HStack {
+                TextField("Another app", text: $otherApp).textFieldStyle(.roundedBorder).onSubmit(addOther)
+                Button("Add", action: addOther).buttonStyle(.bordered).disabled(otherApp.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            Text("Let Productium see your apps").font(.headline).padding(.top, 8)
             VStack(alignment: .leading, spacing: 8) {
                 step(1, "In Shortcuts, open Automation and tap +. Choose App.")
-                step(2, "Tap Choose and tick every app you lose time in (several at once is fine). Keep Is Opened, untick Is Closed.")
+                step(2, "Tap Choose and tick every app you use. Keep Is Opened, untick Is Closed.")
                 step(3, "Pick Run Immediately, tap Next, then Create New Shortcut.")
-                step(4, "Add the Productium action Pause Before Scrolling. On iOS 17 or 18, see the full guide for the version with If.")
-                step(5, "Same again with Is Closed and the action Closed a Distracting App, so your minutes get counted.")
+                step(4, "Add the Productium action Opened an App, and set App to Shortcut Input.")
+                step(5, "For a pause before the apps you scroll on, see Pause Before Scrolling in the full guide.")
             }
             HStack {
                 Button("Open Shortcuts") { if let u = URL(string: "shortcuts://") { UIApplication.shared.open(u) } }
@@ -271,12 +303,16 @@ struct OnboardingView: View {
                 Button("Full Guide") { showGuide = true }
                     .buttonStyle(.bordered)
             }
-            Text("Opening one of those apps now shows a short pause with something better to do. “Go back anyway” turns the pause off for 10 minutes.")
+            Text("Productium then counts screen time for every app and fills your day with it as assumed time: one tap confirms it, and whatever you track yourself always wins.")
                 .font(.subheadline).foregroundStyle(.secondary)
-            Text("One screenshot a week").font(.headline).padding(.top, 8)
-            Text("On Sundays, go to Settings → Screen Time → See All App & Website Activity → Week, take a screenshot, and drop it in the box. Claude reads it, and the weekly goal adjusts from there. You'll get a reminder.")
-                .lineSpacing(3)
         }
+    }
+
+    private func addOther() {
+        let t = otherApp.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        scrollApps.insert(t)
+        otherApp = ""
     }
 
     private var keepAlive: some View {

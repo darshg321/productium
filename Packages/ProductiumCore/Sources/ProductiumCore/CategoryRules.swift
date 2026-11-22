@@ -103,7 +103,7 @@ public struct CategoryRules: Codable, Hashable, Sendable {
         // A node named exactly that ("Shower", "Volleyball", "Math" under School is a class, so not for free time).
         if let n = tree.nodes.filter({ $0.name.lowercased() == k && !tree.isUnder($0.id, CategoryTree.school) })
             .max(by: { tree.depth($0.id) < tree.depth($1.id) }) { return n.id }
-        if scrollingApps.contains(where: { $0.value && Self.key($0.key) == k }) || ScrollingApps.defaultIsScrolling(title) {
+        if ScrollingApps.isScrolling(title, scrollingApps) {
             return CategoryTree.scrolling
         }
         let padded = " \(k) "

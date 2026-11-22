@@ -3,7 +3,7 @@ import Foundation
 /// Which apps count as scrolling. The student's list decides, never the model's guess.
 public enum ScrollingApps {
     static let social = ["instagram", "tiktok", "snapchat", "facebook", "twitter", "reddit", "threads", "bereal", "pinterest",
-                         "tumblr", "discord", "wechat", "weibo", "lemon8", "x formerly twitter"]
+                         "tumblr", "weibo", "lemon8", "x formerly twitter"]
     static let video = ["youtube", "netflix", "twitch", "prime video", "disney", "hulu", "crunchyroll", "vimeo", "max"]
     static let games = ["roblox", "fortnite", "minecraft", "genshin", "clash", "brawl", "among us", "candy crush", "pokemon",
                         "subway surfers", "supercell", "valorant", "league of legends", "steam"]
@@ -23,11 +23,41 @@ public enum ScrollingApps {
         return defaultIsScrolling(name, category: category)
     }
 
+    /// Onboarding's list: the apps people most often lose time in, to tick.
+    public static let common = ["Instagram", "TikTok", "YouTube", "Snapchat", "Reddit", "X", "Facebook", "Pinterest", "Threads",
+                                "BeReal", "Twitch", "Netflix", "Roblox", "Safari", "Chrome"]
+
     /// Lists every app seen so far, with a default for the new ones.
     public static func register(_ apps: [(name: String, category: String?)], into list: inout [String: Bool]) {
         for a in apps where !list.contains(where: { $0.key.plainKey == a.name.plainKey }) {
             list[a.name] = defaultIsScrolling(a.name, category: a.category)
         }
+    }
+}
+
+/// v1.3: what an app's time is in the log. Your scrolling list first (Scrolling › the app), then messaging apps.
+/// Anything else has no entry (it still counts in Screen Time). Either way it's sensor time: assumed until you say
+/// yes, and anything you track yourself wins over it.
+public enum AppKinds {
+    static let messaging = ["messages", "imessage", "whatsapp", "discord", "messenger", "telegram", "signal", "wechat", "line",
+                            "kakaotalk", "groupme", "viber", "facetime", "phone", "slack", "microsoft teams", "teams", "mail", "gmail",
+                            "outlook"]
+
+    public static func isMessaging(_ app: String) -> Bool {
+        let k = app.plainKey
+        return messaging.contains { k == $0.plainKey || k.hasPrefix($0.plainKey + " ") }
+    }
+
+    /// The category for an app's session, adding Scrolling › <app> when it's new. Your own filing of that title wins.
+    public static func category(for app: String, list: [String: Bool], rules: CategoryRules, tree: inout CategoryTree) -> CategoryID? {
+        if let r = rules.learned[CategoryRules.key(app)], r.byYou, tree.node(r.category) != nil { return r.category }
+        if ScrollingApps.isScrolling(app, list) {
+            if let n = tree.children(CategoryTree.scrolling).first(where: { $0.name.plainKey == app.plainKey }) { return n.id }
+            guard tree.node(CategoryTree.scrolling) != nil else { return CategoryTree.scrolling }
+            return tree.add(app, under: CategoryTree.scrolling)?.id ?? CategoryTree.scrolling
+        }
+        if isMessaging(app) { return tree.node(CategoryTree.messaging) != nil ? CategoryTree.messaging : CategoryTree.free }
+        return nil
     }
 }
 

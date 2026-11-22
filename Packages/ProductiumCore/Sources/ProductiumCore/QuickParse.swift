@@ -20,9 +20,12 @@ public struct QuickContext: Sendable {
     public var rules: CategoryRules
     public var scrollingApps: [String: Bool]
     public var book: DayRuleBook
+    /// The activity grid's live tiles: "I'm showering" starts the Shower tile.
+    public var tiles: [QuickStart]
 
     public init(now: Date, calendar: Calendar, entries: [Entry], items: [WorkItem], tree: CategoryTree = CategoryTree(),
-                rules: CategoryRules = CategoryRules(), scrollingApps: [String: Bool] = [:], book: DayRuleBook = DayRuleBook()) {
+                rules: CategoryRules = CategoryRules(), scrollingApps: [String: Bool] = [:], book: DayRuleBook = DayRuleBook(),
+                tiles: [QuickStart] = []) {
         self.now = now
         self.calendar = calendar
         self.entries = entries
@@ -31,6 +34,7 @@ public struct QuickContext: Sendable {
         self.rules = rules
         self.scrollingApps = scrollingApps
         self.book = book
+        self.tiles = tiles
     }
 }
 
@@ -38,7 +42,7 @@ public enum QuickParse {
     public static func parse(_ raw: String, _ c: QuickContext) -> QuickParsed? {
         let t = normalise(raw)
         guard !t.isEmpty, t.count <= 80, !t.contains("?"), !t.contains("\n") else { return nil }
-        return mood(t) ?? confirm(t, c) ?? stop(t, c) ?? start(t, c) ?? log(t, c)
+        return mood(t) ?? confirm(t, c) ?? stop(t, c) ?? start(t, c) ?? doing(t, c) ?? log(t, c)
     }
 
     // MARK: Text
@@ -122,7 +126,10 @@ public enum QuickParse {
         else { return nil }
         guard let title = plainTitle(m[1]) else { return nil }
         if title.lowercased() == "it" || title.lowercased() == "now" { return nil }
-        let at = ago(m[2], m[3], now: c.now)
+        return started(title, at: ago(m[2], m[3], now: c.now), c)
+    }
+
+    static func started(_ title: String, at: Date?, _ c: QuickContext, tile: QuickStart? = nil) -> QuickParsed? {
         var f = BoxFields()
         if let at { f.start = stamp(at, c.calendar) }
         if let task = task(named: title, c) {
@@ -131,11 +138,42 @@ public enum QuickParse {
         // Two tasks share the word ("reading"): which one is a question for Sonnet.
         guard tasksNamed(title, c) == 0 else { return nil }
         f.title = title
-        let cat = c.rules.category(for: title, tree: c.tree, scrollingApps: c.scrollingApps)
+        let cat = tile?.category ?? c.rules.category(for: title, tree: c.tree, scrollingApps: c.scrollingApps)
         f.category = cat
         let topics = CategoryRules.topics(for: title, category: cat, tree: c.tree)
         if !topics.isEmpty { f.topics = topics }
         return QuickParsed(kind: .start, ops: [BoxOp(.entry, .start, f)])
+    }
+
+    // MARK: "I'm showering (now)"
+
+    /// -ing words that say how you are, not what you're doing.
+    static let notActivities: Set<String> = ["going", "feeling", "thinking", "wondering", "planning", "trying", "being", "hoping",
+                                             "looking", "wanting", "needing", "kidding", "assuming", "guessing", "dying", "bring",
+                                             "nothing", "something", "everything", "anything", "morning", "evening", "boring",
+                                             "starting", "doing", "working", "beginning", "stopping", "finishing", "ending"]
+
+    static func doing(_ t: String, _ c: QuickContext) -> QuickParsed? {
+        let words = #"([a-z]+ing)((?: [a-z0-9'&-]+){0,3}?)"#
+        let m = match(t, #"(?:i'?m|i am)(?: currently| just| now)? "# + words + #"(?: now| rn| right now)?"#)
+            ?? match(t, words + #" (?:now|rn|right now)"#)
+        guard let m, let verb = m[1], !notActivities.contains(verb), verb.count >= 5 else { return nil }
+        let phrase = verb + (m[2] ?? "")
+        if let tile = tile(for: phrase, c.tiles) { return started(tile.title, at: nil, c, tile: tile) }
+        guard let title = plainTitle(phrase) else { return nil }
+        return started(title, at: nil, c)
+    }
+
+    /// The tile "showering" means: the same words, or the -ing word's stem ("napping" → Nap, "exercising" → Exercise).
+    static func tile(for phrase: String, _ tiles: [QuickStart]) -> QuickStart? {
+        let p = CategoryRules.key(phrase)
+        guard let first = p.split(separator: " ").first.map(String.init) else { return nil }
+        var stem = String(first.dropLast(3))
+        if stem.count >= 3, let l = stem.last, stem.dropLast().last == l, !"aeiouls".contains(l) { stem = String(stem.dropLast()) }
+        let rest = p.split(separator: " ").dropFirst().joined(separator: " ")
+        let stemmed = ([stem] + (rest.isEmpty ? [] : [rest])).joined(separator: " ")
+        return tiles.first { $0.keys.contains(p) || $0.keys.contains(stemmed) }
+            ?? (rest.isEmpty && stem.count >= 3 ? tiles.first { t in t.keys.contains { $0 == stem + "e" || $0 == stem + "s" } } : nil)
     }
 
     // MARK: Stop / done

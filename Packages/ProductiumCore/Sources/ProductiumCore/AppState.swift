@@ -56,9 +56,24 @@ public struct Draft: Codable, Hashable, Sendable {
     public var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && imageFiles.isEmpty }
 }
 
+public struct Feedback: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID
+    public var at: Date
+    public var text: String
+    public var appVersion: String?
+
+    public init(id: UUID = UUID(), at: Date, text: String, appVersion: String? = nil) {
+        self.id = id
+        self.at = at
+        self.text = text
+        self.appVersion = appVersion
+    }
+}
+
 public struct AppState: Codable, Sendable {
-    /// 4 = v1.2.2 (the first real data), 5 = v1.3. Older states migrate (`Migrations`); below 4 decodes as fresh.
-    public static let schema = 5
+    /// 4 = v1.2.2 (the first real data), 5 = v1.3, 6 = v1.3 (category colours, feedback). Older states migrate
+    /// (`Migrations`); below 4 decodes as fresh.
+    public static let schema = 6
     public var schema = AppState.schema
     public var onboarded = false
     /// v1.2 Part 0: everything timed (classes, events, sessions, sleep, the log, the plan's blocks).
@@ -142,6 +157,8 @@ public struct AppState: Codable, Sendable {
     public var snoozed: [UUID: Date] = [:]
     /// v1.3 H1: the daily backup's folder and last write.
     public var backup = BackupState()
+    /// Notes you wrote for whoever builds Productium (Settings → Backup & Restore); they travel in the export.
+    public var feedback: [Feedback] = []
 
     public var dumpState: DumpState {
         get {
@@ -238,6 +255,7 @@ public struct AppState: Codable, Sendable {
         usage = v(.usage, d.usage)
         snoozed = v(.snoozed, d.snoozed)
         backup = v(.backup, d.backup)
+        feedback = v(.feedback, d.feedback)
         if stored < AppState.schema { Migrations.upgrade(&self, from: stored) }
     }
 

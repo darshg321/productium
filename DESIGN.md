@@ -42,8 +42,8 @@ Dev builds (`dev` branch → `dev-build` pre-release, "Productium Dev", bundle i
 | `scenario <name>` | replace all data with a seeded state: `fresh`, `today`, `history`, `evening`, `alerts`, `leaderboard` (`Scenarios.swift`) |
 | `reset` | empty state (onboarding) |
 | `tab <today\|schedule\|tasks\|review\|settings>` | switch tab (closes sheets) |
-| `scroll <card>` | Review → Week: `week goals work leaderboard pinned note metrics`; Today: `grid gaps assumed ring upnext` |
-| `review <day\|week>` | Review's segment |
+| `scroll <card>` | Review: `recap today stats week time screen goals work mood metrics pinned leaderboard note`; Today: `grid gaps assumed ring upnext` |
+| `review [recap]` | the Review tab; `recap` opens Your Week |
 | `now <action>` | a Now Live Activity button: `stop`, `start:<title>`, `answer:<id>:<answer>`, `yes:<ref>`, `no:<ref>`, `task:<id>` |
 | `backup` | write the daily backup now (needs a folder picked) |
 | `open <url>` | any link, e.g. `productium-dev://gap` (pause sheet), an invite link |
@@ -91,7 +91,8 @@ every exhaustive `switch` in `App/Views/Theme.swift` and core.
 
 ## 2. Data model (`AppState`, one Codable struct, persisted as `state.json` in Application Support)
 
-`AppState.schema = 5` (v1.3). Schema 4 (v1.2.2) and later migrate: `AppState.init(from:)` decodes leniently, then
+`AppState.schema = 6` (v1.3: 5 = grid templates and prompt severities, 6 = seed category colours, Transition and
+Messaging, `feedback`). Schema 4 (v1.2.2) and later migrate: `AppState.init(from:)` decodes leniently, then
 `Migrations.upgrade` runs one step per bump (state.json, restores and backups all go through it; the app keeps the old
 file as `state-schema-<n>.json`). Below 4 decodes as fresh; a format-3 export is refused. `MigrationTests` decode the
 1.2.2 fixture (`Tests/…/Fixtures/state-1.2.2.json`, the `history` scenario saved by the phone) and check every field
@@ -117,6 +118,7 @@ survives. Main parts:
 - **Doing (D, I):** `quickStarts` (the activity grid: templates, yours, the AI's; pins, aliases), `goals` (the tracking goal is built in), `prompts: PromptLog`, `outbox`, `approvals`.
 - **Learning:** `learned`, `beliefs`, `policy`, `taper`, `changes: ChangeLog`, `patterns`.
 - **Backup (v1.3 H):** `backup` (folder name, last write, last error); the folder's bookmark is in the Keychain.
+- **Feedback:** `feedback` (notes typed in Settings → Backup & Restore; they travel in every export and backup).
 - **AI / misc:** `conversation`, `archive`, `usage`, `draft`, `review`, `pinnedCharts`, `telemetry`, `prefs`,
   `integrations` (health, calendar, location, motion, alarms, notifications, reminders, photos), `rewards`.
 - Outside state: `about-me.md`, `ai-calls.json`, `UserDefaults` (scroll log, `alarms.ledger`, charger times, the
@@ -136,6 +138,7 @@ survives. Main parts:
 | Doing and seeing | `QuickStart.swift` (grid, templates, ranking, + `Habits`), `GridTidy.swift`, `Goals.swift`, `Ring.swift` (`RingModel`, `DayForecast`, `ForecastVerdict`, `UpNext`, `MoodMap`), `DayRings.swift` (+ `DayCompare`), `NowActivity.swift`, `TrackPrompts.swift`, `PromptSettings.swift`, `Nudges.swift`, `Alarms.swift`, `Rewards.swift`, `Metrics.swift` | the activity grid, goals, the three rings, the Now activity, prompts and their severities, notifications, alarms, celebrations. |
 | Learning | `TaskHistory.swift`, `Patterns.swift`, `InsightPass.swift`, `ChangeLog.swift`, `Avoidance.swift`, `CapacityLearner.swift`, `Personalization.swift`, `Beliefs.swift` | track record, patterns, the quiet weekly pass. |
 | Sensing | `Inference.swift`, `Places.swift`, `Motion.swift`, `Sleep.swift`, `Scrolling.swift`, `ScreenTime.swift`, `ScreenOCR.swift` (+ `ReminderMirror`, `ActivityToggle`), `HealthStatus.swift` | signals → inferences, places, Screen Time from OCR. |
+| Review | `Recap.swift` (`PlannedShare`: how much of a day is planned; `WeekRecap`: Your Week; `OCRLines`: Vision boxes to rows), `DayRings.swift`, `Ring.swift` | |
 | Support | `Models.swift`, `AppState.swift`, `Migrations.swift`, `Backup.swift`, `Export.swift`, `Telemetry.swift`, `Timeline.swift` (segments for the CSV), `TaskBoard.swift`, `Agenda.swift`, `Util.swift` | |
 
 ### 3.1 Planner (`Planner.swift`)
@@ -190,7 +193,8 @@ Sleep's start. At 10:00, if nothing measured the night: "Slept about 23:20–7:0
 
 ### 3.4 The log, the ring, the forecast
 
-`TimeLog.past` resolves a range; `RingModel` sums it by group and level-2 category (actual + a forecast for the rest,
+`TimeLog.past` resolves a range; an Untracked slice under 5 minutes with something on both sides becomes Transition
+(Essentials › Transition, already confirmed, not editable). `RingModel` sums it by group and level-2 category (actual + a forecast for the rest,
 previous-period deltas, tracking gaps). `DayForecast`: the last 4 same weekdays + the last 7 days of the same type
 (≥3 tracked days, or nothing), the median per category from this time of day on, today's fixed time (school,
 calendar, the planned Sleep) as planned, the rest Untracked. `ForecastVerdict` names the 2 biggest differences that
@@ -240,7 +244,7 @@ on school mornings) + bedtime / leave / missed start; the reconciler diffs with 
 ## 4. The box (Part 0, O6–O8)
 
 - Everything said goes through `AppModel.submit`: saved to the `Outbox` (and disk) first, then `QuickParse` (start,
-  stop / done, "X from A to B", mood, "school as usual"; certain or pass, no network), then Sonnet inside a
+  "I'm showering (now)" → the tile whose name matches the -ing word, stop / done, "X from A to B", mood, "school as usual"; certain or pass, no network), then Sonnet inside a
   background task. A reply from a notification always gets a quiet receipt; unsent ones retry on launch and refresh.
 - Sonnet: `BoxPrompt.system()` (fixed, < 6,500 characters, cached), `BoxContext.make` (Settings, About Me, the
   running entry, the series, yesterday … +7 days with refs and flags, open tasks, track record, goals, places, rules,
@@ -281,6 +285,15 @@ on school mornings) + bedtime / leave / missed start; the reconciler diffs with 
   charger/alarm/Focus, `checkIn`, `checkInIgnored`, `estimated`). A session with no end is credited the median of
   that app's observed sessions (prior 8 min, cap 30), marked estimated. `calibrate` stores per-app over-count
   factors from screenshots ("Shortcuts over-counts Instagram ~1.4×").
+- v1.3 every app: the "Opened an App" intent (`OpenedAppIntent`, an "App is opened" automation with every app ticked
+  and App = Shortcut Input) calls `AppModel.appOpened`: `ScrollLog.seen` ends what was open and starts that app's
+  session (`ScrollSession.scrolling` false for apps not on the list; the pause automation's repeat within 15 s is the same
+  opening). Every app is registered in `scrollingApps` (Settings → Screen Time → Scrolling Apps lists them; onboarding
+  ticks the common ones). `AppKinds.category` files a session: your own filing of that title, else Scrolling › the app
+  (a node per app, created as needed), else Messaging (`AppKinds.messaging`), else no entry (it still counts as
+  screen time). `EntryBuilder.apps` writes them as `sensor` entries (assumed until confirmed; anything told wins), and
+  runs on every open / close / stop intent and on foreground, so the log is current. `screenDays` gives each finished
+  day every app (total when every app is logged); sessions are kept 35 days (`prune`).
 - `ScrollingApps` (`ScreenTime.swift`): `state.scrollingApps` decides what counts; defaults social/video/games on.
   `ScreenDay.recomputed`, `addsUp`, `mismatch`, `merged(with:)`; `ScreenReceipt` formats receipts.
 - `ScreenTaper`: week 1 measures; then the limit drops ~10% a week toward a goal derived from the baseline
@@ -309,7 +322,8 @@ v1.3 H: once a day (refresh, launch) `AppModel.backupIfDue` writes the export to
 newest 3 kept (`BackupFiles`). Onboarding offers "Restore from Friday's backup" when the remembered folder has one,
 else a file picker. Restores go through the migrations.
 
-One JSON file, `format: productium-export`, `version: 4` (format 3 and older are refused): full `AppState`, `aboutMe`,
+One JSON file, `format: productium-export`, `version: 4` (format 3 and older are refused): full `AppState` (with your
+feedback), `aboutMe`,
 `callLog`, `sharedDefaults`, `appDefaults`, `files` (every file in the container/Documents not otherwise
 represented, base64, includes `drafts/` and `last-ai-error.txt`), pending/delivered notifications, permission
 statuses, device info, server snapshots. Nothing is pruned before export. API key excluded. A test checks every
@@ -351,25 +365,32 @@ identical except `exportedAt`. Restore previews, then replaces (saving `state-be
 ## 11. UI structure (iOS design language, no custom chrome)
 
 Tabs: Today · Schedule · Tasks · Review · Settings; token meter top right.
-- **Today (v1.3 C1, "now"):** the box (thread with receipts, Approve / Decline, Undo, charts), the running entry (elapsed,
-  path, goal line, Stop / Done / Switch), the activity grid (4 columns, the running tile filled, More; long press:
-  rename / recategorise, pin here, hide), mood faces (collapse for 2 h), the question card, "What were you doing?"
-  (closed untracked stretches today, tiles as answers), "Did these happen?" (assumed time, Yes to All), today's rings
-  (tap: the day's categories as sorted bars), Up Next.
+- **Today (v1.3 C1, "now"):** the box (a compose field; thread with receipts, Approve / Decline, Undo, charts; typing
+  stays in the view and is saved when it pauses, and Today's 30 s clock holds while the box has the keyboard), alerts,
+  the question card, the running entry (tinted by its category, elapsed, path, goal line, Stop / Done / Switch), Start
+  (the activity grid as Home Screen icons in each category's colour, 4 columns, the running one ringed and saying
+  "Running", More; long press: rename / recategorise, pin here, hide), mood, "What were you doing?" (closed untracked
+  stretches today, tiles as answers), "Did these happen?" (assumed time, the last 5, Yes to All), Rings (tap: the
+  day's categories), Up Next. Section titles sit above their cards (Health / Fitness style, `SectionHeader`,
+  `TitledCard`). Seed categories have colours (School orange, Essentials green, Travel brown, Scrolling pink…).
 - **Schedule:** week strip + the day as entries in one style: past, assumed (dashed), running, planned; due items and
   untracked gaps inline; swipe right Yes (or "All to Here"), left No; every row opens the entry sheet.
 - **Tasks:** smart list; swipes Done / Start / Clear (asks why) / Delete; a read-only task sheet (first step, the
   track-record warning) with Start / Done / Clear / Delete. No "+" or forms: the box does it (K1).
-- **Review (v1.3 C2):** two segments. Day: score and parts vs your usual, today's rings beside your usual day's, what
-  changed, best / hardest hour, patterns. Week: score per day, rings per day, tracked / work / deadlines / scrolling vs
-  the last 4 weeks, the mood line, Goals, How You Work, Leaderboard, Pinned, the Weekly Note (+ alarm proposals to
-  Allow), then More Stats (the period ring, mood by time of day, Life Metrics).
+- **Review (v1.3):** one page, every stat, no drilling in: Your Week (a banner opening `RecapView`, full-screen cards
+  for the last 7 days from `WeekRecap`, Wrapped style, any time), Today (rings beside your usual, the day score in one
+  line, what changed, best / hardest hour, patterns), At a Glance (`StatTile`s: tomorrow planned (`PlannedShare`), work,
+  tracked, unproductive, screen time, deadlines, sleep, mood), This Week (scores, rings per day, vs the last 4 weeks),
+  Where Your Time Went (Day / Week / Month, `TimeBreakdown`: a Screen Time–style bar and rows; tap for entries), Screen
+  Time (today per app, grouped Scrolling / Messaging / Other), Goals, How You Work, Mood by Time of Day, Life Metrics,
+  Pinned, Leaderboard, the Weekly Note (+ alarm proposals to Allow).
 - **Entry sheet (C4 / O11):** title, times, category picker (+ New), topics, note, place; Yes / No for assumed time;
   delete; "also move similar".
 - **Settings (K4):** Claude · Past Prompts · AI Usage | Sleep · Screen Time · Notifications (every prompt kind with its
   severity, Alarms Allowed, how much to interrupt, your alarms) | Goals · Categories · Celebrations | Connections ·
   Shortcuts · Places (where the week went, named places) · What Productium Thinks (Changes with evidence and Revert,
-  tidy-ups, routines) · About You | Backup & Restore (the daily folder, export, restore) · Debug · Keeping It Installed.
+  tidy-ups, routines) · About You | Backup & Restore (the daily folder, export, restore, feedback) · Keeping It
+  Installed. There's no Debug screen: the telemetry and diagnostics are in every export.
   There's no Privacy screen.
 - Colour is never the only cue: each category has a symbol and a word; each ring has its word and number; forecast /
   planned time is faint.
