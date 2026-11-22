@@ -189,6 +189,8 @@ public struct PlannedAlarm: Codable, Hashable, Sendable {
         case wake, bedtime, leave, missedStart
         /// v1.2 O4: an approved alarm `Alert` on an Entry (`EntryAlerts`).
         case entry
+        /// v1.3 E: any other prompt set to Alarm.
+        case prompt
     }
     public var key: String
     public var kind: Kind
@@ -220,11 +222,20 @@ public struct NudgeInput {
     public var timeLabel: ((Date) -> String)?
     public var policy: BehaviourPolicy
     public var dayRules: DayRuleBook
+    /// v1.3 E: what each kind of prompt does (nil: from the v1.2 toggles in `settings`).
+    public var prompts: PromptSettings
+    public var alarmsAllowed: Bool
+    /// The Now activity is on the Lock Screen (if not, its prompts fall back to notifications).
+    public var liveActivity: Bool
 
     public init(now: Date, calendar: Calendar, plan: Plan, items: [WorkItem], settings: NudgeSettings,
                 startedBlockId: UUID? = nil, answeredBlockIds: Set<UUID> = [], snoozedBlockIds: Set<UUID> = [],
                 running: Entry? = nil, limit: Int = 52, timeLabel: ((Date) -> String)? = nil,
-                policy: BehaviourPolicy = BehaviourPolicy(), dayRules: DayRuleBook = DayRuleBook()) {
+                policy: BehaviourPolicy = BehaviourPolicy(), dayRules: DayRuleBook = DayRuleBook(),
+                prompts: PromptSettings? = nil, alarmsAllowed: Bool = true, liveActivity: Bool = true) {
+        self.prompts = prompts ?? PromptSettings.migrated(from: settings, wakeAlarms: true)
+        self.alarmsAllowed = alarmsAllowed
+        self.liveActivity = liveActivity
         self.dayRules = dayRules
         self.policy = policy
         self.now = now
@@ -370,7 +381,7 @@ public enum NudgePlanner {
                       urgent: true))
         }
 
-        if input.settings.deadlines {
+        if input.prompts.notifies(.deadline) {
             for item in input.items where item.isOpen && item.parentId == nil && item.due > now {
                 let left = max(0, item.estimateMinutes - item.completedMinutes)
                 guard left > 0 || item.kind.isMemoryBased else { continue }
@@ -394,8 +405,8 @@ public enum NudgePlanner {
             }
         }
 
-        if input.settings.movement && level != .gentle { movementBreaks(study, add: add) }
-        if input.settings.daylight && level != .gentle {
+        if input.prompts.notifies(.movement) && level != .gentle { movementBreaks(study, add: add) }
+        if input.prompts.notifies(.daylight) && level != .gentle {
             for w in plan.wakePlans where w.wake > now && w.wake < end {
                 let day = input.calendar.startOfDay(for: w.day)
                 guard w.firstCommitment == nil, plan.blocks.allSatisfy({ !($0.kind == .commitment && input.calendar.isDate($0.start, inSameDayAs: day)) }) else { continue }
@@ -416,7 +427,7 @@ public enum NudgePlanner {
                                  itemId: intent.itemId, deeplink: "productium://now"))
             }
         }
-        let kept = out.filter { !plan.isMuted($0.kind, at: $0.at, calendar: input.calendar) }
+        let kept = input.prompts.filter(out, liveActivity: input.liveActivity).filter { !plan.isMuted($0.kind, at: $0.at, calendar: input.calendar) }
         return Array(dedupe(kept).sorted { $0.at < $1.at }.prefix(input.limit))
     }
 
@@ -469,18 +480,18 @@ public enum NudgePlanner {
     }
 
     public static func alarms(_ input: NudgeInput, max: Int = 6) -> [PlannedAlarm] {
-        guard input.settings.alarms else { return [] }
+        let rings = { (k: PromptKind) in input.prompts.rings(k, alarmsAllowed: input.alarmsAllowed) }
         let now = input.now, end = now.addingTimeInterval(horizon)
         var out: [PlannedAlarm] = []
-        if let s = input.plan.blocks.first(where: { $0.kind == .sleep && $0.start > now && $0.start < end }) {
+        if rings(.bedtime), let s = input.plan.blocks.first(where: { $0.kind == .sleep && $0.start > now && $0.start < end }) {
             out.append(PlannedAlarm(key: "bed.\(AlarmPlanner.dayKey(s.end, input.calendar))", kind: .bedtime, at: s.start, title: "Bedtime"))
         }
         for w in input.plan.wakePlans {
-            if let leave = w.leaveBy, leave > now, leave < end {
+            if rings(.leave), let leave = w.leaveBy, leave > now, leave < end {
                 out.append(PlannedAlarm(key: "leave.\(AlarmPlanner.dayKey(leave, input.calendar))", kind: .leave, at: leave, title: "Time to leave"))
             }
         }
-        for b in input.plan.blocks where b.isStudy && b.minutes >= 25 && b.id != input.startedBlockId
+        for b in input.plan.blocks where rings(.missedStart) && b.isStudy && b.minutes >= 25 && b.id != input.startedBlockId
             && !input.answeredBlockIds.contains(b.id) && !input.snoozedBlockIds.contains(b.id) {
             let at = b.start.addingTimeInterval(10 * 60)
             guard at > now, at < end else { continue }

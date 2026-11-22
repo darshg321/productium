@@ -106,7 +106,10 @@ public enum Scenarios {
         st.onboarded = true
         st.integrations = Integrations()
         let today = cal.startOfDay(for: now)
-        func at(_ day: Date, _ h: Int, _ m: Int = 0) -> Date { cal.date(bySettingHour: h, minute: m, second: 0, of: day) ?? day }
+        // Minutes may run past 59 (a random 20:00 + 75 min).
+        func at(_ day: Date, _ h: Int, _ m: Int = 0) -> Date {
+            (cal.date(bySettingHour: h, minute: 0, second: 0, of: day) ?? day).addingTimeInterval(Double(m) * 60)
+        }
         func day(_ back: Int) -> Date { cal.date(byAdding: .day, value: -back, to: today) ?? today }
         let start = day(35)
         let schoolDays: Set<Int> = [2, 3, 4, 5, 6]
@@ -186,6 +189,7 @@ public enum Scenarios {
             }
         }
         st.entries += log
+        st.quickStarts.seedTemplates(at: start)
         for e in log where e.source == .you && e.taskId == nil { st.quickStarts.noteStart(e, at: e.start) }
         return st
     }

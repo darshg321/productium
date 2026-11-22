@@ -13,9 +13,12 @@ public enum InsightChange: Codable, Hashable, Sendable {
     case aboutMe(section: AboutMeSection, text: String)
     /// Celebrations turned down because they made no difference (F6). Revert restores `from`.
     case celebrations(to: CelebrationLevel, from: CelebrationLevel)
+    /// v1.3 A4: the activity grid tidied (own cap of `GridTidy.maxPerRun`, not counted in the 3).
+    case grid(GridChange)
 
     var isAboutMe: Bool { if case .aboutMe = self { return true }; return false }
     var isBeliefGroup: Bool { if case .beliefGroup = self { return true }; return false }
+    var isGrid: Bool { if case .grid = self { return true }; return false }
 
     /// What a pin or the once-a-week limit applies to.
     public var target: String {
@@ -26,6 +29,7 @@ public enum InsightChange: Codable, Hashable, Sendable {
         case .beliefGroup: return "group"
         case .aboutMe(_, let t): return "about:\(t.prefix(40))"
         case .celebrations: return "celebrations"
+        case .grid(let g): return g.target
         }
     }
 }
@@ -77,6 +81,7 @@ public struct LoggedChange: Codable, Hashable, Identifiable, Sendable {
         case .beliefGroup(let g, _): return "Started noticing: \(g.title)"
         case .aboutMe(let s, let t): return "About You (\(s.rawValue)): \(t)"
         case .celebrations(let to, _): return "Celebrations: \(to.title)"
+        case .grid(let g): return g.title
         }
     }
 
@@ -164,7 +169,11 @@ public struct ChangeLog: Codable, Hashable, Sendable {
             guard !s.aboutMe[section].contains(where: { $0.text.plainKey == text.plainKey }) else { return "Already in About You: \(text.prefix(40))" }
             return nil
         }
-        guard done.filter({ !$0.change.isAboutMe }).count < Self.maxPerRun else { return "More than \(Self.maxPerRun) in one run: \(p.title)" }
+        if p.change.isGrid {
+            guard done.filter(\.change.isGrid).count < GridTidy.maxPerRun else { return "More than \(GridTidy.maxPerRun) grid changes" }
+        } else {
+            guard done.filter({ !$0.change.isAboutMe && !$0.change.isGrid }).count < Self.maxPerRun else { return "More than \(Self.maxPerRun) in one run: \(p.title)" }
+        }
         let t = p.change.target
         if pinned.contains(t) { return "\(t) is pinned" }
         if done.contains(where: { $0.change.target == t }) { return "\(t) twice in one run" }
@@ -206,6 +215,8 @@ public struct ChangeLog: Codable, Hashable, Sendable {
             guard to == .subtle, from == .full, s.rewardSettings.level == .full else { return "Celebrations are already turned down" }
             p.from = from.title
             p.to = to.title
+        case .grid(let g):
+            if let why = GridTidy.refusal(g, grid: s.quickStarts, lastUse: s.quickStartUse, tree: s.categories, now: now) { return why }
         case .aboutMe: break
         }
         return nil
@@ -231,6 +242,10 @@ public struct ChangeLog: Codable, Hashable, Sendable {
             s.beliefs.groups.append(g)
         case .celebrations(let to, _):
             s.rewardSettings.level = to
+        case .grid(let g):
+            let r = GridTidy.apply(g, to: &s.quickStarts, now: now)
+            p.created = r.created
+            p.previousText = r.previous
         case .aboutMe(let section, let text):
             guard case .success = s.aboutMe.apply(AboutMeFact(section: section.rawValue, text: text), by: .reflection, now: now) else {
                 return "About-me line refused: \(text.prefix(40))"
@@ -255,6 +270,8 @@ public struct ChangeLog: Codable, Hashable, Sendable {
             s.beliefs.items.removeAll { $0.group == g.id }
         case .celebrations(_, let from):
             s.rewardSettings.level = from
+        case .grid(let g):
+            GridTidy.revert(g, created: p.created, previous: p.previousText, in: &s.quickStarts)
         case .aboutMe(let section, let text):
             s.aboutMe[section].removeAll { $0.text.plainKey == text.plainKey && !$0.byStudent }
         }

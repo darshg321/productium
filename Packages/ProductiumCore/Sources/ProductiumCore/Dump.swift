@@ -18,6 +18,10 @@ public struct DumpState: Sendable {
     /// Read-only here: whether the device has allowed alarms (the box can't grant that).
     public var alarmsAllowed = false
     public var rewardSettings = RewardSettings()
+    /// v1.3 A4: the activity grid (the insight pass tidies it); its last uses and the tree are read-only here.
+    public var quickStarts = QuickStarts()
+    public var quickStartUse: [UUID: Date] = [:]
+    public var categories = CategoryTree()
 
     public init(items: [WorkItem],
                 moods: [MoodEntry], screen: [ScreenDay], prefs: Preferences,

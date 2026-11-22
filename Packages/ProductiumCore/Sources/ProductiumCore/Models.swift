@@ -273,12 +273,16 @@ public struct Preferences: Codable, Hashable, Sendable {
     public var colors: [String: String]
     /// The student's (or the box's) choice to have the morning alarm at all; it also needs the Wake-Up Alarms permission.
     public var wakeAlarms: Bool
+    /// v1.3 E: what each kind of prompt does. Replaces `nudges`' toggles and `wakeAlarms` (kept for the migration).
+    public var prompts: PromptSettings
 
     public init(sleepNeedMinutes: Int = 540, sleepFloorMinutes: Int = 420,
                 schoolDayWake: TimeOfDay = TimeOfDay(6, 45), freeDayWake: TimeOfDay = TimeOfDay(8, 30),
                 windDownMinutes: Int = 30, allowSleepTradeoffs: Bool = true,
                 schoolDays: Set<Int> = [2, 3, 4, 5, 6], interests: [String] = [], autoWake: Bool = true,
-                nudges: NudgeSettings = NudgeSettings(), colors: [String: String] = [:], wakeAlarms: Bool = true) {
+                nudges: NudgeSettings = NudgeSettings(), colors: [String: String] = [:], wakeAlarms: Bool = true,
+                prompts: PromptSettings = PromptSettings()) {
+        self.prompts = prompts
         self.wakeAlarms = wakeAlarms
         self.sleepNeedMinutes = sleepNeedMinutes
         self.sleepFloorMinutes = sleepFloorMinutes
@@ -309,11 +313,12 @@ public struct Preferences: Codable, Hashable, Sendable {
         nudges = v(.nudges, d.nudges)
         colors = v(.colors, d.colors)
         wakeAlarms = v(.wakeAlarms, d.wakeAlarms)
+        prompts = v(.prompts, d.prompts)
     }
 
     enum CodingKeys: String, CodingKey {
         case sleepNeedMinutes, sleepFloorMinutes, schoolDayWake, freeDayWake, windDownMinutes, allowSleepTradeoffs
-        case schoolDays, interests, autoWake, nudges, colors, wakeAlarms
+        case schoolDays, interests, autoWake, nudges, colors, wakeAlarms, prompts
     }
 }
 

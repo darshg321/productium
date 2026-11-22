@@ -42,6 +42,8 @@ public struct InsightInput {
     public var aiGoals: [Goal] = []
     /// v1.2 N3: what the student answered when plan and reality disagreed ("No school today" Tue).
     public var answers: [String] = []
+    /// v1.3 A4: the activity grid and what's typed with no tile (`GridTidy.summary`).
+    public var grid: [String] = []
 
     public init(now: Date, calendar: Calendar, trigger: InsightTrigger, question: String? = nil, aboutMe: AboutMe = .empty,
                 beliefs: Beliefs = Beliefs(), routines: [Routine] = Routine.defaults, deferrals: [Deferral] = [], days: [DayRecord] = [],
@@ -120,6 +122,9 @@ public enum InsightPass {
         [ai] by at most 10% (goal id, target minutes); never one of theirs.
         patterns: from "Patterns found", pick at most 2 that matter and word each in one plain sentence (keep its numbers \
         exactly). Shown in Review; none is fine.
+        grid: keep the activity grid tidy (up to 5, applied at once): add a tile for something typed often with no tile \
+        (title, category id, SF Symbol), merge a duplicate (from, into), rename a vague one (from, to), hide one unused \
+        30+ days. Never touch tiles marked (theirs). None is fine.
         about_me: up to 3 lines, section Inferred ("text — evidence: …, confidence: low|med|high, since YYYY-MM-DD")         or Patterns ("puts off university essays: deferred 3× this week").
         """).replacingOccurrences(of: #" {2,}"#, with: " ", options: .regularExpression)
     }
@@ -138,6 +143,9 @@ public enum InsightPass {
                             "changes": Schemas.arr(change),
                             "patterns": Schemas.arr(Schemas.obj(["id": s, "text": s], required: ["id", "text"])),
                             "goal_changes": Schemas.arr(Schemas.obj(["goal": s, "target": i], required: ["goal", "target"])),
+                            "grid": Schemas.arr(Schemas.obj(["action": Schemas.strEnum(["add", "merge", "rename", "hide"]), "title": s,
+                                                             "to": s, "category": s, "symbol": s, "reason": s],
+                                                            required: ["action", "title", "reason"])),
                             "about_me": Schemas.arr(Schemas.obj(["section": s, "text": s], required: ["section", "text"]))],
                            required: ["headline", "wins", "suggestions", "changes"])
     }()
@@ -170,6 +178,14 @@ public enum InsightPass {
         public struct Line: Codable, Hashable, Sendable { public var section: String; public var text: String }
         public struct PatternLine: Codable, Hashable, Sendable { public var id: String; public var text: String }
         public struct GoalChange: Codable, Hashable, Sendable { public var goal: String; public var target: Int }
+        public struct GridLine: Codable, Hashable, Sendable {
+            public var action: String
+            public var title: String
+            public var to: String?
+            public var category: String?
+            public var symbol: String?
+            public var reason: String
+        }
         public var headline: String
         public var wins: [String]
         public var suggestions: [String]
@@ -177,6 +193,7 @@ public enum InsightPass {
         public var about_me: [Line]?
         public var patterns: [PatternLine]?
         public var goal_changes: [GoalChange]?
+        public var grid: [GridLine]?
 
         public var review: WeeklyReview { WeeklyReview(headline: headline, wins: wins, suggestions: Array(suggestions.prefix(2))) }
     }
@@ -209,6 +226,7 @@ public enum InsightPass {
         if !x.aiGoals.isEmpty { l.append("Goals you set [ai]: " + x.aiGoals.map { "\($0.ref) \($0.title) \(minutesLabel($0.target))/\($0.period.rawValue)" }.joined(separator: "; ")) }
         if let m = x.metrics { l.append(m) }
         if !x.trackRecord.isEmpty { l.append("How tasks ended (track record): " + x.trackRecord.joined(separator: "; ")) }
+        l += x.grid
         if !x.answers.isEmpty { l.append("When plan and reality disagreed, they said: " + x.answers.joined(separator: "; ")) }
         if !x.patterns.isEmpty {
             l.append("Patterns found (id: text · evidence):")
@@ -304,6 +322,17 @@ public enum InsightPass {
                 out.append(make(.beliefGroup(BeliefGroup(id: slug, title: title), evidence: ev), p.reason, ev))
             default: continue
             }
+        }
+        for g in o.grid ?? [] {
+            let change: GridChange
+            switch g.action.lowercased() {
+            case "add": change = .add(title: g.title, category: g.category ?? CategoryTree.other, symbol: g.symbol)
+            case "merge": guard let to = g.to else { continue }; change = .merge(from: g.title, into: to)
+            case "rename": guard let to = g.to else { continue }; change = .rename(from: g.title, to: to)
+            case "hide": change = .hide(title: g.title)
+            default: continue
+            }
+            out.append(make(.grid(change), g.reason, []))
         }
         for line in o.about_me ?? [] {
             guard let s = AboutMeSection(loose: line.section) else { continue }

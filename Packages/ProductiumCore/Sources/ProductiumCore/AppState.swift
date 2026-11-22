@@ -57,8 +57,8 @@ public struct Draft: Codable, Hashable, Sendable {
 }
 
 public struct AppState: Codable, Sendable {
-    /// v1.2 is a clean break: state stored by an older schema isn't read (the app starts fresh, onboarding re-runs).
-    public static let schema = 4
+    /// 4 = v1.2.2 (the first real data), 5 = v1.3. Older states migrate (`Migrations`); below 4 decodes as fresh.
+    public static let schema = 5
     public var schema = AppState.schema
     public var onboarded = false
     /// v1.2 Part 0: everything timed (classes, events, sessions, sleep, the log, the plan's blocks).
@@ -140,6 +140,8 @@ public struct AppState: Codable, Sendable {
     public var appOpens: [Date] = []
     public var usage = UsageLedger()
     public var snoozed: [UUID: Date] = [:]
+    /// v1.3 H1: the daily backup's folder and last write.
+    public var backup = BackupState()
 
     public var dumpState: DumpState {
         get {
@@ -149,6 +151,9 @@ public struct AppState: Codable, Sendable {
             ds.metricTiles = metricTiles
             ds.alarmsAllowed = integrations.alarms
             ds.rewardSettings = rewardSettings
+            ds.quickStarts = quickStarts
+            ds.quickStartUse = quickStarts.lastUse(entries)
+            ds.categories = categories
             return ds
         }
         set {
@@ -164,6 +169,7 @@ public struct AppState: Codable, Sendable {
             dayRules = newValue.dayRules
             metricTiles = newValue.metricTiles
             rewardSettings = newValue.rewardSettings
+            quickStarts = newValue.quickStarts
         }
     }
 
@@ -174,8 +180,8 @@ public struct AppState: Codable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AppState()
         func v<T: Decodable>(_ k: CodingKeys, _ def: T) -> T { (try? c.decodeIfPresent(T.self, forKey: k)) ?? def }
-        // No migration (v1.2 decision): an older schema decodes as a fresh state.
-        guard v(.schema, 0) >= AppState.schema else { self = d; return }
+        let stored = v(.schema, 0)
+        guard stored >= Migrations.oldest else { self = d; return }
         onboarded = v(.onboarded, d.onboarded)
         entries = v(.entries, d.entries)
         rules = v(.rules, d.rules)
@@ -231,6 +237,8 @@ public struct AppState: Codable, Sendable {
         appOpens = v(.appOpens, d.appOpens)
         usage = v(.usage, d.usage)
         snoozed = v(.snoozed, d.snoozed)
+        backup = v(.backup, d.backup)
+        if stored < AppState.schema { Migrations.upgrade(&self, from: stored) }
     }
 
     public mutating func prune(now: Date) {

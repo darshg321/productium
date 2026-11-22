@@ -70,6 +70,7 @@ final class ExportTests: XCTestCase {
         s.draft = Draft(text: "half a thought", imageFiles: ["a.jpg"])
         s.usage.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(output: 90)))
         s.snoozed = [UUID(): now.addingTimeInterval(600)]
+        s.backup = BackupState(folderName: "Productium Backups", lastWrite: now, lastFile: "Productium-2026-11-16.json")
         return s
     }
 

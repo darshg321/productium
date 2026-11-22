@@ -112,6 +112,8 @@ public enum Registry {
         KnobSpec("metricTiles", .data, "comma list of: \(MetricID.allCases.map(\.rawValue).joined(separator: "|")) (the Review tiles, in order)"),
         KnobSpec("scrollingApps", .data, "App:on|off, … (what counts as scrolling)"), KnobSpec("scrollCheckIns", .data, "true|false"),
         KnobSpec("arrivingHome", .data, "true|false"), KnobSpec("deadlineNudges", .data, "true|false"),
+        KnobSpec("prompt.<kind>", .data, "off|quiet|live activity|notification|alarm",
+                 note: "kinds: \(PromptKind.allCases.map(\.rawValue).joined(separator: "|"))"),
         KnobSpec("sleepNeedMinutes", .learned, "450-600", reflectionForbidden: true),
         KnobSpec("sleepFloorMinutes", .learned, "360-480", reflectionForbidden: true),
         KnobSpec("allowSleepTradeoffs", .learned, "true|false", reflectionForbidden: true),
@@ -137,6 +139,7 @@ public enum Registry {
     public static func knob(_ key: String) -> KnobSpec? {
         let k = key.trimmingCharacters(in: .whitespaces)
         if k.lowercased().hasPrefix("color") || k.lowercased().hasPrefix("colour") { return knobs[0] }
+        if k.lowercased().hasPrefix("prompt.") { return knobs.first { $0.key == "prompt.<kind>" } }
         let p = k.lowercased().filter { $0.isLetter || $0 == "." }
         return knobs.first { $0.key.lowercased().filter { $0.isLetter || $0 == "." } == p }
             ?? knobs.first { $0.key.contains(".") && $0.key.split(separator: ".").last.map { $0.lowercased() == p } == true }
@@ -219,6 +222,18 @@ public enum Knobs {
             s.prefs.colors[cat] = c
             return .changed("\(cat.replacingOccurrences(of: "_", with: " ").capitalized) is \(c)")
         }
+        if spec.key == "prompt.<kind>" {
+            let name = String(rawKey.drop { $0 != "." }.dropFirst()).plainKey
+            guard let kind = PromptKind.allCases.first(where: { $0.rawValue.lowercased() == name }) else {
+                return .refused("“\(name)” isn't a kind of prompt")
+            }
+            let v = value.lowercased().filter(\.isLetter)
+            guard let sev = Severity.allCases.first(where: { $0.rawValue.lowercased() == v }) else {
+                return .refused("A prompt is off, quiet, live activity, notification or alarm")
+            }
+            s.prefs.prompts[kind] = sev
+            return .changed("\(kind.title) → \(sev.title)")
+        }
         let lowerValue = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch spec.key {
         case "celebrations":
@@ -292,13 +307,16 @@ enum PreferenceKnobs {
             p.interests = t.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         case "nudgelevel":
             guard let l = NudgeLevel(rawValue: lower) else { return nil }; p.nudges.level = l
-        case "alarms": guard let b = bool() else { return nil }; p.nudges.alarms = b
-        case "wakealarms": guard let b = bool() else { return nil }; p.wakeAlarms = b
-        case "movementnudges": guard let b = bool() else { return nil }; p.nudges.movement = b
-        case "daylightnudges": guard let b = bool() else { return nil }; p.nudges.daylight = b
-        case "scrollcheckins": guard let b = bool() else { return nil }; p.nudges.scrollCheckIns = b
+        case "alarms":
+            guard let b = bool() else { return nil }
+            p.nudges.alarms = b
+            for k in [PromptKind.bedtime, .leave, .missedStart] { p.prompts[k] = b ? .alarm : .notification }
+        case "wakealarms": guard let b = bool() else { return nil }; p.wakeAlarms = b; p.prompts[.wake] = b ? .alarm : .notification
+        case "movementnudges": guard let b = bool() else { return nil }; p.nudges.movement = b; p.prompts[.movement] = b ? .notification : .off
+        case "daylightnudges": guard let b = bool() else { return nil }; p.nudges.daylight = b; p.prompts[.daylight] = b ? .notification : .off
+        case "scrollcheckins": guard let b = bool() else { return nil }; p.nudges.scrollCheckIns = b; p.prompts[.scrollCheckIns] = b ? .notification : .off
         case "arrivinghome": guard let b = bool() else { return nil }; p.nudges.arrivingHome = b
-        case "deadlinenudges": guard let b = bool() else { return nil }; p.nudges.deadlines = b
+        case "deadlinenudges": guard let b = bool() else { return nil }; p.nudges.deadlines = b; p.prompts[.deadline] = b ? .notification : .off
         default: return nil
         }
         return "\(raw) → \(t)"
