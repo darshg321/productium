@@ -42,7 +42,10 @@ Dev builds (`dev` branch → `dev-build` pre-release, "Productium Dev", bundle i
 | `scenario <name>` | replace all data with a seeded state: `fresh`, `today`, `history`, `evening`, `alerts`, `leaderboard` (`Scenarios.swift`) |
 | `reset` | empty state (onboarding) |
 | `tab <today\|schedule\|tasks\|review\|settings>` | switch tab (closes sheets) |
-| `scroll <card>` | Review: `today ring goals week work leaderboard metrics mood where note`; Today: `ring upnext` |
+| `scroll <card>` | Review → Week: `week goals work leaderboard pinned note metrics`; Today: `grid gaps assumed ring upnext` |
+| `review <day\|week>` | Review's segment |
+| `now <action>` | a Now Live Activity button: `stop`, `start:<title>`, `answer:<id>:<answer>`, `yes:<ref>`, `no:<ref>`, `task:<id>` |
+| `backup` | write the daily backup now (needs a folder picked) |
 | `open <url>` | any link, e.g. `productium-dev://gap` (pause sheet), an invite link |
 | `say <text>` | the box (local phrases work offline; anything else needs the Claude server) |
 | `start <title>` · `start-next` (what the pause sheet / Control Center do) · `stop` · `mood <1-5>` · `confirm-today` | the log |
@@ -88,8 +91,11 @@ every exhaustive `switch` in `App/Views/Theme.swift` and core.
 
 ## 2. Data model (`AppState`, one Codable struct, persisted as `state.json` in Application Support)
 
-v1.2 is a clean break: `AppState.schema = 4`; an older state decodes as a fresh one (onboarding re-runs), and a
-format-3 export is refused. Decoding is lenient per field so a new field never wipes data. Main parts:
+`AppState.schema = 5` (v1.3). Schema 4 (v1.2.2) and later migrate: `AppState.init(from:)` decodes leniently, then
+`Migrations.upgrade` runs one step per bump (state.json, restores and backups all go through it; the app keeps the old
+file as `state-schema-<n>.json`). Below 4 decodes as fresh; a format-3 export is refused. `MigrationTests` decode the
+1.2.2 fixture (`Tests/…/Fixtures/state-1.2.2.json`, the `history` scenario saved by the phone) and check every field
+survives. Main parts:
 
 - **Time (Part 0 / B):** `entries: [Entry]` is everything timed: classes (repeating, `School › class`, spares and lunch
   `open`), calendar events (`source calendar`, id from the EventKit id), the planner's future blocks (`source plan`,
@@ -108,8 +114,9 @@ format-3 export is refused. Decoding is lenient per field so a new field never w
 - **Sensing (N, A):** `inference: InferenceState` (learner, what was asked / applied, answers, alarm stops, the pending
   question), `health` (nights from `SleepNights`, merged field by field), `healthReads`, `motion`, `screen`,
   `screenAverages`, `scrollingApps`.
-- **Doing (D, I):** `quickStarts`, `goals` (the tracking goal is built in), `prompts: PromptLog`, `outbox`, `approvals`.
+- **Doing (D, I):** `quickStarts` (the activity grid: templates, yours, the AI's; pins, aliases), `goals` (the tracking goal is built in), `prompts: PromptLog`, `outbox`, `approvals`.
 - **Learning:** `learned`, `beliefs`, `policy`, `taper`, `changes: ChangeLog`, `patterns`.
+- **Backup (v1.3 H):** `backup` (folder name, last write, last error); the folder's bookmark is in the Keychain.
 - **AI / misc:** `conversation`, `archive`, `usage`, `draft`, `review`, `pinnedCharts`, `telemetry`, `prefs`,
   `integrations` (health, calendar, location, motion, alarms, notifications, reminders, photos), `rewards`.
 - Outside state: `about-me.md`, `ai-calls.json`, `UserDefaults` (scroll log, `alarms.ledger`, charger times, the
@@ -126,10 +133,10 @@ format-3 export is refused. Decoding is lenient per field so a new field never w
 | Planner | `Planner.swift`, `Routines.swift`, `SleepPolicy.swift`, `Palette.swift`, `Accountability.swift` | the plan from entries, rules, habits and at-risk tasks; day accounts and `DayScore`. |
 | The box | `Box.swift`, `BoxOps.swift`, `BoxSideOps.swift`, `QuickParse.swift`, `Outbox.swift`, `Approvals.swift`, `Conversation.swift`, `Query.swift`, `Reply.swift`, `AI.swift`, `Usage.swift`, `AboutMe.swift` | prompt, context, schema, applier (risk → Approve), the local fast path, the outbox, queries. |
 | Categories | `Categories.swift`, `CategoryRules.swift`, `Taxonomy.swift`, `CategoryPalette.swift` | the tree, filing rules, the tidy-up pass. |
-| Doing and seeing | `QuickStart.swift` (+ `Habits`), `Goals.swift`, `Ring.swift` (`RingModel`, `DayForecast`, `ForecastVerdict`, `UpNext`, `MoodMap`), `TrackPrompts.swift`, `Nudges.swift`, `Alarms.swift`, `Rewards.swift`, `Metrics.swift` | start buttons, goals, the ring and forecast, prompts, notifications, alarms, celebrations. |
+| Doing and seeing | `QuickStart.swift` (grid, templates, ranking, + `Habits`), `GridTidy.swift`, `Goals.swift`, `Ring.swift` (`RingModel`, `DayForecast`, `ForecastVerdict`, `UpNext`, `MoodMap`), `DayRings.swift` (+ `DayCompare`), `NowActivity.swift`, `TrackPrompts.swift`, `PromptSettings.swift`, `Nudges.swift`, `Alarms.swift`, `Rewards.swift`, `Metrics.swift` | the activity grid, goals, the three rings, the Now activity, prompts and their severities, notifications, alarms, celebrations. |
 | Learning | `TaskHistory.swift`, `Patterns.swift`, `InsightPass.swift`, `ChangeLog.swift`, `Avoidance.swift`, `CapacityLearner.swift`, `Personalization.swift`, `Beliefs.swift` | track record, patterns, the quiet weekly pass. |
 | Sensing | `Inference.swift`, `Places.swift`, `Motion.swift`, `Sleep.swift`, `Scrolling.swift`, `ScreenTime.swift`, `ScreenOCR.swift` (+ `ReminderMirror`, `ActivityToggle`), `HealthStatus.swift` | signals → inferences, places, Screen Time from OCR. |
-| Support | `Models.swift`, `AppState.swift`, `Export.swift`, `Telemetry.swift`, `Timeline.swift` (segments for the CSV), `TaskBoard.swift`, `Agenda.swift`, `Util.swift` | |
+| Support | `Models.swift`, `AppState.swift`, `Migrations.swift`, `Backup.swift`, `Export.swift`, `Telemetry.swift`, `Timeline.swift` (segments for the CSV), `TaskBoard.swift`, `Agenda.swift`, `Util.swift` | |
 
 ### 3.1 Planner (`Planner.swift`)
 
@@ -191,8 +198,36 @@ have a direction (productive and at-least goals up; unproductive, at-most goals 
 essentials neither; Untracked never offsets a worse category). `DayScore` = tracked 30 + work 40 + deadlines 30 −
 scrolling, always shown with its parts and your usual day.
 
+v1.3 D: `DayRings` are three goals that close, Fitness-style: Work (task minutes vs `Accountability.asked`), Tracked
+(share of waking time that's an entry; closes with ≤5 min missing) and Limit (unproductive minutes vs a daily at-most
+goal, else the taper's limit, else 60; good when not closed). Same numbers as `DayScore`. `DayRings.usual` is the
+median of the last 4 days of the same kind; `DayCompare` gives Review → Day's "Studying +40 min, Scrolling −25 min"
+and the best / hardest hour.
+
+### 3.4a The activity grid and the Now activity (v1.3 A, B)
+
+- `QuickStartTemplate.all` (20) seed the grid (onboarding unticks; the 4 → 5 migration adds them). Tiles have `origin`
+  (template / you / ai), `symbol`, `pin` (a slot), `edited` (you renamed / recategorised / pinned: the AI leaves it),
+  `aliases` (titles merged in). `ranked` scores each past start by time of day (σ 45 min), same kind of day (school /
+  free + labels; other kinds ×0.25), weekday, place, "after what just ended", halving every 21 days; ties in template
+  order; pinned tiles keep their slot; `top` = the 3 likeliest (notification actions, the Now activity, gap answers).
+- `GridTidy` (A4): the insight pass's `grid` lines (add / merge / rename / hide) become `InsightChange.grid` in the
+  `ChangeLog` (own cap 5 a run), refused for pinned or edited tiles, over 40 live tiles, or hiding one used in 30 days.
+- `NowActivity.make`: running > question > untracked (≥10 min, awake) > assumed (a series occurrence now: "Still at
+  School until 15:00?", with `then` = untracked from its end, shown once stale) > up next. A kind shows only when its
+  severity is Live Activity. The app mirrors it into `NowAttributes` (Shared) and the widget draws it; buttons are
+  `NowActionIntent(action:)` run in the app (`AppModel.nowAction`). Synced after every replan and on going inactive;
+  renewed after 7 h in the foreground (iOS ends it at 8).
+
 ### 3.5 Notifications and prompts
 
+v1.3 E: `PromptSettings` (`Preferences.prompts`) gives each `PromptKind` a `Severity` (off, quiet, Live Activity,
+notification, alarm; any kind can be any). `effective` turns
+Alarm into a notification without `Integrations.alarms` ("Alarms Allowed") and Live Activity into a notification when
+the Now activity isn't showing. `NudgePlanner.plan` and the app's final list are filtered by it; `NudgePlanner.alarms`
+rings bedtime / leave / missed start only when set to Alarm; the wake alarm when `.wake` is Alarm; any other
+notification whose kind is Alarm also rings (`PromptSettings.alarms(from:)`, `PlannedAlarm.Kind.prompt`). `NudgeSettings`
+keeps only `level` and `arrivingHome` in use (the toggles are migrated). The box sets one with `prompt.<kind>`.
 `NudgePlanner.plan`: task starts (H4: first step · minutes, sessions done, what it leads to), one lead-up, at most
 one follow-up (none while you track something else), wind-down, bedtime, leave, deadlines, check-in, intentions. No
 "How did it go?". `TrackPrompts`: "What are you up to?" at 25 min untracked then every 30; quiet in sleep, wind-down,
@@ -269,6 +304,11 @@ on school mornings) + bedtime / leave / missed start; the reconciler diffs with 
 
 ## 8. Export / backup (`Export.swift`, `ExportService.swift`)
 
+v1.3 H: once a day (refresh, launch) `AppModel.backupIfDue` writes the export to a folder you pick outside the app
+(`BackupService`, security-scoped bookmark in the Keychain so a reinstall can find it), `Productium-YYYY-MM-DD.json`,
+newest 3 kept (`BackupFiles`). Onboarding offers "Restore from Friday's backup" when the remembered folder has one,
+else a file picker. Restores go through the migrations.
+
 One JSON file, `format: productium-export`, `version: 4` (format 3 and older are refused): full `AppState`, `aboutMe`,
 `callLog`, `sharedDefaults`, `appDefaults`, `files` (every file in the container/Documents not otherwise
 represented, base64, includes `drafts/` and `last-ai-error.txt`), pending/delivered notifications, permission
@@ -311,25 +351,28 @@ identical except `exportedAt`. Restore previews, then replaces (saving `state-be
 ## 11. UI structure (iOS design language, no custom chrome)
 
 Tabs: Today · Schedule · Tasks · Review · Settings; token meter top right.
-- **Today (G3):** the box (thread with receipts, Approve / Decline, Undo, charts), the running entry (elapsed, path,
-  goal line, Stop / Done / Switch) or the start buttons (ranked, More, long press: rename / refile / remove), mood
-  faces (collapse for 2 h), the question card, today's ring (forecast faint, the verdict line, gaps over 30 min), Up
-  Next (the one line, sessions with Start and Done / Not Today / Clear / Delete; usually-dropped kinds first).
+- **Today (v1.3 C1, "now"):** the box (thread with receipts, Approve / Decline, Undo, charts), the running entry (elapsed,
+  path, goal line, Stop / Done / Switch), the activity grid (4 columns, the running tile filled, More; long press:
+  rename / recategorise, pin here, hide), mood faces (collapse for 2 h), the question card, "What were you doing?"
+  (closed untracked stretches today, tiles as answers), "Did these happen?" (assumed time, Yes to All), today's rings
+  (tap: the day's categories as sorted bars), Up Next.
 - **Schedule:** week strip + the day as entries in one style: past, assumed (dashed), running, planned; due items and
   untracked gaps inline; swipe right Yes (or "All to Here"), left No; every row opens the entry sheet.
 - **Tasks:** smart list; swipes Done / Start / Clear (asks why) / Delete; a read-only task sheet (first step, the
   track-record warning) with Start / Done / Clear / Delete. No "+" or forms: the box does it (K1).
-- **Review (G.1):** Today (untracked stretches with start-button answers, assumed time to confirm, the day score with
-  its parts vs your usual, patterns), the ring for Day / Week / Month with drill-down and ▲▼ vs the last period, Goals,
-  This Week (score bars; tracked, work, deadlines met / missed, scrolling), Life Metrics, mood by time of day, Where,
-  pinned charts, the Weekly Note (+ alarm proposals to Allow).
+- **Review (v1.3 C2):** two segments. Day: score and parts vs your usual, today's rings beside your usual day's, what
+  changed, best / hardest hour, patterns. Week: score per day, rings per day, tracked / work / deadlines / scrolling vs
+  the last 4 weeks, the mood line, Goals, How You Work, Leaderboard, Pinned, the Weekly Note (+ alarm proposals to
+  Allow), then More Stats (the period ring, mood by time of day, Life Metrics).
 - **Entry sheet (C4 / O11):** title, times, category picker (+ New), topics, note, place; Yes / No for assumed time;
   delete; "also move similar".
-- **Settings (K4):** Claude · Past Prompts · AI Usage | Sleep (source, last read, errors) · Screen Time ·
-  Notifications · Alarms | Goals · Categories · Celebrations | Connections (one row per source and what it gives) ·
-  Shortcuts · Privacy (forget location history) · What Productium Thinks (Changes, Study, tidy-ups, routines, places)
-  · About You | Backup · Debug · Keeping It Installed.
-- Colour is never the only cue: each category has a symbol and a word; forecast / planned time is faint.
+- **Settings (K4):** Claude · Past Prompts · AI Usage | Sleep · Screen Time · Notifications (every prompt kind with its
+  severity, Alarms Allowed, how much to interrupt, your alarms) | Goals · Categories · Celebrations | Connections ·
+  Shortcuts · Places (where the week went, named places) · What Productium Thinks (Changes with evidence and Revert,
+  tidy-ups, routines) · About You | Backup & Restore (the daily folder, export, restore) · Debug · Keeping It Installed.
+  There's no Privacy screen.
+- Colour is never the only cue: each category has a symbol and a word; each ring has its word and number; forecast /
+  planned time is faint.
 
 ## 11b. Follow-through, good hours and the leaderboard
 
@@ -409,7 +452,11 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
   timing earlier and added about 47 min of weeknight sleep, but it was a package with devices, so the nudge only
   suggests ten minutes outside on days with nothing fixed.
 
-## 13. Status and known loose ends (2026-11-21)
+## 13. Status and known loose ends (2026-11-22)
+
+- v1.3 (`v1.3_plan.md`) is in progress on `dev`: core for M, A, B, D, E, H and the C2 comparisons is done with tests;
+  the app side is written but only compiles on CI. To check on the phone: the Now activity from the Lock Screen
+  (including starting it from a `LiveActivityIntent` in the background) and uninstall → reinstall → restore.
 
 - v1.2 is built end to end and released as v1.2.x. Versions: `VERSION` holds major.minor, main releases
   v<VERSION>.<n>; the `dev` branch builds a rolling `dev-build` pre-release without touching the version. Core tests green on Linux; the box evals

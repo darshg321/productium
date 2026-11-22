@@ -17,23 +17,25 @@ shot 05-settings
 dump today
 
 scenario history
-tab review
-shot 10-review
-scroll week
+review day
+shot 10-review-day
+review week
 shot 11-review-week
 scroll work
 shot 12-review-how-you-work
-scroll metrics
-shot 13-review-metrics
 scroll note
 shot 14-review-note
+scroll metrics
+shot 13-review-more-stats
 tab tasks
 shot 15-tasks-warnings
 dump history
 
 scenario evening
-tab review
-shot 20-evening-review
+scroll gaps
+shot 20-evening-home-gaps
+scroll ring
+shot 20b-evening-rings
 tab schedule
 shot 21-evening-schedule
 confirm-today
@@ -48,7 +50,7 @@ shot 31-alerts-answered
 dump alerts
 
 scenario leaderboard
-tab review
+review week
 scroll leaderboard
 shot 40-leaderboard
 dump leaderboard
@@ -57,7 +59,7 @@ scenario today
 open productium-dev://gap
 shot 50-pause-sheet
 dismiss
-stop
+now stop
 shot 51-stopped
 start Laundry
 shot 52-laundry-running
