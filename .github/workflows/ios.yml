@@ -2,6 +2,7 @@
 #  • core-tests: the planning engine, on Linux (every push)
 #  • ios-compile: compile-check the app for the simulator, unsigned (every push)
 #  • ios-free-ipa: on a push to main or dev that changes code (see `paths` below), builds the free-account .ipa.
+#      main only releases when App, Shared, Packages, Widgets or project.yml differ from the last v* tag.
 #      main: releases v<VERSION>.<n> (VERSION holds major.minor; n counts up from 0) and updates source.json.
 #      dev:  replaces the rolling "dev-build" pre-release (Productium-dev.ipa). No version tag, no source.json change, so
 #            testing builds never move the version.
@@ -58,10 +59,30 @@ jobs:
         uses: actions/upload-artifact@v4
         with: { name: build-log, path: build.log }
 
+  code-changed:
+    # main releases only when app code changed since the last release tag (a merge of docs, scripts, VERSION or
+    # source.json alone doesn't). dev always builds.
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.diff.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: diff
+        run: |
+          last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+          if [ "$GITHUB_REF" != refs/heads/main ] || [ -z "$last" ] \
+             || ! git diff --quiet "$last" HEAD -- App Shared Packages Widgets project.yml; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No code change since $last: no release."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
   ios-free-ipa:
-    # Releases only from a push to main; dev also rebuilds on demand (gh workflow run ios.yml --ref dev).
-    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev')
-    needs: [core-tests, ios-compile]
+    # Releases only from a push to main with code changes; dev also rebuilds on demand (gh workflow run ios.yml --ref dev).
+    if: needs.code-changed.outputs.build == 'true' && ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'))
+    needs: [core-tests, ios-compile, code-changed]
     runs-on: macos-26
     permissions:
       contents: write

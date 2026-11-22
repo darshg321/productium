@@ -35,6 +35,16 @@ you can also install it from a computer with [Impactor](https://github.com/clara
 `Productium-free.ipa` from the [latest release](https://github.com/darshg321/productium/releases/latest) and open it in
 Impactor with the phone plugged in.
 
+on Linux, one command does all of that. plug in the phone and run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/darshg321/productium/main/scripts/install.sh | bash
+```
+
+it installs what it needs (flatpak, usbmuxd and Impactor), asks for your Apple ID the first time, then downloads the
+latest release and puts it on the phone. run it again to update, or within 7 days to keep the app opening. add
+`bash -s -- --dev` instead of `bash` at the end to get the latest dev build.
+
 ### The AI part
 
 the box uses Claude through a small server of mine that runs on a Raspberry Pi over Tailscale. without it the app
