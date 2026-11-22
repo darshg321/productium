@@ -59,7 +59,8 @@ jobs:
         with: { name: build-log, path: build.log }
 
   ios-free-ipa:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    # Releases only from a push to main; dev also rebuilds on demand (gh workflow run ios.yml --ref dev).
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev')
     needs: [core-tests, ios-compile]
     runs-on: macos-26
     permissions:
@@ -111,8 +112,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp Productium-free.ipa Productium-dev.ipa
+          # SideStore source for the dev app: releases/download/dev-build/source-dev.json
+          IPA_URL="https://github.com/${{ github.repository }}/releases/download/dev-build/Productium-dev.ipa" \
+          NOTES_URL="https://github.com/${{ github.repository }}/releases/tag/dev-build" ICON_SET=AppIconDev \
+            python3 scripts/make-source.py "${{ github.repository }}" "$APP_ID" \
+              "${{ steps.version.outputs.version }}" "${{ github.run_number }}" Productium-dev.ipa source-dev.json
           gh release delete dev-build --cleanup-tag -y || true
-          gh release create dev-build Productium-dev.ipa --target "${{ github.sha }}" --prerelease --latest=false \
+          gh release create dev-build Productium-dev.ipa source-dev.json --target "${{ github.sha }}" --prerelease --latest=false \
             --title "dev (${{ github.sha }})" --notes "Testing build of ${{ github.sha }} (would be v${{ steps.version.outputs.version }})."
       - name: SideStore source (always the newest build)
         if: github.ref == 'refs/heads/main'
