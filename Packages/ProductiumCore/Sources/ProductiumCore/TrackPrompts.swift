@@ -1,7 +1,7 @@
 import Foundation
 
-// v1.2 D4: "What are you up to?", timed by the tracking goal (no untracked waking stretch over 30 minutes). The first
-// prompt comes at 25 minutes untracked, so there's time to answer before the goal is missed, then every 30 while
+// v1.2 D4: "What are you up to?", timed by the tracking goal (no untracked waking stretch over 15 minutes). The first
+// prompt comes at 12 minutes untracked, so there's time to answer before the goal is missed, then every 30 while
 // nothing starts. Never in sleep, wind-down, a planned study block or school; after 2 ignored in a row, not again that
 // day (the stretch still counts against the goal). Time already past gets one question in the past tense.
 // A7: the morning "Slept about …?" when nothing measured the night.
@@ -66,8 +66,8 @@ public struct TrackPromptInput: Sendable {
 }
 
 public enum TrackPrompts {
-    public static let goalMinutes = 30
-    public static let firstAfter = 25
+    public static let goalMinutes = 15
+    public static let firstAfter = 12
     public static let every = 30
     public static let maxIgnored = 2
 

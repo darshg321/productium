@@ -130,7 +130,7 @@ private struct SlideView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: slide.colors, startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()
+            (slide.colors.first ?? .indigo).ignoresSafeArea()
             VStack(alignment: .leading, spacing: 18) {
                 Spacer()
                 Image(systemName: slide.symbol).font(.system(size: 44, weight: .semibold))

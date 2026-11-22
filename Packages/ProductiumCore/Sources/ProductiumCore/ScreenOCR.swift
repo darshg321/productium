@@ -8,6 +8,8 @@ public struct ScreenReading: Hashable, Sendable {
     public var period: String
     public var dateLabel: String?
     public var minutes: Int?
+    /// A week view's "Total Screen Time" (its apps are totals for the week).
+    public var totalMinutes: Int?
     public var apps: [BoxScreen.App]
     public var pickups: Int?
     public var firstPickup: String?
@@ -16,6 +18,7 @@ public struct ScreenReading: Hashable, Sendable {
     public var box: BoxScreen {
         var b = BoxScreen()
         b.minutes = minutes
+        b.totalMinutes = totalMinutes
         b.period = period
         b.dateLabelShown = dateLabel
         b.pickups = pickups
@@ -62,47 +65,84 @@ public enum ScreenOCR {
                                        "entertainment", "productivity & finance", "creativity", "information & reading", "games",
                                        "education", "other", "utilities", "health & fitness", "shopping & food", "travel"]
 
+    /// A duration at the start of a line: "6h 33min 18% from last week" → 393.
+    static func leadingDuration(_ s: String) -> Int? {
+        let t = s.lowercased()
+        guard let r = t.range(of: #"^\d{1,2}\s*(?:h|hr|hrs|hours?)(?:\s*\d{1,2}\s*(?:m|min|mins|minutes?))?(?=\s|$)|^\d{1,2}\s*(?:m|min|mins|minutes?)(?=\s|$)"#,
+                              options: .regularExpression) else { return nil }
+        return duration(String(t[r]))
+    }
+
+    /// A whole number at the start of a line: "108 5% from last week" → 108, "Daily Average 72" → 72.
+    static func leadingNumber(_ s: String) -> Int? {
+        let t = s.lowercased().replacingOccurrences(of: "daily average", with: "")
+            .replacingOccurrences(of: #"^(?:last|this) week'?s average"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        guard let r = t.range(of: #"^\d[\d,]*(?=\s|$)"#, options: .regularExpression) else { return nil }
+        return Int(t[r].replacingOccurrences(of: ",", with: ""))
+    }
+
     public static func parse(_ text: String) -> ScreenReading? {
         guard isScreenTime(text) else { return nil }
         let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let lower = lines.map { $0.lowercased() }
-        let week = lower.contains { $0 == "week" && false } || lower.contains { $0.hasPrefix("daily average") }
+        // iOS 18: "Daily Average"; iOS 26: "Last Week's Average" / "This Week's Average".
+        let week = lower.contains { $0.contains("daily average") || $0.contains("week's average") || $0.contains("weeks average") }
             && !lower.contains { $0.hasPrefix("today at") || $0.hasPrefix("today,") }
         var r = ScreenReading(period: week ? "week" : "day", dateLabel: nil, minutes: nil, apps: [], pickups: nil, firstPickup: nil,
                               notifications: nil)
-        // Date label: "Today", "Yesterday", or "Wednesday, Nov 19" / "Wed, Nov 19".
-        if let d = lines.first(where: { $0.range(of: #"^(today|yesterday|(mon|tue|wed|thu|fri|sat|sun)[a-z]*,? [a-z]{3,9} \d{1,2})"#,
-                                                  options: [.regularExpression, .caseInsensitive]) != nil }) {
+        if week {
+            if lower.contains(where: { $0 == "last week" || $0.hasPrefix("last week's average") || $0.hasPrefix("last weeks average") }) {
+                r.dateLabel = "Last Week"
+            }
+        } else if let d = lines.first(where: { $0.range(of: #"^(today|yesterday|(mon|tue|wed|thu|fri|sat|sun)[a-z]*,? [a-z]{3,9} \d{1,2})"#,
+                                                         options: [.regularExpression, .caseInsensitive]) != nil }) {
+            // Date label: "Today", "Yesterday", or "Wednesday, Nov 19" / "Wed, Nov 19".
             r.dateLabel = d.split(separator: ",").count > 1 && !d.lowercased().hasPrefix("today") ? d : String(d.split(separator: " ").first ?? "")
             if r.dateLabel?.lowercased().hasPrefix("today") == true { r.dateLabel = "Today" }
         }
-        // The total: the first duration after "Screen Time" / "Daily Average", or the first standalone duration.
-        func number(after i: Int) -> Int? {
-            for j in (i + 1)..<min(lines.count, i + 4) {
-                let w = lower[j].replacingOccurrences(of: "daily average", with: "").trimmingCharacters(in: .whitespaces)
-                if let n = Int(w.replacingOccurrences(of: ",", with: "")) { return n }
-            }
+        enum Section { case screen, pickups, notifications }
+        var section = Section.screen
+        func next(_ i: Int, _ f: (String) -> Int?) -> Int? {
+            for j in (i + 1)..<min(lines.count, i + 4) { if let n = f(lines[j]) { return n } }
             return nil
         }
         for (i, l) in lower.enumerated() {
-            if r.minutes == nil, l == "daily average" || l == "screen time" || l.hasPrefix("today at") {
-                for j in (i + 1)..<min(lines.count, i + 4) { if let m = duration(lines[j]) { r.minutes = m; break } }
+            if l.hasPrefix("pickups") { section = .pickups }
+            if l.hasPrefix("notifications") { section = .notifications }
+            if l.hasPrefix("total screen time") {
+                if let rr = l.range(of: #"\d{1,2}\s*h.*$|\d{1,2}\s*m.*$"#, options: .regularExpression) {
+                    r.totalMinutes = leadingDuration(String(l[rr]))
+                }
+                continue
             }
-            if l.hasPrefix("pickups"), r.pickups == nil { r.pickups = Int(l.dropFirst(7).trimmingCharacters(in: .whitespaces)) ?? number(after: i) }
-            if l.hasPrefix("notifications"), r.notifications == nil {
-                r.notifications = Int(l.dropFirst(13).trimmingCharacters(in: .whitespaces)) ?? number(after: i)
+            switch section {
+            case .screen:
+                if r.minutes == nil, l.contains("average") || l.hasPrefix("screen time") || l.hasPrefix("today at") {
+                    let own = l.replacingOccurrences(of: #"^.*average"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+                    r.minutes = leadingDuration(own) ?? next(i, leadingDuration)
+                }
+            case .pickups:
+                if r.pickups == nil, l.hasPrefix("pickups") || l.contains("average") {
+                    r.pickups = leadingNumber(l.replacingOccurrences(of: "pickups", with: "")) ?? next(i, leadingNumber)
+                }
+            case .notifications:
+                if r.notifications == nil, l.hasPrefix("notifications") || l.contains("average") {
+                    r.notifications = leadingNumber(l.replacingOccurrences(of: "notifications", with: "")) ?? next(i, leadingNumber)
+                }
             }
             if l.contains("first pickup") {
                 let joined = ([lines[i]] + (i + 1 < lines.count ? [lines[i + 1]] : [])).joined(separator: " ")
                 if let rr = joined.range(of: #"\d{1,2}:\d{2}\s*[AaPp][Mm]"#, options: .regularExpression) { r.firstPickup = String(joined[rr]) }
             }
         }
-        if r.minutes == nil { r.minutes = lines.lazy.compactMap(duration).first }
-        // Apps: a name line followed by a duration line, after "Most Used".
+        if r.minutes == nil, !week { r.minutes = lines.lazy.compactMap(duration).first }
+        // Apps: a name line followed by a duration line, after "Most Used", until the next section.
         // (A screen showing categories, "Show Apps & Websites", has no apps on it.)
-        if let start = lower.firstIndex(where: { $0.hasPrefix("most used") }), !lower.contains("show apps & websites") {
+        if let start = lower.firstIndex(where: { $0.hasPrefix("most used") }), !lower.contains(where: { $0.contains("show apps & websites") }) {
             var i = start + 1
-            let end = lower.firstIndex(where: { $0.hasPrefix("pickups") }) ?? lines.count
+            let end = lower.indices.first { $0 > start && (lower[$0].hasPrefix("pickups") || lower[$0].hasPrefix("show more")
+                                                           || lower[$0].hasPrefix("notifications")) } ?? lines.count
             while i < end {
                 let name = lines[i], next = i + 1 < end ? lines[i + 1] : ""
                 if !notApps.contains(name.lowercased()), duration(name) == nil, name.count <= 40, let m = duration(next) {

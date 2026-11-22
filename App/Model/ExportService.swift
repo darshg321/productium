@@ -88,7 +88,8 @@ enum ExportService {
                 guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
                 let rel = url.path.replacingOccurrences(of: root.path + "/", with: "")
                 let key = "\(prefix)/\(rel)"
-                guard !representedFiles.contains(key), !rel.hasPrefix("Library/"), let data = try? Data(contentsOf: url) else { continue }
+                guard !representedFiles.contains(key), !rel.hasPrefix("Library/"), !rel.hasPrefix(BackupService.defaultFolderName + "/"),
+                      let data = try? Data(contentsOf: url) else { continue }
                 out[key] = data.base64EncodedString()
             }
         }

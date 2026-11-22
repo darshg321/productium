@@ -9,7 +9,7 @@ public struct Goal: Codable, Hashable, Identifiable, Sendable {
         case category(CategoryID)
         case group(CategoryGroup)
         case tasksDone
-        /// Built in: untracked waking stretches longer than 30 minutes (target 0, at most).
+        /// Built in: untracked waking stretches longer than 15 minutes (target 0, at most).
         case trackingGaps
     }
     public enum Period: String, Codable, Sendable { case day, week }
@@ -41,7 +41,7 @@ public struct Goal: Codable, Hashable, Identifiable, Sendable {
     }
 
     public static let trackingGapsId = Planner.stableUUID("goal|tracking-gaps")
-    public static let trackingGaps = Goal(id: trackingGapsId, title: "No untracked stretch over 30 min", measure: .trackingGaps,
+    public static let trackingGaps = Goal(id: trackingGapsId, title: "No untracked stretch over \(TrackPrompts.goalMinutes) min", measure: .trackingGaps,
                                           period: .day, target: 0, direction: .atMost, origin: .builtIn,
                                           createdAt: Date(timeIntervalSinceReferenceDate: 0))
 
@@ -66,7 +66,7 @@ public struct GoalProgress: Hashable, Sendable {
     public var line: String {
         let g = goal
         switch g.measure {
-        case .trackingGaps: return value == 0 ? "No untracked gaps over 30 min" : "\(value) untracked gap\(value == 1 ? "" : "s") over 30 min"
+        case .trackingGaps: return value == 0 ? "No untracked gaps over \(TrackPrompts.goalMinutes) min" : "\(value) untracked gap\(value == 1 ? "" : "s") over \(TrackPrompts.goalMinutes) min"
         case .tasksDone: return "\(value) of \(g.target) tasks"
         default:
             let name = g.title
@@ -91,7 +91,7 @@ public enum Goals {
         }
     }
 
-    /// Untracked stretches over 30 minutes while awake: time nothing explains (school, sleep, sensors and assumed
+    /// Untracked stretches over 15 minutes while awake: time nothing explains (school, sleep, sensors and assumed
     /// time all count as tracked). Sleep, measured or planned, isn't waking time, so it never counts.
     public static func gaps(_ slices: [LogSlice], limit: Int = TrackPrompts.goalMinutes) -> [LogSlice] {
         slices.filter { $0.entry == nil && $0.minutes > limit }

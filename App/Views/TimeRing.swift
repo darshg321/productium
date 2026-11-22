@@ -17,14 +17,15 @@ struct TimeBreakdown: View {
     }
 
     var body: some View {
-        let slices = ring.categories.filter { $0.minutes > 0 && (showSleep || !tree.isUnder($0.id, CategoryTree.sleep)) }
+        let slices = ring.categories.filter { $0.minutes > 0 && $0.id != CategoryTree.untracked
+            && (showSleep || !tree.isUnder($0.id, CategoryTree.sleep)) }
             .sorted { $0.minutes > $1.minutes }
         let total = max(1, slices.reduce(0) { $0 + $1.minutes })
         let most = max(1, slices.first?.minutes ?? 1)
         VStack(alignment: .leading, spacing: 12) {
             GeometryReader { g in
                 HStack(spacing: 2) {
-                    ForEach(slices.filter { $0.id != CategoryTree.untracked } + slices.filter { $0.id == CategoryTree.untracked }) { s in
+                    ForEach(slices) { s in
                         Rectangle().fill(color(s))
                             .frame(width: max(2, (g.size.width - CGFloat(slices.count) * 2) * CGFloat(s.minutes) / CGFloat(total)))
                     }
@@ -40,12 +41,9 @@ struct TimeBreakdown: View {
                                  color: color(s))
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(alignment: .firstTextBaseline) {
-                                Text(s.name).font(.subheadline).lineLimit(1)
+                                Text(s.name).lineLimit(1)
                                 Spacer(minLength: 6)
-                                if let d = s.delta, abs(d) >= 5 {
-                                    Text("\(d > 0 ? "▲" : "▼") \(durationLabel(abs(d)))").font(.caption2).foregroundStyle(.secondary)
-                                }
-                                Text(durationLabel(s.minutes)).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                                Text(minutesLabel(s.minutes)).monospacedDigit().foregroundStyle(.secondary)
                             }
                             GeometryReader { g in
                                 Capsule().fill(color(s).opacity(0.85))

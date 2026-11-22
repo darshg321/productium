@@ -10,7 +10,7 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if model.state.onboarded {
+            if model.state.onboarded && !model.needsSetup {
                 TabView(selection: $tab) {
                     TodayView()
                         .tabItem { Label("Today", systemImage: "sun.max.fill") }.tag(0)
@@ -24,7 +24,7 @@ struct RootView: View {
                         .tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(4)
                 }
             } else {
-                OnboardingView()
+                OnboardingView(updating: model.state.onboarded)
             }
         }
         .overlay(alignment: .bottom) {

@@ -11,6 +11,8 @@ public enum ScrollingApps {
     /// Social, video and games start on. Browsers and tools start off: that's the student's call.
     public static func defaultIsScrolling(_ name: String, category: String? = nil) -> Bool {
         let n = name.lowercased()
+        // The pause automation's default app name: it's only set up for apps you scroll on.
+        if n == "scrolling app" { return true }
         if let c = category?.lowercased() {
             if ["social", "game", "entertainment", "video"].contains(where: c.contains) { return true }
             if ["productivity", "utilities", "education", "reference", "health"].contains(where: c.contains) { return false }
@@ -49,9 +51,13 @@ public enum AppKinds {
     }
 
     /// The category for an app's session, adding Scrolling › <app> when it's new. Your own filing of that title wins.
-    public static func category(for app: String, list: [String: Bool], rules: CategoryRules, tree: inout CategoryTree) -> CategoryID? {
+    /// `pausedApp`: the session came from the pause automation, which is only set up for apps you scroll on (its
+    /// default name is "Scrolling app"); it's scrolling unless you've turned that app off.
+    public static func category(for app: String, list: [String: Bool], rules: CategoryRules, tree: inout CategoryTree,
+                                pausedApp: Bool = false) -> CategoryID? {
         if let r = rules.learned[CategoryRules.key(app)], r.byYou, tree.node(r.category) != nil { return r.category }
-        if ScrollingApps.isScrolling(app, list) {
+        let listed = list.first { $0.key.plainKey == app.plainKey }?.value
+        if listed ?? (pausedApp || ScrollingApps.defaultIsScrolling(app)) {
             if let n = tree.children(CategoryTree.scrolling).first(where: { $0.name.plainKey == app.plainKey }) { return n.id }
             guard tree.node(CategoryTree.scrolling) != nil else { return CategoryTree.scrolling }
             return tree.add(app, under: CategoryTree.scrolling)?.id ?? CategoryTree.scrolling
@@ -72,6 +78,25 @@ extension ScreenDay {
         out.apps = apps
         out.distractingMinutes = apps.filter(\.distracting).reduce(0) { $0 + $1.minutes }
         return out
+    }
+
+    /// A week view lists each app's total for the week; a day's share is the average over the total ("6h 33min" of
+    /// "45h 55min" = 1/7). Without a total, apps adding up to well over the average are weekly totals too (÷ 7).
+    public static func dailyFactor(average: Int?, total: Int?, appsTotal: Int) -> Double? {
+        if let a = average, let t = total, t > a, a > 0 { return Double(a) / Double(t) }
+        if let a = average, a > 0, Double(appsTotal) > Double(a) * 1.3 { return 1.0 / 7 }
+        if average == nil, appsTotal > 24 * 60 { return 1.0 / 7 }
+        return nil
+    }
+
+    /// Daily averages saved before 1.4.1 took a week's totals as a day's (18 h of scrolling "a day"): no day has more
+    /// than 24 hours, so those are divided by 7.
+    public func repairedAverage(_ list: [String: Bool]) -> ScreenDay {
+        guard appsTotal > 24 * 60 || (totalMinutes ?? 0) > 24 * 60 else { return self }
+        var out = self
+        if let t = totalMinutes, t > 24 * 60 { out.totalMinutes = t / 7 }
+        out.apps = apps?.map { var a = $0; a.minutes /= 7; return a }
+        return out.recomputed(list)
     }
 
     public var addsUp: Bool {
@@ -157,7 +182,9 @@ public enum ScreenDates {
     }
 
     static func fromLabel(_ l: String, today: Date, _ cal: Calendar) -> Date? {
-        if l.contains("today") { return today }
+        if l.contains("today") || l.contains("this week") { return today }
+        // A week view of last week covers the 7 days before this week began; its average is filed on the last of them.
+        if l.contains("last week") { return cal.dateInterval(of: .weekOfYear, for: today).flatMap { cal.date(byAdding: .day, value: -1, to: $0.start) } }
         if l.contains("yesterday") { return cal.date(byAdding: .day, value: -1, to: today) }
         let words = l.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
         let dayNumber = words.compactMap { Int($0) }.first { (1...31).contains($0) }

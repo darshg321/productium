@@ -480,7 +480,7 @@ extension AppModel {
         let list = state.scrollingApps, rules = state.categoryRules
         var entries = state.entries
         let ids = EntryBuilder.apps(Friction.log.sessions, entries: &entries, now: now, since: now.addingTimeInterval(-3 * 86400)) {
-            AppKinds.category(for: $0, list: list, rules: rules, tree: &tree)
+            AppKinds.category(for: $0.app, list: list, rules: rules, tree: &tree, pausedApp: $0.scrolling == nil)
         }
         if tree != state.categories { state.categories = tree }
         if entries != state.entries { state.entries = entries }

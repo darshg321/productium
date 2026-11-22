@@ -112,7 +112,9 @@ enum Theme {
     /// A category's colour (its node's palette name; Untracked is a neutral fill).
     static func color(category id: CategoryID, tree: CategoryTree) -> Color {
         if id == CategoryTree.untracked { return Color(.systemGray4) }
-        return named(tree.node(id)?.colour ?? tree.path(id).first?.colour) ?? Color(.systemGray)
+        // A category the AI made under a coloured one (School › Math) started gray: it takes its parent's colour.
+        let colour = tree.path(id).reversed().map(\.colour).first { $0 != "gray" } ?? "gray"
+        return named(colour) ?? Color(.systemGray)
     }
 
     static func color(group g: CategoryGroup?) -> Color { g.flatMap { named($0.colour) } ?? Color(.systemGray4) }
@@ -136,7 +138,7 @@ struct IconTile: View {
             .font(.system(size: size * 0.55, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(color.gradient, in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            .background(color, in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
             .accessibilityHidden(true)
     }
 }
@@ -220,10 +222,9 @@ struct SectionHeader: View {
         HStack(alignment: .firstTextBaseline) {
             Text(title).font(.title3.weight(.bold)).accessibilityAddTraits(.isHeader)
             Spacer()
-            if let action, let perform { Button(action, action: perform).font(.subheadline) }
+            if let action, let perform { Button(action, action: perform).font(.body) }
         }
-        .padding(.top, 10)
-        .padding(.horizontal, 2)
+        .padding(.horizontal, 4)
     }
 }
 
@@ -240,14 +241,13 @@ struct TitledCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title).font(.title3.weight(.bold)).accessibilityAddTraits(.isHeader)
                 Spacer()
-                if let detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
+                if let detail { Text(detail).font(.subheadline).foregroundStyle(.secondary) }
             }
-            .padding(.top, 10)
-            .padding(.horizontal, 2)
+            .padding(.horizontal, 4)
             Card { content }
         }
     }
@@ -275,13 +275,10 @@ struct StatTile: View {
             if let progress {
                 ProgressView(value: min(1, max(0, progress))).tint(color)
             }
-            if let caption {
-                Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            }
             Spacer(minLength: 0)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
     }

@@ -49,7 +49,7 @@ final class DayRingsTests: XCTestCase {
         XCTAssertFalse(r.limitClosed)
         XCTAssertEqual(r.limitLabel, "18 of 60 min")
         XCTAssertEqual(r.workLabel, "2h 30m of 2h")
-        XCTAssertEqual(r.trackedSubtitle, "No gap over 30 min")
+        XCTAssertEqual(r.trackedSubtitle, "No gap over 15 min")
         let none = DayRings(workMinutes: 0, workGoal: 0, wakingMinutes: 0, trackedMinutes: 0, gaps: 0, limitMinutes: 0, limitGoal: 60)
         XCTAssertEqual(none.workLabel, "0m · nothing asked")
         XCTAssertFalse(none.workClosed)

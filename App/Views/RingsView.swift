@@ -1,14 +1,14 @@
 import SwiftUI
 import ProductiumCore
 
-// v1.3 Part D: three rings like the Fitness app. Work (blue), Tracked (green), Limit (teal → red as it fills; good when
-// it's not closed). Rounded caps, the track at 20%, past 100% a darker second lap with a shadow under its end. Each ring
-// has its word and number beside it (never colour alone) and the rings differ by position, so they read in grayscale.
+// v1.3 Part D: three rings drawn like Activity's: Work (red), Tracked (green), Limit (cyan; orange then red as it fills,
+// since it's good when it's not closed). Thick, nearly touching, each arc shaded along its length with a darker
+// second lap past 100%. Each ring has its word and number beside it (never colour alone).
 
 enum RingStyle {
-    static let work = Color.blue
-    static let tracked = Color.green
-    static func limit(_ p: Double) -> Color { p >= 1 ? .red : p >= 0.8 ? .orange : .teal }
+    static let work = Color(red: 0.98, green: 0.07, blue: 0.31)
+    static let tracked = Color(red: 0.45, green: 0.85, blue: 0.0)
+    static func limit(_ p: Double) -> Color { p >= 1 ? .red : p >= 0.8 ? .orange : Color(red: 0.0, green: 0.78, blue: 0.9) }
 }
 
 struct ActivityRings: View {
@@ -18,7 +18,7 @@ struct ActivityRings: View {
     var body: some View {
         GeometryReader { g in
             let w = min(g.size.width, g.size.height)
-            let step = lineWidth * 1.15
+            let step = lineWidth + max(1.5, lineWidth * 0.08)
             ZStack {
                 RingArc(progress: rings.work, color: RingStyle.work, lineWidth: lineWidth).frame(width: w, height: w)
                 RingArc(progress: rings.tracked, color: RingStyle.tracked, lineWidth: lineWidth).frame(width: w - 2 * step, height: w - 2 * step)
@@ -39,44 +39,48 @@ struct RingArc: View {
     let lineWidth: CGFloat
 
     var body: some View {
-        let lap = progress > 1 ? progress.truncatingRemainder(dividingBy: 1) : 0
+        let p = max(0, progress)
+        let first = min(1, p)
         ZStack {
-            Circle().stroke(color.opacity(0.2), lineWidth: lineWidth)
-            Circle().trim(from: 0, to: min(1, max(0, progress)))
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            if progress > 1 {
-                // The second lap, darker, with the end cap's shadow so the overlap is drawn, not just coloured.
-                Circle().trim(from: 0, to: max(0.001, lap))
-                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                    .brightness(-0.2)
+            Circle().stroke(color.opacity(0.22), lineWidth: lineWidth)
+            if p > 0 {
+                Circle().trim(from: 0, to: max(0.001, first))
+                    .stroke(AngularGradient(colors: [color.opacity(0.75), color], center: .center,
+                                            startAngle: .degrees(0), endAngle: .degrees(360 * max(0.01, first))),
+                            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .shadow(color: .black.opacity(0.45), radius: lineWidth * 0.2)
+            }
+            if p > 1 {
+                Circle().trim(from: 0, to: max(0.001, min(1, p - 1)))
+                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .brightness(-0.12)
+                    .rotationEffect(.degrees(-90))
+                    .shadow(color: .black.opacity(0.35), radius: lineWidth * 0.15)
             }
         }
         .padding(lineWidth / 2)
     }
 }
 
-/// The word and number beside each ring.
+/// The word and the number beside each ring, in its colour (Activity style).
 struct RingLegendRows: View {
     let rings: DayRings
     var usual: DayRings?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            row("Work", "pencil.line", RingStyle.work, rings.workLabel, usual.map { "usual \(minutesLabel($0.workMinutes))" })
-            row("Tracked", "checkmark.circle", RingStyle.tracked, "\(rings.trackedLabel) · \(rings.trackedSubtitle)",
-                usual.map { "usual \($0.trackedLabel)" })
-            row("Limit", "hourglass", RingStyle.limit(rings.limit), rings.limitLabel, usual.map { "usual \($0.limitMinutes) min" })
+        VStack(alignment: .leading, spacing: 8) {
+            row("Work", RingStyle.work, rings.workGoal == 0 ? minutesLabel(rings.workMinutes)
+                : "\(minutesLabel(rings.workMinutes)) / \(minutesLabel(rings.workGoal))")
+            row("Tracked", RingStyle.tracked, rings.trackedLabel)
+            row("Limit", RingStyle.limit(rings.limit), "\(rings.limitMinutes) / \(rings.limitGoal) min")
         }
     }
 
-    private func row(_ name: String, _ symbol: String, _ color: Color, _ value: String, _ note: String?) -> some View {
+    private func row(_ name: String, _ color: Color, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Label(name, systemImage: symbol).font(.caption.weight(.semibold)).foregroundStyle(color)
-            Text(value).font(.system(.subheadline, design: .rounded).weight(.semibold).monospacedDigit())
-            if let note { Text(note).font(.caption2).foregroundStyle(.secondary) }
+            Text(name).font(.subheadline.weight(.semibold))
+            Text(value).font(.system(.title3, design: .rounded).weight(.semibold).monospacedDigit()).foregroundStyle(color)
+                .lineLimit(1).minimumScaleFactor(0.7)
         }
         .accessibilityElement(children: .combine)
     }
@@ -90,16 +94,13 @@ struct RingsCard: View {
 
     var body: some View {
         let r = model.rings(now)
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             SectionHeader("Rings")
             Card {
                 HStack(spacing: 18) {
-                    ActivityRings(rings: r, lineWidth: 14).frame(width: 120, height: 120)
+                    ActivityRings(rings: r, lineWidth: 17).frame(width: 130, height: 130)
                     RingLegendRows(rings: r)
                     Spacer(minLength: 0)
-                }
-                if let f = model.forecast {
-                    Text(model.verdict(f).line).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             .contentShape(Rectangle())
