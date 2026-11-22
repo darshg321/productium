@@ -18,7 +18,7 @@ echo "Script sent. Open Productium Dev on the phone and leave it in front until 
 tmp=$(mktemp -d)
 for i in $(seq 1 300); do
   if $P apps pull "$bundle" Documents/test/results.txt "$tmp/results.txt" >/dev/null 2>&1 && grep -q '^DONE' "$tmp/results.txt"; then break; fi
-  [ $((i % 15)) -eq 0 ] && echo "…waiting ($(wc -l < "$tmp/results.txt" 2>/dev/null || echo 0) lines done)"
+  [ $((i % 15)) -eq 0 ] && echo "…waiting ($( (wc -l < "$tmp/results.txt") 2>/dev/null || echo 0) lines done)"
   sleep 2
 done
 out="test-runs/device-$(date +%Y%m%d-%H%M%S)"
