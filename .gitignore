@@ -12,10 +12,12 @@ Packages/ProductiumCore/.build/
 *.mobileprovision
 .DS_Store
 scripts/repair/input/
-/DESIGN.md
 .claude-server.key
 
 # Wrangler cache
 .wrangler/
 # Test run output (scripts/test)
 test-runs/
+
+# Plans stay local
+*plan.md
