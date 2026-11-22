@@ -15,6 +15,17 @@ final class AppModel {
     var pendingInvite: String?
     /// Dev test runner: the card id a screen should scroll to (`scroll <card>`).
     var scrollTarget: String?
+    /// Bumped when an update brings setup steps (v1.4: the every-app automation, scrolling apps): onboarding shows
+    /// just those once.
+    static let setupVersion = 2
+    var setupDone = LocalStore.defaults.integer(forKey: "setup.version")
+    var needsSetup: Bool { setupDone < Self.setupVersion }
+
+    func finishSetup() {
+        setupDone = Self.setupVersion
+        LocalStore.defaults.set(Self.setupVersion, forKey: "setup.version")
+    }
+
     /// The box has the keyboard: Today holds its clock so typing never waits on the cards below.
     var boxFocused = false
     /// Review → Your Week (the recap) is open (the test runner's `review recap` opens it).
@@ -38,7 +49,7 @@ final class AppModel {
     init() {
         var loaded = Persistence.load()
         loaded.screen = loaded.screen.recomputed(loaded.scrollingApps)
-        loaded.screenAverages = loaded.screenAverages.recomputed(loaded.scrollingApps)
+        loaded.screenAverages = loaded.screenAverages.map { $0.repairedAverage(loaded.scrollingApps) }.recomputed(loaded.scrollingApps)
         state = loaded
         callLog = CallLogStore.load()
         aboutMe = AboutMeStore.load()

@@ -25,6 +25,16 @@ enum BackupService {
 
     static var hasFolder: Bool { bookmark != nil }
 
+    /// Without a picked folder the backups go to Files → On My iPhone → Productium → Backups. That survives a bad
+    /// update or a broken state, but not deleting the app; a folder in iCloud Drive survives that too.
+    static let defaultFolderName = "Backups"
+    static var defaultFolder: URL {
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(defaultFolderName, isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     /// Keeps the folder picked in Settings or onboarding. Returns its name.
     @discardableResult
     static func choose(_ url: URL) throws -> String {
@@ -36,14 +46,16 @@ enum BackupService {
 
     static func forget() { bookmark = nil }
 
-    /// The folder, with access started (call `stopAccessingSecurityScopedResource` when done).
+    /// The folder, with access started (call `stopAccessingSecurityScopedResource` when done). No folder picked: the
+    /// app's own Backups folder.
     static func open() throws -> URL {
-        guard let data = bookmark else { throw Failure.noFolder }
+        guard let data = bookmark else { return defaultFolder }
         var stale = false
         guard let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) else {
             throw Failure.unreachable
         }
         guard url.startAccessingSecurityScopedResource() else { throw Failure.unreachable }
+        // (stopAccessing on the default folder is a harmless no-op.)
         if stale, let fresh = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) { bookmark = fresh }
         return url
     }
@@ -84,7 +96,7 @@ enum BackupService {
 extension AppModel {
     /// H1: once a day (background refresh, and on launch if the last is over 24 h old), when a folder is picked.
     func backupIfDue(force: Bool = false) async {
-        guard BackupService.hasFolder, state.onboarded, force || BackupFiles.isDue(last: state.backup.lastWrite, now: Date()) else { return }
+        guard state.onboarded, force || BackupFiles.isDue(last: state.backup.lastWrite, now: Date()) else { return }
         do {
             let data = try await backupData()
             let name = try BackupService.write(data, now: Date(), calendar: cal)
@@ -116,7 +128,7 @@ extension AppModel {
 
     /// H2: a fresh install that can still reach the old backup folder.
     func backupToOffer() -> RestorePreview? {
-        guard !state.onboarded, let b = BackupService.newest() else { return nil }
+        guard !state.onboarded, BackupService.hasFolder, let b = BackupService.newest() else { return nil }
         return RestorePreview(exportedAt: b.exportedAt, summary: BackupFiles.offer(b, now: Date(), calendar: cal), bundle: b)
     }
 }

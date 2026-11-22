@@ -759,12 +759,12 @@ struct DailyBackupSection: View {
         Section {
             Button { picking = true } label: {
                 LabeledContent {
-                    Text(b.folderName ?? "Not set")
+                    Text(BackupService.hasFolder ? (b.folderName ?? "Folder") : "On My iPhone")
                 } label: {
-                    SettingsLabel(title: BackupService.hasFolder ? "Daily Backup Folder" : "Choose a Daily Backup Folder",
-                                  symbol: "folder.fill.badge.gearshape", color: .blue)
+                    SettingsLabel(title: "Daily Backup Folder", symbol: "folder.fill", color: .blue)
                 }
             }
+            .foregroundStyle(.primary)
             .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { r in
                 if case .success(let url) = r { model.chooseBackupFolder(url) }
             }
@@ -774,10 +774,10 @@ struct DailyBackupSection: View {
             if b.failing, let e = b.lastError {
                 Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.alert).font(.subheadline)
             }
-            if BackupService.hasFolder {
-                Button("Back Up Now") { Task { await model.backupIfDue(force: true) } }
-            }
-        } header: { Text("Every Day") }
+            Button("Back Up Now") { Task { await model.backupIfDue(force: true) } }
+        } header: { Text("Every Day") } footer: {
+            Text(BackupService.hasFolder ? "" : "Saved in Files → On My iPhone → \(AppInfo.name) → Backups. Pick a folder in iCloud Drive to keep them if the app is deleted.")
+        }
     }
 }
 

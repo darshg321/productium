@@ -151,15 +151,16 @@ public enum TimeLog {
         return transitions(resolve(occ, in: r))
     }
 
-    /// A gap shorter than this between two things is moving from one to the next, not Untracked.
-    public static let transitionMinutes = 5
+    /// A gap this long or shorter between two things is moving from one to the next, not Untracked (the goal is no
+    /// untracked stretch over 15 minutes).
+    public static let transitionMinutes = TrackPrompts.goalMinutes
 
-    /// Untracked slices under `transitionMinutes` with something on both sides become Transition (already confirmed:
+    /// Untracked slices of at most `transitionMinutes` with something on both sides become Transition (already confirmed:
     /// there's nothing to ask about).
     static func transitions(_ slices: [LogSlice]) -> [LogSlice] {
         var out = slices
         for i in out.indices.dropFirst().dropLast() where out[i].entry == nil && out[i - 1].entry != nil && out[i + 1].entry != nil
-            && out[i].end.timeIntervalSince(out[i].start) < Double(transitionMinutes) * 60 {
+            && out[i].end.timeIntervalSince(out[i].start) <= Double(transitionMinutes) * 60 {
             let e = Entry(id: Entry.sensorId("transition|\(Int(out[i].start.timeIntervalSince1970))"), title: "Transition",
                           start: out[i].start, end: out[i].end, category: CategoryTree.transition, source: .sensor,
                           createdAt: out[i].start)

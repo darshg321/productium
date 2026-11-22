@@ -10,7 +10,7 @@ public struct DayRings: Codable, Hashable, Sendable {
     public var workGoal: Int
     public var wakingMinutes: Int
     public var trackedMinutes: Int
-    /// Waking stretches over 30 min with nothing logged (the Tracked ring's subtitle).
+    /// Waking stretches over 15 min with nothing logged (the Tracked ring's subtitle).
     public var gaps: Int
     public var limitMinutes: Int
     public var limitGoal: Int
@@ -38,7 +38,9 @@ public struct DayRings: Codable, Hashable, Sendable {
     /// The words beside each ring (never colour alone, D3).
     public var workLabel: String { workGoal == 0 ? "\(minutesLabel(workMinutes)) · nothing asked" : "\(minutesLabel(workMinutes)) of \(minutesLabel(workGoal))" }
     public var trackedLabel: String { "\(Int((tracked * 100).rounded()))%" }
-    public var trackedSubtitle: String { gaps == 0 ? "No gap over 30 min" : "\(gaps) gap\(gaps == 1 ? "" : "s") over 30 min" }
+    public var trackedSubtitle: String {
+        gaps == 0 ? "No gap over \(TrackPrompts.goalMinutes) min" : "\(gaps) gap\(gaps == 1 ? "" : "s") over \(TrackPrompts.goalMinutes) min"
+    }
     public var limitLabel: String { "\(limitMinutes) of \(limitGoal) min" }
 
     public static let defaultLimit = 60
@@ -66,7 +68,7 @@ public struct DayRings: Codable, Hashable, Sendable {
         let untracked = slices.filter { $0.entry == nil }.reduce(0) { $0 + $1.minutes }
         let waking = max(0, total - asleep)
         let unproductive = slices.filter { under($0, CategoryTree.unproductive) }.reduce(0) { $0 + $1.minutes }
-        let gaps = TimeLog.untracked(slices, atLeast: 31).count
+        let gaps = Goals.gaps(slices).count
         return DayRings(workMinutes: acct.did, workGoal: acct.asked, wakingMinutes: waking, trackedMinutes: max(0, waking - untracked),
                         gaps: gaps, limitMinutes: unproductive, limitGoal: limit)
     }

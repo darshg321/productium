@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model
+    /// An update with new setup steps: only what's new, then back to the app.
+    var updating = false
     @State private var page: Page = .welcome
     @State private var serverURL = ClaudeClient.shared.baseURL?.absoluteString ?? ClaudeClient.defaultURL.absoluteString
     @State private var serverKey = ClaudeClient.shared.apiKey ?? ""
@@ -28,7 +30,7 @@ struct OnboardingView: View {
     }
 
     private var pages: [Page] {
-        Page.allCases
+        updating ? [.welcome, .scrolling, .backup] : Page.allCases
     }
 
     var body: some View {
@@ -66,7 +68,10 @@ struct OnboardingView: View {
         }
         .background(Theme.background)
         .sheet(isPresented: $showGuide) { ShortcutsGuideView(inSheet: true) }
-        .onAppear { if offer == nil { offer = model.backupToOffer() } }
+        .onAppear {
+            if offer == nil && !updating { offer = model.backupToOffer() }
+            scrollApps = Set(model.state.scrollingApps.filter { $0.value && ScrollingApps.common.contains($0.key) }.map(\.key))
+        }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { r in
             guard case .success(let url) = r else { return }
             do { model.applyRestore(try model.readBackup(from: url)) } catch {
@@ -88,10 +93,14 @@ struct OnboardingView: View {
     }
 
     private func advance() {
-        if page == pages.last {
+        if page == pages.last, updating {
+            model.setScrollingApps(scrollApps)
+            model.finishSetup()
+        } else if page == pages.last {
             model.seedGrid(skipping: unticked)
             model.setScrollingApps(scrollApps)
             model.state.onboarded = true
+            model.finishSetup()
             model.save()
             Task { await model.refresh() }
         } else {
@@ -113,7 +122,23 @@ struct OnboardingView: View {
         }
     }
 
-    private var welcome: some View {
+    @ViewBuilder private var welcome: some View {
+        if updating { whatsNew } else { firstWelcome }
+    }
+
+    private var whatsNew: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            IconTile(symbol: "sparkles", color: .purple, size: 72)
+            Text("New in Productium").font(.largeTitle.weight(.bold))
+            VStack(alignment: .leading, spacing: 14) {
+                reason("Screen Time for every app", "One Shortcuts automation, and your day fills itself in with the apps you use.", "apps.iphone", .teal)
+                reason("Your scrolling apps", "Pick the apps you scroll on. Each gets its own place under Scrolling.", "hourglass", .pink)
+                reason("Backups by themselves", "A backup is saved every day, with nothing to set up.", "externaldrive.fill", .blue)
+            }
+        }
+    }
+
+    private var firstWelcome: some View {
         VStack(alignment: .leading, spacing: 20) {
             IconTile(symbol: "calendar.badge.clock", color: .blue, size: 72)
             Text("Tell it everything.\nIt plans the rest.").font(.largeTitle.weight(.bold))
@@ -160,9 +185,9 @@ struct OnboardingView: View {
     /// H1: a daily backup outside the app.
     private var backup: some View {
         VStack(alignment: .leading, spacing: 16) {
-            IconTile(symbol: "externaldrive.fill", color: .gray, size: 56)
-            Text("Keep a daily backup").font(.largeTitle.weight(.bold))
-            Text("Pick a folder in iCloud Drive or On My iPhone for a daily backup.").lineSpacing(3)
+            IconTile(symbol: "externaldrive.fill", color: .blue, size: 56)
+            Text("Daily Backups").font(.largeTitle.weight(.bold))
+            Text("Productium saves a backup every day by itself. To keep them even if the app is deleted, pick a folder in iCloud Drive.").lineSpacing(3)
             List { DailyBackupSection() }
                 .listStyle(.insetGrouped)
                 .scrollDisabled(true)

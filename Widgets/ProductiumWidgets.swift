@@ -20,9 +20,12 @@ struct ProductiumWidgets: WidgetBundle {
 struct NowLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: NowAttributes.self) { context in
+            // One look in light and dark mode, like the system's own timers: dark glass, white text.
             NowLockScreen(card: shown(context), rings: context.state.rings)
                 .padding(16)
-                .activityBackgroundTint(Color(.systemBackground).opacity(0.85))
+                .environment(\.colorScheme, .dark)
+                .activityBackgroundTint(Color.black.opacity(0.55))
+                .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             let card = shown(context)
             return DynamicIsland {
@@ -77,7 +80,7 @@ enum NowLook {
 
     static func tint(_ kind: String) -> Color {
         switch kind {
-        case "running": return .red
+        case "running": return .orange
         case "question": return .purple
         case "untracked": return .orange
         default: return .blue
@@ -90,16 +93,22 @@ private struct NowLockScreen: View {
     let rings: NowAttributes.Rings?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 12) {
+                Image(systemName: NowLook.symbol(card.kind))
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(NowLook.tint(card.kind), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Label(card.title, systemImage: NowLook.symbol(card.kind)).font(.headline).lineLimit(2)
-                    if let sub = card.subtitle { Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                    Text(card.title).font(.headline).foregroundStyle(.white).lineLimit(2)
+                    if let sub = card.subtitle { Text(sub).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1) }
                 }
-                Spacer()
+                Spacer(minLength: 4)
                 if card.kind == "running", let since = card.since {
-                    Text(since, style: .timer).monospacedDigit().font(.title3.weight(.semibold))
-                        .multilineTextAlignment(.trailing).frame(maxWidth: 90)
+                    Text(since, style: .timer).monospacedDigit().font(.system(.title, design: .rounded).weight(.semibold))
+                        .foregroundStyle(NowLook.tint(card.kind))
+                        .multilineTextAlignment(.trailing).frame(maxWidth: 110)
                 } else if let rings {
                     MiniRings(rings: rings).frame(width: 40, height: 40)
                         .accessibilityLabel("Work \(rings.workLabel), tracked \(rings.trackedLabel), limit \(rings.limitLabel)")
@@ -120,15 +129,19 @@ private struct NowButtons: View {
                     Button(intent: NowActionIntent(action: b.action)) {
                         if let s = b.symbol { Label(b.label, systemImage: s).lineLimit(1) } else { Text(b.label).lineLimit(1) }
                     }
-                    .buttonStyle(.bordered)
-                    .tint(b.action == "stop" ? .red : NowLook.tint(card.kind))
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
+                    .tint(b.action == "stop" ? .red : Color.white.opacity(0.2))
                 }
                 if card.other {
                     Link(destination: AppInfo.url("box")!) { Label("Other", systemImage: "text.bubble").lineLimit(1) }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                        .tint(Color.white.opacity(0.2))
                 }
             }
-            .font(.caption)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
         }
     }
 }
@@ -142,9 +155,9 @@ struct MiniRings: View {
             let w = min(g.size.width, g.size.height)
             let line = w * 0.13
             ZStack {
-                ring(rings.work, .blue, w, line)
-                ring(rings.tracked, .green, w - 2.3 * line, line)
-                ring(rings.limit, rings.limit >= 1 ? .red : .teal, w - 4.6 * line, line)
+                ring(rings.work, Color(red: 0.98, green: 0.07, blue: 0.31), w, line)
+                ring(rings.tracked, Color(red: 0.45, green: 0.85, blue: 0.0), w - 2.2 * line, line)
+                ring(rings.limit, rings.limit >= 1 ? .red : Color(red: 0.0, green: 0.78, blue: 0.9), w - 4.4 * line, line)
             }
             .frame(width: g.size.width, height: g.size.height)
         }
@@ -152,7 +165,7 @@ struct MiniRings: View {
 
     private func ring(_ p: Double, _ c: Color, _ size: CGFloat, _ line: CGFloat) -> some View {
         ZStack {
-            Circle().stroke(c.opacity(0.2), lineWidth: line)
+            Circle().stroke(c.opacity(0.25), lineWidth: line)
             Circle().trim(from: 0, to: min(1, max(0.001, p)))
                 .stroke(c, style: StrokeStyle(lineWidth: line, lineCap: .round))
                 .rotationEffect(.degrees(-90))

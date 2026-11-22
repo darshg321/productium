@@ -14,6 +14,12 @@ struct DumpBox: View {
 
     var body: some View {
         Card {
+            CardHeader(title: "Inbox", symbol: "tray.and.arrow.down.fill", color: .blue,
+                       detail: model.busy.contains("dump") ? "Reading…" : nil)
+            TextField("What's due, what happened, what changed?", text: $text, axis: .vertical)
+                .font(.body)
+                .lineLimit(2...8)
+                .focused($focused)
             let images = model.draftImages
             if !images.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -35,23 +41,18 @@ struct DumpBox: View {
                     }
                 }
             }
-            HStack(alignment: .bottom, spacing: 10) {
+            HStack {
                 PhotosPicker(selection: $picks, maxSelectionCount: 6, matching: .images) {
-                    Image(systemName: "photo.on.rectangle.angled").font(.title3).frame(height: 36)
+                    Image(systemName: "photo.on.rectangle").font(.title3)
                 }
                 .accessibilityLabel("Add screenshots")
-                TextField("What's due, what happened, what changed?", text: $text, axis: .vertical)
-                    .font(.body)
-                    .lineLimit(1...8)
-                    .focused($focused)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Spacer()
                 if model.busy.contains("dump") {
-                    ProgressView().frame(width: 32, height: 36)
+                    ProgressView()
                 } else {
                     Button(action: send) {
-                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 30))
-                            .foregroundStyle(canSend ? Color.accentColor : Color(.systemGray3))
+                        Image(systemName: "arrow.up.circle.fill").font(.title)
+                            .symbolRenderingMode(.hierarchical)
                     }
                     .disabled(!canSend)
                     .accessibilityLabel("Send")

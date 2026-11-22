@@ -59,6 +59,8 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIRequiresFullScreen: true
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         NSSupportsLiveActivities: true
         UIBackgroundModes: [fetch, processing, location]
         BGTaskSchedulerPermittedIdentifiers: [app.productium.refresh]

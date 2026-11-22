@@ -391,11 +391,11 @@ final class TrackPromptTests: XCTestCase {
                          buttons: ["Shower", "Gaming", "Homework", "Walk"])
     }
 
-    func testFirstAt25MinutesThenEvery30() {
-        // School ends 15:00; nothing tracked after. At 15:10 the first prompt is set for 15:25, then 15:55.
+    func testFirstAt12MinutesThenEvery30() {
+        // School ends 15:00; nothing tracked after. At 15:10 the first prompt is set for 15:12, then 15:42.
         let p = TrackPrompts.plan(x(Fx.mon(15, 10), []))
         let live = p.filter { $0.id.hasPrefix("track.live") }
-        XCTAssertEqual(live.map(\.at), [Fx.mon(15, 25), Fx.mon(15, 55)])
+        XCTAssertEqual(live.map(\.at), [Fx.mon(15, 12), Fx.mon(15, 42)])
         XCTAssertEqual(live[0].title, "What are you up to?")
         XCTAssertEqual(live[0].actions, ["Shower", "Gaming", "Homework"])
         XCTAssertTrue(live[0].body.contains("since 15:00"))
@@ -404,11 +404,11 @@ final class TrackPromptTests: XCTestCase {
     func testCountsFromWhatEndsLaterAndSkipsQuietTimes() {
         // At 13:00 school covers until 15:00: the prompts are already lined up after it.
         XCTAssertEqual(TrackPrompts.plan(x(Fx.mon(13), [])).filter { $0.id.hasPrefix("track.live") }.map(\.at),
-                       [Fx.mon(15, 25), Fx.mon(15, 55)])
+                       [Fx.mon(15, 12), Fx.mon(15, 42)])
         // Gaming 18:00–18:40, then the planned essay at 19:00 and wind-down: nothing to ask at 19:05 (study) or 21:40.
         let p = TrackPrompts.plan(x(Fx.mon(18, 50), [told("Gaming", Fx.mon(18), Fx.mon(18, 40))]))
         XCTAssertTrue(p.filter { $0.id.hasPrefix("track.live") }.allSatisfy { !(Fx.mon(19)..<Fx.mon(19, 45)).contains($0.at) })
-        let late = TrackPrompts.plan(x(Fx.mon(21, 20), [told("TV", Fx.mon(20), Fx.mon(21, 15))]))
+        let late = TrackPrompts.plan(x(Fx.mon(21, 20), [told("TV", Fx.mon(20), Fx.mon(21, 30))]))
         XCTAssertTrue(late.filter { $0.id.hasPrefix("track.live") }.isEmpty, "wind-down and sleep are quiet")
     }
 

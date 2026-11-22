@@ -12,8 +12,10 @@ public struct BoxScreen: Codable, Hashable, Sendable {
             self.name = name; self.minutes = minutes; self.category = category; self.pickups = pickups; self.notifications = notifications
         }
     }
-    /// Total screen minutes for the day.
+    /// Total screen minutes for the day (a week view: the daily average).
     public var minutes: Int?
+    /// A week view's "Total Screen Time": its apps are totals for the period, scaled to a day with it.
+    public var totalMinutes: Int?
     /// "day" (default) or "week" / "average" (the daily average).
     public var period: String?
     /// The date label shown on the screenshot ("Today", "Wed, Nov 19").
@@ -81,7 +83,12 @@ public enum BoxSideOps {
 
     static func screenTime(_ sc: BoxScreen?, _ s: inout AppState, _ now: Date, _ cal: Calendar, _ r: inout Result) {
         guard let sc else { r.problems.append("A screen_time op needs a screen reading"); return }
-        let rawApps = (sc.apps ?? []).filter { !$0.name.isEmpty }
+        var rawApps = (sc.apps ?? []).filter { !$0.name.isEmpty }
+        let period = (sc.period ?? "day").lowercased()
+        let isAverage = period.contains("week") || period.contains("average") || period.contains("avg")
+        if isAverage, let perDay = ScreenDay.dailyFactor(average: sc.minutes, total: sc.totalMinutes, appsTotal: rawApps.reduce(0) { $0 + $1.minutes }) {
+            for i in rawApps.indices { rawApps[i].minutes = Int((Double(rawApps[i].minutes) * perDay).rounded()) }
+        }
         ScrollingApps.register(rawApps.map { ($0.name, $0.category) }, into: &s.scrollingApps)
         let apps = rawApps.map {
             AppUsage(name: $0.name, minutes: max(0, $0.minutes), distracting: false,
@@ -93,9 +100,8 @@ public enum BoxSideOps {
                               notifications: sc.notifications.map { max(0, $0) })
         entry = entry.recomputed(s.scrollingApps)
         if apps.isEmpty { r.problems.append("That screenshot shows no apps, so I can't tell how much of it was scrolling") }
-        let period = (sc.period ?? "day").lowercased()
-        if period.contains("week") || period.contains("average") || period.contains("avg") {
-            entry.day = cal.startOfDay(for: now)
+        if isAverage {
+            entry.day = ScreenDates.resolve(label: sc.dateLabelShown, date: nil, now: now, calendar: cal)
             entry.source = "screenshot-average"
             s.screenAverages.removeAll { cal.isDate($0.day, inSameDayAs: entry.day) }
             s.screenAverages.append(entry)

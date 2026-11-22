@@ -63,6 +63,7 @@ final class TestHooks {
             guard let s = Scenario(rawValue: arg) else { return "error: scenarios are " + Scenario.allCases.map(\.rawValue).joined(separator: ", ") }
             dismissSheets()
             m.loadScenario(Scenarios.make(s, now: Date(), calendar: m.cal))
+            m.finishSetup()
             await settle(1.2)
             return "ok"
         case "reset":

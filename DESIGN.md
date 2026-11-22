@@ -57,6 +57,9 @@ Dev builds (`dev` branch → `dev-build` pre-release, "Productium Dev", bundle i
 Results go to `results.txt` (`ok` / `ERR` per line, then `DONE`). Taps and typing aren't simulated: every action has
 a command. Not reachable from inside the app: the Lock Screen / Live Activity, Control Center, notifications.
 
+- **Setup after updates:** `AppModel.setupVersion` (standard defaults `setup.version`). When an update adds setup steps
+  it's bumped, and onboarding runs once in `updating` mode with only the new pages (v1.4: what's new, scrolling apps and
+  the every-app automation, backups). Test scenarios mark setup done.
 - **Simulator (no phone, ~10 min):** `scripts/test/sim.sh [script.txt]` runs `.github/workflows/ui-test.yml` on a
   macOS runner and downloads everything to `test-runs/<time>/`. Default script: `smoke.txt` (every screen, every scenario).
 - **iPhone over USB:** install the `dev-build` IPA with Impactor, open Productium Dev, then
@@ -193,8 +196,10 @@ Sleep's start. At 10:00, if nothing measured the night: "Slept about 23:20–7:0
 
 ### 3.4 The log, the ring, the forecast
 
-`TimeLog.past` resolves a range; an Untracked slice under 5 minutes with something on both sides becomes Transition
-(Essentials › Transition, already confirmed, not editable). `RingModel` sums it by group and level-2 category (actual + a forecast for the rest,
+`TimeLog.past` resolves a range; an Untracked slice of 15 minutes or less with something on both sides becomes Transition
+(Essentials › Transition, already confirmed, not editable). The tracking goal is no untracked waking stretch over 15
+minutes (`TrackPrompts.goalMinutes`: the Tracked ring's gaps, Goals, Schedule's Untracked rows; "What are you up to?"
+first asks at 12). `RingModel` sums it by group and level-2 category (actual + a forecast for the rest,
 previous-period deltas, tracking gaps). `DayForecast`: the last 4 same weekdays + the last 7 days of the same type
 (≥3 tracked days, or nothing), the median per category from this time of day on, today's fixed time (school,
 calendar, the planned Sleep) as planned, the rest Untracked. `ForecastVerdict` names the 2 biggest differences that
@@ -202,7 +207,8 @@ have a direction (productive and at-least goals up; unproductive, at-most goals 
 essentials neither; Untracked never offsets a worse category). `DayScore` = tracked 30 + work 40 + deadlines 30 −
 scrolling, always shown with its parts and your usual day.
 
-v1.3 D: `DayRings` are three goals that close, Fitness-style: Work (task minutes vs `Accountability.asked`), Tracked
+v1.3 D: `DayRings` are three goals that close, drawn like Activity's rings (Work red, Tracked green, Limit cyan; thick,
+nearly touching, shaded arcs): Work (task minutes vs `Accountability.asked`), Tracked
 (share of waking time that's an entry; closes with ≤5 min missing) and Limit (unproductive minutes vs a daily at-most
 goal, else the taper's limit, else 60; good when not closed). Same numbers as `DayScore`. `DayRings.usual` is the
 median of the last 4 days of the same kind; `DayCompare` gives Review → Day's "Studying +40 min, Scrolling −25 min"
@@ -317,8 +323,10 @@ on school mornings) + bedtime / leave / missed start; the reconciler diffs with 
 
 ## 8. Export / backup (`Export.swift`, `ExportService.swift`)
 
-v1.3 H: once a day (refresh, launch) `AppModel.backupIfDue` writes the export to a folder you pick outside the app
-(`BackupService`, security-scoped bookmark in the Keychain so a reinstall can find it), `Productium-YYYY-MM-DD.json`,
+v1.3 H: once a day (refresh, launch) `AppModel.backupIfDue` writes the export to a folder: with none picked, the app's
+own Documents/Backups (Files → On My iPhone, `UIFileSharingEnabled`; kept out of the export's `files`; lost if the app
+is deleted); or a folder you pick (iCloud Drive; `BackupService`, security-scoped bookmark in the Keychain so a
+reinstall can find it), `Productium-YYYY-MM-DD.json`,
 newest 3 kept (`BackupFiles`). Onboarding offers "Restore from Friday's backup" when the remembered folder has one,
 else a file picker. Restores go through the migrations.
 
@@ -491,7 +499,10 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
   `OnDeviceModel.categorise` files them (not into School) and teaches `CategoryRules` the answer; otherwise they stay in
   Other until the box or the taxonomy pass files them.
 - Everything marked "checked on the phone by you" in `v1.2_plan.md` is still to check (L3).
-- The ScreenOCR fixtures follow the iOS 18 layouts but aren't from real screenshots: compare with real ones.
+- ScreenOCR reads the iOS 18 layouts (written by hand) and iOS 26's Week view (from real screenshots, 1.4.1): "Last
+  Week's Average", "Total Screen Time" (a week view's apps are weekly totals, scaled to a day by average ÷ total,
+  `ScreenDay.dailyFactor`; averages saved wrongly by 1.4.0 are repaired on load), Pickups' average, and "First Used
+  After Pickup" counts ignored. Vision boxes are joined into rows (`OCRLines`).
 
 ## 14. If there is a paid Apple Developer account (not planned; what it would add and simplify)
 

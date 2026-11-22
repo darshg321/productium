@@ -63,16 +63,15 @@ struct WeekStrip: View {
                 let today = cal.isDateInToday(d)
                 let due = model.state.items.contains { $0.isOpen && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: d) }
                 Button { withAnimation(.snappy) { selected = d } } label: {
-                    VStack(spacing: 3) {
-                        Text(d.formatted(.dateTime.weekday(.narrow))).font(.caption2.weight(.semibold))
-                        Text(d.formatted(.dateTime.day())).font(.headline.monospacedDigit())
-                            .padding(6)
-                            .foregroundStyle(today && !on ? Color.red : (on ? .white : .primary))
-                        Image(systemName: "flag.fill").font(.system(size: 8)).foregroundStyle(on ? .white : .orange).opacity(due ? 1 : 0)
+                    VStack(spacing: 4) {
+                        Text(d.formatted(.dateTime.weekday(.narrow))).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(d.formatted(.dateTime.day())).font(.title3.weight(on || today ? .semibold : .regular).monospacedDigit())
+                            .foregroundStyle(on ? Color(.systemBackground) : (today ? .red : .primary))
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(on ? (today ? Color.red : Color.primary) : Color.clear))
+                        Circle().fill(Color.orange).frame(width: 5, height: 5).opacity(due ? 1 : 0)
                     }
-                    .foregroundStyle(on ? .white : .primary)
-                    .frame(maxWidth: .infinity, minHeight: 66)
-                    .background(on ? (today ? Color.red : Color.accentColor) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).month().day()) + (today ? ", today" : "") + (due ? ", something due" : ""))
@@ -82,8 +81,8 @@ struct WeekStrip: View {
                 .accessibilityLabel("Next week")
         }
         .font(.subheadline)
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(Theme.card)
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(Color(.systemBackground))
         .gesture(DragGesture(minimumDistance: 30).onEnded { v in
             if v.translation.width < -40 { shift(1) } else if v.translation.width > 40 { shift(-1) }
         })
@@ -119,17 +118,33 @@ struct DayEntryList: View {
             let due = model.state.items.filter { $0.isOpen && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: day) }
             List {
                 if rows.isEmpty && due.isEmpty { Text("Nothing on this day yet.").foregroundStyle(.secondary) }
-                ForEach(due) { t in
-                    Label("Due \(t.due.hm): \(t.title)", systemImage: "flag.fill").font(.subheadline.weight(.semibold))
+                if !due.isEmpty {
+                    Section("Due") {
+                        ForEach(due) { t in
+                            HStack(spacing: 12) {
+                                IconTile(symbol: "flag.fill", color: .orange)
+                                Text(t.title).lineLimit(1)
+                                Spacer()
+                                Text(t.due.hm).monospacedDigit().foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
-                ForEach(untracked, id: \.start) { g in
-                    Label("Untracked \(g.start.hm)–\(g.end.hm) · \(durationLabel(g.minutes))", systemImage: "questionmark.circle")
-                        .font(.subheadline).foregroundStyle(.orange)
+                if !untracked.isEmpty {
+                    Section("Untracked") {
+                        ForEach(untracked, id: \.start) { g in
+                            HStack(spacing: 12) {
+                                IconTile(symbol: "questionmark", color: Color(.systemGray3))
+                                Text(minutesLabel(g.minutes))
+                                Spacer()
+                                Text("\(g.start.hm) – \(g.end.hm)").monospacedDigit().foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
+                Section {
                 ForEach(rows) { d in
                     DayEntryRow(entry: d, now: now)
-                        .listRowBackground(Theme.color(category: d.category, tree: model.state.categories)
-                            .opacity(d.isPlannedSession || d.start > now ? 0.05 : 0.11))
                         .contentShape(Rectangle())
                         .onTapGesture { editing = d }
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
@@ -150,8 +165,9 @@ struct DayEntryList: View {
                             }
                         }
                 }
+                }
             }
-            .listStyle(.plain)
+            .listStyle(.insetGrouped)
             .sheet(item: $editing) { EntrySheet(day: $0) }
         }
     }
@@ -165,28 +181,20 @@ struct DayEntryRow: View {
     var body: some View {
         let tree = model.state.categories
         let colour = Theme.color(category: entry.category, tree: tree)
-        let ahead = entry.isPlannedSession || entry.start > now
         HStack(spacing: 12) {
-            Image(systemName: Theme.symbol(category: entry.category, tree: tree))
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(ahead ? colour : .white)
-                .frame(width: 32, height: 32)
-                .background(ahead ? AnyShapeStyle(colour.opacity(0.18)) : AnyShapeStyle(colour.gradient),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay {
-                    if entry.assumed && entry.end <= now {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, dash: [3, 2]))
-                    }
-                }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.title).font(.subheadline.weight(entry.taskId != nil ? .semibold : .medium)).lineLimit(1)
-                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            IconTile(symbol: Theme.symbol(category: entry.category, tree: tree), color: colour)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.title).lineLimit(1)
+                Text(detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer()
-            if entry.running {
-                Text(timerInterval: entry.start...Date.distantFuture, countsDown: false).font(.caption.monospacedDigit()).foregroundStyle(Theme.focus)
-            } else {
-                Text("\(entry.start.hm)–\(entry.end.hm)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            Spacer(minLength: 6)
+            VStack(alignment: .trailing, spacing: 1) {
+                if entry.running {
+                    Text(timerInterval: entry.start...Date.distantFuture, countsDown: false).monospacedDigit().foregroundStyle(Color.accentColor)
+                } else {
+                    Text(entry.start.hm).monospacedDigit()
+                }
+                Text(entry.running ? "now" : entry.end.hm).font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
             }
         }
         .opacity(entry.mark == .skipped ? 0.4 : 1)
@@ -195,10 +203,10 @@ struct DayEntryRow: View {
     }
 
     private var detail: String {
-        var parts = [model.state.categories.pathText(entry.category)]
-        if entry.running { parts.append("now") }
+        var parts = [model.state.categories.node(entry.category)?.name ?? model.state.categories.pathText(entry.category)]
+        if entry.running { }
         else if entry.isPlannedSession { parts.append(entry.end < now ? "not started" : "planned") }
-        else if entry.mark == .confirmed { parts.append("confirmed") }
+        else if entry.mark == .confirmed { }
         else if entry.assumed && entry.end <= now { parts.append("assumed") }
         else if entry.source == .plan { parts.append("planned") }
         if entry.entry.open { parts.append("open time") }

@@ -54,19 +54,15 @@ struct MetricsSection: View {
     var body: some View {
         let series = model.metricSeries()
         let cal = Calendar.current
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                SectionTitle("Life Metrics")
-                Spacer()
-                Button("Edit") { editing = true }.font(.subheadline)
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader("Life Metrics", action: "Edit") { editing = true }
             Picker("Period", selection: $period) {
                 ForEach(MetricPeriod.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                 ForEach(model.state.metricTiles, id: \.self) { id in
-                    if let s = series[id] {
+                    if let s = series[id], Metrics.compare(s, period: period, now: Date(), calendar: cal).current != nil {
                         NavigationLink { MetricDetailView(id: id) } label: {
                             MetricTile(series: s, comparison: Metrics.compare(s, period: period, now: Date(), calendar: cal), period: period)
                         }
@@ -76,10 +72,7 @@ struct MetricsSection: View {
             }
             let noticed = Noticed.find(series)
             if let n = noticed.first {
-                Card {
-                    Label(n.text, systemImage: "eye").font(.subheadline)
-                    Text("Seen across \(n.days) days. It may be a coincidence, not a cause.").font(.caption).foregroundStyle(.secondary)
-                }
+                Card { Label(n.text, systemImage: "eye") }
             }
         }
         .sheet(isPresented: $editing) { MetricTilesEditor() }
@@ -103,16 +96,10 @@ struct MetricTile: View {
                 .font(.footnote.weight(.semibold)).foregroundStyle(metricSymbolColor(def.id)).lineLimit(1)
             if let cur = comparison.current {
                 Text(Noticed.amount(cur, def.unit)).font(.system(.title2, design: .rounded).weight(.semibold)).monospacedDigit()
-                HStack(spacing: 4) {
-                    Image(systemName: comparison.arrow.symbol)
-                    Image(systemName: comparison.verdict.symbol)
-                    Text(comparison.verdict.word).font(.caption.weight(.semibold))
+                if comparison.verdict != .notEnoughData {
+                    Label("\(comparison.verdict.word) \(period.versus)", systemImage: comparison.arrow.symbol)
+                        .font(.caption.weight(.semibold)).foregroundStyle(comparison.verdict.color).lineLimit(1).minimumScaleFactor(0.8)
                 }
-                .foregroundStyle(comparison.verdict.color)
-                if comparison.verdict != .notEnoughData { Text(period.versus).font(.caption2).foregroundStyle(.secondary) }
-            } else {
-                Text("Not enough data").font(.subheadline).foregroundStyle(.secondary)
-                Text(comparison.note ?? "").font(.caption2).foregroundStyle(.secondary).lineLimit(2)
             }
             Chart {
                 ForEach(Array(spark.enumerated()), id: \.offset) { _, p in
@@ -126,7 +113,7 @@ struct MetricTile: View {
             .accessibilityHidden(true)
         }
         .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(def.title), \(comparison.current.map { Noticed.amount($0, def.unit) } ?? "not enough data"), \(comparison.verdict.word)")

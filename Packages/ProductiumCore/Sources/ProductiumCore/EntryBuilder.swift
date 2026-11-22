@@ -83,23 +83,36 @@ public enum EntryBuilder {
     }
 
     /// v1.3: every app session the automations logged, filed by `category` (nil: no entry, e.g. an app that's neither
-    /// scrolling nor messaging). Sensor entries are assumed until you say yes, and lose to anything you tracked. One you
-    /// re-filed keeps your category; an unconfirmed one whose app no longer counts is removed.
+    /// scrolling nor messaging). Back-to-back sessions of one app (under `mergeMinutes` apart) are one entry. Sensor
+    /// entries are assumed until you say yes, and lose to anything you tracked. One you re-filed keeps your category;
+    /// an unconfirmed one whose app no longer counts is removed.
     @discardableResult
     public static func apps(_ sessions: [ScrollSession], entries: inout [Entry], now: Date, since: Date,
-                            category: (String) -> CategoryID?) -> [UUID] {
-        var out: [UUID] = []
-        for s in sessions where s.openedAt >= since {
-            guard let end = s.endedAt, end > s.openedAt, end <= now, end.timeIntervalSince(s.openedAt) >= 60 else { continue }
-            let id = Entry.sensorId("scroll|\(s.id.uuidString)")
-            let j = entries.firstIndex { $0.id == id }
-            guard let cat = category(s.app) else {
-                if let j, !entries[j].filedByYou, entries[j].marks.isEmpty { entries.remove(at: j) }
-                continue
+                            category: (ScrollSession) -> CategoryID?) -> [UUID] {
+        func drop(_ id: UUID) {
+            if let j = entries.firstIndex(where: { $0.id == id }), !entries[j].filedByYou, entries[j].marks.isEmpty { entries.remove(at: j) }
+        }
+        var runs: [(first: ScrollSession, end: Date, merged: [ScrollSession])] = []
+        for s in sessions.filter({ $0.openedAt >= since }).sorted(by: { $0.openedAt < $1.openedAt }) {
+            guard let end = s.endedAt, end > s.openedAt, end <= now else { continue }
+            if let last = runs.last, last.first.app.plainKey == s.app.plainKey,
+               s.openedAt.timeIntervalSince(last.end) < Double(mergeMinutes) * 60 {
+                runs[runs.count - 1].end = max(last.end, end)
+                runs[runs.count - 1].merged.append(s)
+            } else {
+                runs.append((s, end, []))
             }
-            let e = Entry(id: id, title: s.app, start: s.openedAt, end: end, category: cat,
-                          note: s.endSource?.observed == false ? "estimated end" : nil, source: .sensor, createdAt: end)
-            if let j {
+        }
+        var out: [UUID] = []
+        for r in runs {
+            let s = r.first
+            r.merged.forEach { drop(Entry.sensorId("scroll|\($0.id.uuidString)")) }
+            let id = Entry.sensorId("scroll|\(s.id.uuidString)")
+            guard r.end.timeIntervalSince(s.openedAt) >= 60, let cat = category(s) else { drop(id); continue }
+            let estimated = (r.merged.last ?? s).endSource?.observed == false
+            let e = Entry(id: id, title: s.app, start: s.openedAt, end: r.end, category: cat,
+                          note: estimated ? "estimated end" : nil, source: .sensor, createdAt: r.end)
+            if let j = entries.firstIndex(where: { $0.id == id }) {
                 var x = e
                 x.marks = entries[j].marks
                 if entries[j].filedByYou { x.category = entries[j].category }
@@ -112,4 +125,7 @@ public enum EntryBuilder {
         }
         return out
     }
+
+    /// Sessions of one app this close together are one stretch of using it.
+    public static let mergeMinutes = 5
 }

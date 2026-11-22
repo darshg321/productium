@@ -42,18 +42,17 @@ enum Week4 {
 final class GoalTests: XCTestCase {
     let cal = Fx.cal
 
-    func testA31MinuteGapFailsTheTrackingGoal() {
-        let es = Week4.timetable + [Week4.e("Homework", CategoryTree.studying, 0, 15, 31, 17, 0)]
+    func testA16MinuteGapFailsTheTrackingGoal() {
+        let es = Week4.timetable + [Week4.e("Homework", CategoryTree.studying, 0, 15, 16, 17, 0)]
         let p = Goals.progress(Goal.trackingGaps, entries: es, tree: CategoryTree(), items: [], now: Fx.mon(17), calendar: cal)
-        // Midnight–8:30 is untracked too here (no sleep entry), so that's one; 15:00–15:31 is the other.
+        // Midnight–8:30 is untracked too here (no sleep entry), so that's one; 15:00–15:16 is the other.
         XCTAssertEqual(p.value, 2)
         XCTAssertFalse(p.met)
         let ok = Week4.timetable + [Week4.e("Sleep", CategoryTree.sleep, 0, 0, 0, 7, 0, src: .health),
-                                    Week4.e("Walk", CategoryTree.travel, 0, 7, 0, 8, 0, src: .sensor),
-                                    Week4.e("Gap", CategoryTree.free, 0, 8, 0, 8, 0),
-                                    Week4.e("Homework", CategoryTree.studying, 0, 15, 30, 17, 0)]
+                                    Week4.e("Walk", CategoryTree.travel, 0, 7, 0, 8, 15, src: .sensor),
+                                    Week4.e("Homework", CategoryTree.studying, 0, 15, 15, 17, 0)]
         let p2 = Goals.progress(Goal.trackingGaps, entries: ok, tree: CategoryTree(), items: [], now: Fx.mon(17), calendar: cal)
-        XCTAssertEqual(p2.value, 0, "8:00–8:30 and 15:00–15:30 are exactly 30: fine. School, sleep and sensor time count as tracked")
+        XCTAssertEqual(p2.value, 0, "8:15–8:30 and 15:00–15:15 are exactly 15: fine. School, sleep and sensor time count as tracked")
         XCTAssertTrue(p2.met)
     }
 
