@@ -439,7 +439,8 @@ extension AppModel {
     /// A new screenshot, read on the phone. Screen Time: applied here, one receipt line; unreadable Screen Time: the box
     /// gets the image; homework-looking: offered as a task (Add sends it to the box).
     func screenshot(text: String, image: UIImage) {
-        if let reading = ScreenOCR.parse(text), !reading.apps.isEmpty || reading.period == "week" {
+        if let reading = ScreenOCR.parse(text),
+           !reading.apps.isEmpty || reading.period == "week" || reading.pickups != nil || reading.notifications != nil {
             var me = aboutMe
             let r = BoxSideOps.apply([BoxOp(.screen_time, .add, BoxFields(screen: reading.box))], to: &state, aboutMe: &me, now: Date(), calendar: cal)
             log(.sensor, "screenshot_read", ["lines": r.lines.joined(separator: " | "), "problems": r.problems.joined(separator: " | ")])
@@ -458,12 +459,82 @@ extension AppModel {
         }
     }
 
+    // MARK: Apps (the "Opened an App" / "Closed an App" automations)
+
+    /// An app opened (any app, from the automation): its session starts, the log updates now, not at the next refresh.
+    func appOpened(_ app: String) {
+        let name = app.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.lowercased().hasPrefix("productium") else { return }
+        ScrollingApps.register([(name, nil)], into: &state.scrollingApps)
+        let scrolling = ScrollingApps.isScrolling(name, state.scrollingApps)
+        Friction.update { $0.seen(name, at: Date(), scrolling: scrolling) }
+        rebuildAppEntries()
+    }
+
+    /// App sessions as sensor entries: Scrolling › the app, Messaging, or nothing (it still counts as screen time).
+    /// Assumed until you say yes; what you track yourself wins over them.
+    @discardableResult
+    func rebuildAppEntries(save shouldSave: Bool = true) -> [UUID] {
+        let now = Date()
+        var tree = state.categories
+        let list = state.scrollingApps, rules = state.categoryRules
+        var entries = state.entries
+        let ids = EntryBuilder.apps(Friction.log.sessions, entries: &entries, now: now, since: now.addingTimeInterval(-3 * 86400)) {
+            AppKinds.category(for: $0, list: list, rules: rules, tree: &tree)
+        }
+        if tree != state.categories { state.categories = tree }
+        if entries != state.entries { state.entries = entries }
+        if shouldSave { save() }
+        return ids
+    }
+
+    /// Today's minutes per app from the automations (every app once "Opened an App" is set up).
+    func appMinutesToday() -> [(app: String, minutes: Int)] {
+        Friction.log.minutes(on: Date(), calendar: cal).filter { $0.value > 0 }.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
+    }
+
+    func appKind(_ app: String) -> CategoryID? {
+        if ScrollingApps.isScrolling(app, state.scrollingApps) { return CategoryTree.scrolling }
+        return AppKinds.isMessaging(app) ? CategoryTree.messaging : nil
+    }
+
+    func setScrollingApps(_ ticked: Set<String>) {
+        for app in ScrollingApps.common { state.scrollingApps[app] = ticked.contains(app) }
+        for app in ticked { state.scrollingApps[app] = true }
+        state.screen = state.screen.map { $0.recomputed(state.scrollingApps) }
+        state.screenAverages = state.screenAverages.map { $0.recomputed(state.scrollingApps) }
+        save()
+    }
+
+    func addFeedback(_ text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        state.feedback.append(Feedback(at: Date(), text: t, appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String))
+        log(.lifecycle, "feedback", ["chars": "\(t.count)"])
+        save()
+    }
+
+    /// How much of `day` (awake) has something in it already.
+    func plannedShare(_ day: Date) -> PlannedShare {
+        PlannedShare.make(day, entries: state.entries, tree: state.categories, now: Date(), book: state.dayRules, calendar: cal)
+    }
+
+    /// The last 7 days, for Review → Your Week.
+    func weekRecap() -> WeekRecap? {
+        let today = cal.startOfDay(for: Date())
+        let days = (0..<7).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
+        let before = (7..<35).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }.map(dayScore)
+            .filter { $0.wakingMinutes > $0.untrackedMinutes }
+        return WeekRecap.make(days: days, scores: days.map(dayScore), before: before, entries: state.entries, tree: state.categories,
+                              moods: state.moods, now: Date(), book: state.dayRules, calendar: cal)
+    }
+
     // MARK: The daily pipeline (called from refresh)
 
     func refreshLog() async {
         let now = Date()
         // B2: scroll sessions, places on entries, nights; H1: tasks past due end as dropped.
-        let scrolled = EntryBuilder.scrolling(Friction.log.sessions, entries: &state.entries, now: now, since: now.addingTimeInterval(-3 * 86400))
+        let scrolled = rebuildAppEntries(save: false)
         let placed = EntryBuilder.places(&state.entries, visits: state.trace.visits, book: state.placeBook,
                                          since: now.addingTimeInterval(-3 * 86400), now: now)
         let named = state.placeBook.nameFromEntries(state.entries, tree: state.categories)

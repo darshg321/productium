@@ -79,16 +79,30 @@ public enum EntryBuilder {
     /// only from its check-in or an estimate is still Scrolling, just less sure. Ids from the session, so rebuilds replace.
     @discardableResult
     public static func scrolling(_ sessions: [ScrollSession], entries: inout [Entry], now: Date, since: Date) -> [UUID] {
+        apps(sessions, entries: &entries, now: now, since: since) { _ in CategoryTree.scrolling }
+    }
+
+    /// v1.3: every app session the automations logged, filed by `category` (nil: no entry, e.g. an app that's neither
+    /// scrolling nor messaging). Sensor entries are assumed until you say yes, and lose to anything you tracked. One you
+    /// re-filed keeps your category; an unconfirmed one whose app no longer counts is removed.
+    @discardableResult
+    public static func apps(_ sessions: [ScrollSession], entries: inout [Entry], now: Date, since: Date,
+                            category: (String) -> CategoryID?) -> [UUID] {
         var out: [UUID] = []
         for s in sessions where s.openedAt >= since {
             guard let end = s.endedAt, end > s.openedAt, end <= now, end.timeIntervalSince(s.openedAt) >= 60 else { continue }
             let id = Entry.sensorId("scroll|\(s.id.uuidString)")
-            let e = Entry(id: id, title: s.app, start: s.openedAt, end: end, category: CategoryTree.scrolling,
+            let j = entries.firstIndex { $0.id == id }
+            guard let cat = category(s.app) else {
+                if let j, !entries[j].filedByYou, entries[j].marks.isEmpty { entries.remove(at: j) }
+                continue
+            }
+            let e = Entry(id: id, title: s.app, start: s.openedAt, end: end, category: cat,
                           note: s.endSource?.observed == false ? "estimated end" : nil, source: .sensor, createdAt: end)
-            if let j = entries.firstIndex(where: { $0.id == id }) {
+            if let j {
                 var x = e
                 x.marks = entries[j].marks
-                x.category = entries[j].category
+                if entries[j].filedByYou { x.category = entries[j].category }
                 x.filedByYou = entries[j].filedByYou
                 if entries[j] != x { entries[j] = x }
             } else {

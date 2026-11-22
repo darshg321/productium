@@ -148,7 +148,24 @@ public enum TimeLog {
         let r = DateInterval(start: range.start, end: end)
         let occ = Days.expand(entries, in: r, now: now, book: book, calendar: cal)
             .filter { !$0.isPlannedSession }
-        return resolve(occ, in: r)
+        return transitions(resolve(occ, in: r))
+    }
+
+    /// A gap shorter than this between two things is moving from one to the next, not Untracked.
+    public static let transitionMinutes = 5
+
+    /// Untracked slices under `transitionMinutes` with something on both sides become Transition (already confirmed:
+    /// there's nothing to ask about).
+    static func transitions(_ slices: [LogSlice]) -> [LogSlice] {
+        var out = slices
+        for i in out.indices.dropFirst().dropLast() where out[i].entry == nil && out[i - 1].entry != nil && out[i + 1].entry != nil
+            && out[i].end.timeIntervalSince(out[i].start) < Double(transitionMinutes) * 60 {
+            let e = Entry(id: Entry.sensorId("transition|\(Int(out[i].start.timeIntervalSince1970))"), title: "Transition",
+                          start: out[i].start, end: out[i].end, category: CategoryTree.transition, source: .sensor,
+                          createdAt: out[i].start)
+            out[i].entry = DayEntry(entry: e, occurrence: nil, start: e.start, end: out[i].end, running: false, mark: .confirmed)
+        }
+        return out
     }
 
     /// Untracked stretches at least `minutes` long (the 30-minute goal, the "what are you up to?" prompts).

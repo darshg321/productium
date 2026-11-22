@@ -73,13 +73,10 @@ struct RingLegendRows: View {
     }
 
     private func row(_ name: String, _ symbol: String, _ color: Color, _ value: String, _ note: String?) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: symbol).foregroundStyle(color).frame(width: 18)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(name).font(.caption.weight(.semibold)).foregroundStyle(color)
-                Text(value).font(.subheadline.monospacedDigit())
-                if let note { Text(note).font(.caption2).foregroundStyle(.secondary) }
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            Label(name, systemImage: symbol).font(.caption.weight(.semibold)).foregroundStyle(color)
+            Text(value).font(.system(.subheadline, design: .rounded).weight(.semibold).monospacedDigit())
+            if let note { Text(note).font(.caption2).foregroundStyle(.secondary) }
         }
         .accessibilityElement(children: .combine)
     }
@@ -93,18 +90,22 @@ struct RingsCard: View {
 
     var body: some View {
         let r = model.rings(now)
-        Card {
-            CardHeader(title: "Today", symbol: "circle.circle", color: .blue, chevron: true)
-            HStack(spacing: 18) {
-                ActivityRings(rings: r, lineWidth: 14).frame(width: 130, height: 130)
-                RingLegendRows(rings: r)
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader("Rings")
+            Card {
+                HStack(spacing: 18) {
+                    ActivityRings(rings: r, lineWidth: 14).frame(width: 120, height: 120)
+                    RingLegendRows(rings: r)
+                    Spacer(minLength: 0)
+                }
+                if let f = model.forecast {
+                    Text(model.verdict(f).line).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
-            if let f = model.forecast {
-                Text(model.verdict(f).line).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-            }
+            .contentShape(Rectangle())
+            .onTapGesture { showingDay = true }
+            .accessibilityAddTraits(.isButton)
         }
-        .contentShape(Rectangle())
-        .onTapGesture { showingDay = true }
         .sheet(isPresented: $showingDay) { RingDaySheet(day: now) }
     }
 }

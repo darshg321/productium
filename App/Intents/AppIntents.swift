@@ -127,6 +127,7 @@ struct PauseBeforeScrollingIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
         AppModel.shared.log(.intent, "PauseBeforeScrollingIntent")
+        defer { AppModel.shared.rebuildAppEntries() }
         guard Friction.opened(app) else { return .result(value: false) }
         if #available(iOS 26.0, *), systemContext.currentMode.canContinueInForeground {
             if (try? await continueInForeground(alwaysConfirm: false)) != nil {
@@ -144,7 +145,9 @@ struct ShouldPauseIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
         await AppModel.shared.log(.intent, "ShouldPauseIntent")
-        return .result(value: Friction.opened(app))
+        let pause = Friction.opened(app)
+        await AppModel.shared.rebuildAppEntries()
+        return .result(value: pause)
     }
 }
 
@@ -155,7 +158,24 @@ struct ClosedDistractingAppIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ReturnsValue<Int> {
         await AppModel.shared.log(.intent, "ClosedDistractingAppIntent")
-        return .result(value: Friction.closed(app))
+        let minutes = Friction.closed(app)
+        await AppModel.shared.rebuildAppEntries()
+        return .result(value: minutes)
+    }
+}
+
+/// v1.3: one automation for every app ("App is opened", all apps ticked, App = Shortcut Input). Productium then logs
+/// screen time for each app, files scrolling apps under Scrolling and messaging apps under Messaging, as assumed time.
+struct OpenedAppIntent: AppIntent {
+    static var title: LocalizedStringResource = "Opened an App"
+    static var description = IntentDescription("Use it in an “App is opened” automation with every app ticked, and App set to Shortcut Input. Productium logs your screen time per app and fills your day with scrolling and messaging (as assumed time you can confirm). It never opens Productium.")
+    @Parameter(title: "App") var app: String
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        AppModel.shared.log(.intent, "OpenedAppIntent", ["app": String(app.prefix(40))])
+        AppModel.shared.appOpened(app)
+        return .result()
     }
 }
 
@@ -178,6 +198,7 @@ struct StoppedScrollingIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         await AppModel.shared.log(.intent, "StoppedScrollingIntent")
         Friction.ended(by: signal.source)
+        await AppModel.shared.rebuildAppEntries()
         if signal == .charger {
             let d = LocalStore.defaults
             let times = (d.array(forKey: LocalStore.Key.chargingTimes) as? [Double] ?? []) + [Date().timeIntervalSince1970]
@@ -230,7 +251,7 @@ enum Friction {
 
     static func opened(_ app: String) -> Bool {
         let pause = !inGrace
-        let wasOpen = log.open != nil
+        let wasOpen = log.open?.isScrolling ?? false
         let measures = update { $0.opened(app, at: Date(), paused: pause, calendar: .current); return $0.measuresClosing }
         if pause {
             let key = LocalStore.Key.frictionPrefix + LocalStore.dayKey()

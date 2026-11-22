@@ -17,16 +17,21 @@ shot 05-settings
 dump today
 
 scenario history
-review day
-shot 10-review-day
-review week
-shot 11-review-week
+review
+shot 10-review
+scroll stats
+shot 11-review-glance
+scroll time
+shot 12-review-time
+scroll screen
+shot 13-review-screen
 scroll work
-shot 12-review-how-you-work
+shot 14-review-how-you-work
 scroll note
-shot 14-review-note
-scroll metrics
-shot 13-review-more-stats
+shot 15-review-note
+review recap
+shot 16-review-recap
+dismiss
 tab tasks
 shot 15-tasks-warnings
 dump history
@@ -50,7 +55,7 @@ shot 31-alerts-answered
 dump alerts
 
 scenario leaderboard
-review week
+review
 scroll leaderboard
 shot 40-leaderboard
 dump leaderboard

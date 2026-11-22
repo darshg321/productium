@@ -2,100 +2,62 @@ import SwiftUI
 import Charts
 import ProductiumCore
 
-// v1.2 G2: the ring. Inner ring = groups, outer ring = their level-2 categories; actual time solid, the forecast (or
-// the plan) faint and outlined. Tap a slice to drill into its leaves and entries. Every colour also has a symbol and a
-// word in the legend, so it reads in grayscale (v1.1 J).
+// v1.3 Review: where the time went, drawn like Screen Time: one bar split by category, then the categories as rows
+// (colour, symbol and word together, so it reads in grayscale), each with its change against the period before.
 
-struct TimeRing: View {
+struct TimeBreakdown: View {
     let ring: RingModel
     let tree: CategoryTree
-    var goals: [Goal] = []
-    @Binding var selection: String?
-    var centre: String
-    var centreCaption: String
-    @State private var angle: Int?
+    var showSleep = false
+    var limit = 7
+    var onSelect: (String) -> Void = { _ in }
 
-    struct Piece: Identifiable {
-        let id: String
-        let slice: String
-        let minutes: Int
-        let forecast: Bool
-        let color: Color
-    }
-
-    private func pieces(_ slices: [RingSlice], group: Bool) -> [Piece] {
-        slices.flatMap { s -> [Piece] in
-            let c = group ? Theme.color(group: s.group) : Theme.color(category: s.id, tree: tree)
-            let solid = s.id == CategoryTree.untracked && group ? Color(.systemGray4) : c
-            return [Piece(id: s.id + "|a", slice: s.id, minutes: s.minutes, forecast: false, color: solid),
-                    Piece(id: s.id + "|f", slice: s.id, minutes: s.forecast, forecast: true, color: solid)].filter { $0.minutes > 0 }
-        }
+    private func color(_ s: RingSlice) -> Color {
+        s.id == CategoryTree.untracked ? Color(.systemGray4) : Theme.color(category: s.id, tree: tree)
     }
 
     var body: some View {
-        let inner = pieces(ring.groups, group: true)
-        let outer = pieces(ring.categories, group: false)
-        ZStack {
-            chart(outer, inner: 0.72, outerR: 1.0)
-                .chartAngleSelection(value: $angle)
-            chart(inner, inner: 0.5, outerR: 0.68)
-                .allowsHitTesting(false)
-            VStack(spacing: 2) {
-                if let sel = selectedSlice(outer) {
-                    Text(durationLabel(sel.minutes + sel.forecast)).font(.title3.weight(.semibold)).monospacedDigit()
-                    Text(sel.name).font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text(centre).font(.title3.weight(.semibold)).monospacedDigit()
-                    Text(centreCaption).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .onChange(of: angle) { _, a in
-            guard a != nil, let s = selectedSlice(outer) else { return }
-            selection = s.id
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(ring.categories.filter { $0.minutes > 0 }.prefix(6).map { "\($0.name) \(durationLabel($0.minutes))" }.joined(separator: ", "))
-    }
-
-    private func selectedSlice(_ pieces: [Piece]) -> RingSlice? {
-        guard let a = angle else { return nil }
-        var acc = 0
-        for p in pieces {
-            acc += p.minutes
-            if a < acc { return ring.categories.first { $0.id == p.slice } }
-        }
-        return nil
-    }
-
-    private func chart(_ pieces: [Piece], inner: CGFloat, outerR: CGFloat) -> some View {
-        Chart(pieces) { p in
-            SectorMark(angle: .value("Minutes", p.minutes), innerRadius: .ratio(inner), outerRadius: .ratio(outerR), angularInset: 0.8)
-                .foregroundStyle(p.forecast ? p.color.opacity(0.28) : p.color)
-                .opacity(selection == nil || selection == p.slice || !pieces.contains { $0.slice == selection } ? 1 : 0.45)
-        }
-        .chartLegend(.hidden)
-    }
-}
-
-struct RingLegend: View {
-    let ring: RingModel
-    let tree: CategoryTree
-
-    var body: some View {
-        let shown = ring.categories.filter { $0.minutes + $0.forecast >= 10 }.prefix(8)
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .leading)], alignment: .leading, spacing: 6) {
-            ForEach(Array(shown), id: \.id) { s in
-                HStack(spacing: 6) {
-                    Image(systemName: Theme.symbol(category: s.id, tree: tree))
-                        .foregroundStyle(Theme.color(category: s.id, tree: tree)).frame(width: 18)
-                    Text(s.name).font(.caption).lineLimit(1)
-                    Spacer(minLength: 2)
-                    Text(durationLabel(s.minutes)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    if let d = s.delta, d != 0 {
-                        Text("\(d > 0 ? "▲" : "▼") \(durationLabel(abs(d)))").font(.caption2).foregroundStyle(.secondary)
+        let slices = ring.categories.filter { $0.minutes > 0 && (showSleep || !tree.isUnder($0.id, CategoryTree.sleep)) }
+            .sorted { $0.minutes > $1.minutes }
+        let total = max(1, slices.reduce(0) { $0 + $1.minutes })
+        let most = max(1, slices.first?.minutes ?? 1)
+        VStack(alignment: .leading, spacing: 12) {
+            GeometryReader { g in
+                HStack(spacing: 2) {
+                    ForEach(slices.filter { $0.id != CategoryTree.untracked } + slices.filter { $0.id == CategoryTree.untracked }) { s in
+                        Rectangle().fill(color(s))
+                            .frame(width: max(2, (g.size.width - CGFloat(slices.count) * 2) * CGFloat(s.minutes) / CGFloat(total)))
                     }
                 }
+                .clipShape(Capsule())
+            }
+            .frame(height: 14)
+            .accessibilityHidden(true)
+            ForEach(slices.prefix(limit)) { s in
+                Button { onSelect(s.id) } label: {
+                    HStack(spacing: 12) {
+                        IconTile(symbol: s.id == CategoryTree.untracked ? "questionmark" : Theme.symbol(category: s.id, tree: tree),
+                                 color: color(s))
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(s.name).font(.subheadline).lineLimit(1)
+                                Spacer(minLength: 6)
+                                if let d = s.delta, abs(d) >= 5 {
+                                    Text("\(d > 0 ? "▲" : "▼") \(durationLabel(abs(d)))").font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Text(durationLabel(s.minutes)).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                            GeometryReader { g in
+                                Capsule().fill(color(s).opacity(0.85))
+                                    .frame(width: max(4, g.size.width * CGFloat(s.minutes) / CGFloat(most)), height: 5)
+                            }
+                            .frame(height: 5)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(s.name), \(durationLabel(s.minutes))")
             }
         }
     }
@@ -143,7 +105,7 @@ struct DrillSheet: View {
                                 Text(durationLabel(s.minutes)).font(.caption.monospacedDigit())
                             }
                         }
-                        .disabled(s.entry == nil)
+                        .disabled(s.entry == nil || s.category == CategoryTree.transition)
                     }
                 }
             }

@@ -48,6 +48,10 @@ public struct CategoryTree: Codable, Hashable, Sendable {
     public static let free: CategoryID = "free"
     public static let unproductive: CategoryID = "unproductive"
     public static let scrolling: CategoryID = "unproductive.scrolling"
+    /// v1.3: a gap under 5 minutes between two things (`TimeLog.past`).
+    public static let transition: CategoryID = "essentials.transition"
+    /// v1.3: messaging apps from the "Opened an App" automation (Discord, Messages, WhatsApp…).
+    public static let messaging: CategoryID = "free.messaging"
     public static let other: CategoryID = "other"
     /// Not a node: time nothing explains. Shown in the ring, never counted as free time.
     public static let untracked: CategoryID = "untracked"
@@ -58,21 +62,34 @@ public struct CategoryTree: Codable, Hashable, Sendable {
 
     public static let seedNodes: [CategoryNode] = [
         CategoryNode(id: sleep, name: "Sleep", symbol: "moon.fill", colour: "indigo", group: .essential),
-        CategoryNode(id: school, name: "School", symbol: "building.2", colour: "gray", group: .productive),
+        CategoryNode(id: school, name: "School", symbol: "building.2", colour: "orange", group: .productive),
         CategoryNode(id: work, name: "Work", symbol: "pencil.line", colour: "blue", group: .productive),
         CategoryNode(id: studying, name: "Studying", parentId: work, symbol: "pencil.line", colour: "blue", group: .productive),
-        CategoryNode(id: extracurricular, name: "Extracurricular", parentId: work, symbol: "figure.run", colour: "blue", group: .productive),
-        CategoryNode(id: essentials, name: "Essentials", symbol: "checklist", colour: "gray", group: .essential),
-        CategoryNode(id: "essentials.shower", name: "Shower", parentId: essentials, symbol: "shower", colour: "gray", group: .essential),
-        CategoryNode(id: meals, name: "Meals", parentId: essentials, symbol: "fork.knife", colour: "gray", group: .essential),
-        CategoryNode(id: gettingReady, name: "Getting Ready", parentId: essentials, symbol: "tshirt", colour: "gray", group: .essential),
-        CategoryNode(id: windDown, name: "Wind Down", parentId: essentials, symbol: "moon.haze", colour: "gray", group: .essential),
-        CategoryNode(id: travel, name: "Travel", symbol: "figure.walk", colour: "gray", group: .essential),
+        CategoryNode(id: extracurricular, name: "Extracurricular", parentId: work, symbol: "figure.run", colour: "purple", group: .productive),
+        CategoryNode(id: essentials, name: "Essentials", symbol: "checklist", colour: "green", group: .essential),
+        CategoryNode(id: "essentials.shower", name: "Shower", parentId: essentials, symbol: "shower", colour: "teal", group: .essential),
+        CategoryNode(id: meals, name: "Meals", parentId: essentials, symbol: "fork.knife", colour: "green", group: .essential),
+        CategoryNode(id: gettingReady, name: "Getting Ready", parentId: essentials, symbol: "tshirt", colour: "mint", group: .essential),
+        CategoryNode(id: windDown, name: "Wind Down", parentId: essentials, symbol: "moon.haze", colour: "indigo", group: .essential),
+        CategoryNode(id: transition, name: "Transition", parentId: essentials, symbol: "arrow.left.arrow.right", colour: "mint", group: .essential),
+        CategoryNode(id: travel, name: "Travel", symbol: "figure.walk", colour: "brown", group: .essential),
         CategoryNode(id: free, name: "Free Time", symbol: "sun.max", colour: "yellow", group: .rest),
+        CategoryNode(id: messaging, name: "Messaging", parentId: free, symbol: "message", colour: "green", group: .rest),
         CategoryNode(id: unproductive, name: "Unproductive", symbol: "hourglass", colour: "teal", group: .unproductive),
-        CategoryNode(id: scrolling, name: "Scrolling", parentId: unproductive, symbol: "hourglass", colour: "teal", group: .unproductive),
-        CategoryNode(id: other, name: "Other", symbol: "circle", colour: "gray", group: .rest),
+        CategoryNode(id: scrolling, name: "Scrolling", parentId: unproductive, symbol: "hourglass", colour: "pink", group: .unproductive),
+        CategoryNode(id: other, name: "Other", symbol: "circle", colour: "cyan", group: .rest),
     ]
+
+    /// v1.3 (schema 6): seed nodes that were gray get their colour, and the new seed nodes are added. Yours are left alone.
+    public mutating func refreshSeeds() {
+        for seed in Self.seedNodes {
+            if let i = nodes.firstIndex(where: { $0.id == seed.id }) {
+                if !nodes[i].yours && nodes[i].colour == "gray" { nodes[i].colour = seed.colour }
+            } else if seed.parentId.map({ node($0) != nil }) ?? true {
+                nodes.append(seed)
+            }
+        }
+    }
 
     public func node(_ id: CategoryID) -> CategoryNode? { nodes.first { $0.id == id } }
 

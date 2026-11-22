@@ -71,6 +71,7 @@ final class ExportTests: XCTestCase {
         s.usage.record(UsageRecord(at: now, feature: .box, model: "sonnet", tokens: TokenCount(output: 90)))
         s.snoozed = [UUID(): now.addingTimeInterval(600)]
         s.backup = BackupState(folderName: "Productium Backups", lastWrite: now, lastFile: "Productium-2026-11-16.json")
+        s.feedback = [Feedback(at: now, text: "The grid could be brighter.", appVersion: "1.3.0")]
         return s
     }
 

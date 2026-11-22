@@ -15,8 +15,10 @@ final class AppModel {
     var pendingInvite: String?
     /// Dev test runner: the card id a screen should scroll to (`scroll <card>`).
     var scrollTarget: String?
-    /// v1.3 C2: Review's segment (the test runner's `review day|week` sets it).
-    var reviewSegment: ReviewSegment = .day
+    /// The box has the keyboard: Today holds its clock so typing never waits on the cards below.
+    var boxFocused = false
+    /// Review → Your Week (the recap) is open (the test runner's `review recap` opens it).
+    var showRecap = false
     /// v1.3 E: prompts set to Alarm, from the last scheduling pass.
     @ObservationIgnored var promptAlarms: [PlannedAlarm] = []
     var busy: Set<String> = []
@@ -157,6 +159,7 @@ final class AppModel {
 
     func foreground() {
         Friction.ended(by: .productium)
+        rebuildAppEntries()
         state.appOpens.append(Date())
         log(.lifecycle, "foreground")
         if let link = LocalStore.defaults.string(forKey: LocalStore.Key.pendingDeepLink) {
@@ -721,6 +724,7 @@ final class AppModel {
         if !measured.isEmpty {
             state.screen = state.screen.merging(measured: measured, calendar: cal).map { $0.recomputed(state.scrollingApps) }
         }
+        Friction.update { $0.prune(now: now) }
     }
 
     /// The weekly note and the quiet insight pass (v1.1 D.2): one Sonnet call. The note is shown; the changes are
@@ -822,6 +826,7 @@ final class AppModel {
         state.scrollingApps[app] = on
         state.screen = state.screen.map { $0.recomputed(state.scrollingApps) }
         state.screenAverages = state.screenAverages.map { $0.recomputed(state.scrollingApps) }
+        rebuildAppEntries(save: false)
         replan()
     }
 
@@ -1075,7 +1080,7 @@ final class AppModel {
 
     var quickContext: QuickContext {
         QuickContext(now: Date(), calendar: cal, entries: state.entries, items: state.items, tree: state.categories,
-                     rules: state.categoryRules, scrollingApps: state.scrollingApps, book: state.dayRules)
+                     rules: state.categoryRules, scrollingApps: state.scrollingApps, book: state.dayRules, tiles: state.quickStarts.live)
     }
 
     /// Everything said to Productium goes through here: the box, notification replies, Siri and Shortcuts.

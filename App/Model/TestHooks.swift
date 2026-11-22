@@ -8,7 +8,7 @@ import ProductiumCore
 /// Commands (one per line, `#` comments):
 ///   scenario <fresh|today|history|evening|alerts|leaderboard>   reset   tab <today|schedule|tasks|review|settings>
 ///   open <productium://…>   say <text>   start <title>   start-next   stop   mood <1-5>   confirm-today   approve   decline
-///   answer <yes|no|skipped|sick|no-school>   dismiss   scroll <card>   review <day|week>   now <action>   backup
+///   answer <yes|no|skipped|sick|no-school>   dismiss   scroll <card>   review [recap]   now <action>   backup
 ///   refresh   replan   learn   leaderboard   server [url]   wait <seconds>   shot <name>   dump <name>
 @MainActor
 final class TestHooks {
@@ -129,11 +129,13 @@ final class TestHooks {
             m.scrollTarget = nil
             return "ok"
         case "review":
-            guard let seg = ReviewSegment(rawValue: arg) else { return "error: review day|week" }
             dismissSheets()
-            m.reviewSegment = seg
             m.deepLink = "productium://review"
             await settle(0.8)
+            if arg == "recap" {
+                m.showRecap = true
+                await settle(1.0)
+            }
             return "ok"
         case "now":
             // A Now Live Activity button, as the Lock Screen would press it (stop, start:<title>, yes:<ref>, …).

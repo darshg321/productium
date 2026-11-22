@@ -25,7 +25,7 @@ final class MigrationTests: XCTestCase {
         XCTAssertTrue(s.onboarded)
         let new = try object(try encoder().encode(s))
         // Every field but the migrated ones comes back exactly as stored.
-        for (k, v) in old where !["schema", "quickStarts", "prefs"].contains(k) {
+        for (k, v) in old where !["schema", "quickStarts", "prefs", "categories"].contains(k) {
             XCTAssertEqual(new[k] as? NSObject, v as? NSObject, "\(k) changed in the migration")
         }
         let oldPrefs = try XCTUnwrap(old["prefs"] as? [String: Any]), newPrefs = try XCTUnwrap(new["prefs"] as? [String: Any])
@@ -44,7 +44,18 @@ final class MigrationTests: XCTestCase {
         XCTAssertEqual(s.entries.count, (old["entries"] as? [Any])?.count)
         XCTAssertEqual(s.items.count, (old["items"] as? [Any])?.count)
         XCTAssertEqual(s.goals.count, (old["goals"] as? [Any])?.count)
-        XCTAssertEqual(s.categories.nodes.count, ((old["categories"] as? [String: Any])?["nodes"] as? [Any])?.count)
+        // Schema 6: every category is still there (ids, names, parents); gray seeds got colours; two seeds were added.
+        let oldNodes = try XCTUnwrap((old["categories"] as? [String: Any])?["nodes"] as? [[String: Any]])
+        for n in oldNodes {
+            let m = try XCTUnwrap(s.categories.node(try XCTUnwrap(n["id"] as? String)))
+            XCTAssertEqual(m.name, n["name"] as? String)
+            XCTAssertEqual(m.parentId, n["parentId"] as? String)
+            if n["colour"] as? String != "gray" { XCTAssertEqual(m.colour, n["colour"] as? String) }
+        }
+        XCTAssertEqual(s.categories.nodes.count, oldNodes.count + 2)
+        XCTAssertNotNil(s.categories.node(CategoryTree.transition))
+        XCTAssertNotNil(s.categories.node(CategoryTree.messaging))
+        XCTAssertEqual(s.categories.node(CategoryTree.school)?.colour, "orange")
     }
 
     func testMigratedStateIsStable() throws {

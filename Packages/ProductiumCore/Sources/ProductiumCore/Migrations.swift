@@ -20,6 +20,10 @@ public enum Migrations {
             s.quickStarts.seedTemplates(at: now)
             s.prefs.prompts = PromptSettings.migrated(from: s.prefs.nudges, wakeAlarms: s.prefs.wakeAlarms)
         },
+        // 5 → 6: gray seed categories get colours; Transition and Messaging are added. Feedback starts empty.
+        Step(from: 5) { s, _ in
+            s.categories.refreshSeeds()
+        },
     ]
 
     /// The schema stored data was written with (0: unreadable), read without decoding the rest.
