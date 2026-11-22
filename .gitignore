@@ -17,3 +17,5 @@ scripts/repair/input/
 
 # Wrangler cache
 .wrangler/
+# Test run output (scripts/test)
+test-runs/

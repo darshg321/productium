@@ -9,7 +9,7 @@ import ProductiumCore
 import FoundationModels
 #endif
 
-// MARK: - M9: open tasks mirrored into a "Productium" list in Reminders
+// MARK: - M9: open tasks mirrored into a "Productium" list in Reminders ("Productium Dev" in dev builds)
 
 @MainActor
 final class ReminderService {
@@ -24,7 +24,7 @@ final class ReminderService {
     private func list() -> EKCalendar? {
         if let id = UserDefaults.standard.string(forKey: Self.listKey), let c = store.calendar(withIdentifier: id) { return c }
         let c = EKCalendar(for: .reminder, eventStore: store)
-        c.title = "Productium"
+        c.title = AppInfo.name
         c.source = store.defaultCalendarForNewReminders()?.source ?? store.sources.first { $0.sourceType == .local }
         guard (try? store.saveCalendar(c, commit: true)) != nil else { return nil }
         UserDefaults.standard.set(c.calendarIdentifier, forKey: Self.listKey)
@@ -55,7 +55,7 @@ final class ReminderService {
             let r = EKReminder(eventStore: store)
             r.calendar = cal
             r.title = title
-            r.url = URL(string: "productium://task/\(taskId.uuidString)")
+            r.url = AppInfo.url("task/\(taskId.uuidString)")
             if let t = model.state.items.first(where: { $0.id == taskId }) {
                 r.dueDateComponents = model.cal.dateComponents([.year, .month, .day, .hour, .minute], from: t.due)
             }

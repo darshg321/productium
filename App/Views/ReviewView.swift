@@ -14,22 +14,25 @@ struct ReviewView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    EndOfDayCard()
-                    RingSection()
-                    GoalsCard()
-                    ScoreWeekCard()
-                    HowYouWorkCard()
-                    LeaderboardCard()
-                    MetricsSection()
-                    MoodMapCard()
-                    WhereCard()
-                    ForEach(model.state.pinnedCharts) { p in LiveChart(query: p.query, title: p.title, pinnedId: p.id) }
-                    note
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        EndOfDayCard().id("today")
+                        RingSection().id("ring")
+                        GoalsCard().id("goals")
+                        ScoreWeekCard().id("week")
+                        HowYouWorkCard().id("work")
+                        LeaderboardCard().id("leaderboard")
+                        MetricsSection().id("metrics")
+                        MoodMapCard().id("mood")
+                        WhereCard().id("where")
+                        ForEach(model.state.pinnedCharts) { p in LiveChart(query: p.query, title: p.title, pinnedId: p.id) }
+                        note.id("note")
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 32)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 32)
+                .onChange(of: model.scrollTarget) { _, t in if let t { proxy.scrollTo(t, anchor: .top) } }
             }
             .background(Theme.background)
             .refreshable { await model.insightPass(force: true) }
@@ -295,12 +298,24 @@ struct MoodMapCard: View {
             Card {
                 CardHeader(title: "Mood by Time of Day", symbol: "face.smiling", color: .pink, detail: "Last 30 days")
                 let cells = map.cells.flatMap { wd, hs in hs.map { MoodCell(weekday: wd, hour: $0.key, mood: $0.value) } }
-                Chart(cells) { c in
-                    RectangleMark(x: .value("Hour", c.hour), y: .value("Day", cal.shortWeekdaySymbols[c.weekday - 1]))
+                // Each cell spans its hour explicitly: with an automatic width, two cells at the same hour (any two days)
+                // make Charts divide by a zero spacing and crash.
+                // Rows in the calendar's week order, top to bottom; every cell spans its hour and its whole row.
+                let order = (0..<7).map { cal.shortWeekdaySymbols[(cal.firstWeekday - 1 + $0) % 7] }
+                let row: (Int) -> Double = { wd in Double(6 - (wd - cal.firstWeekday + 7) % 7) }
+                Chart(cells.filter { (6...23).contains($0.hour) }) { c in
+                    RectangleMark(xStart: .value("Hour", c.hour), xEnd: .value("Hour", c.hour + 1),
+                                  yStart: .value("Day", row(c.weekday) + 0.06), yEnd: .value("Day", row(c.weekday) + 0.94))
                         .foregroundStyle(by: .value("Mood", c.mood))
                 }
-                .chartForegroundStyleScale(range: Gradient(colors: [Color.red.opacity(0.6), Color.yellow, Color.green]))
-                .chartXScale(domain: 6...23)
+                .chartForegroundStyleScale(domain: 1.0...5.0, range: Gradient(colors: [Color.red.opacity(0.6), Color.yellow, Color.green]))
+                .chartXScale(domain: 6...24)
+                .chartYScale(domain: 0.0...7.0)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: (0..<7).map { Double($0) + 0.5 }) { v in
+                        AxisValueLabel { Text(order[6 - Int(v.as(Double.self) ?? 0)]) }
+                    }
+                }
                 .frame(height: 170)
                 if let n = map.noticed { Text(n).font(.subheadline) }
             }
@@ -427,7 +442,7 @@ struct LeaderboardCard: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
-                    if let url = Leaderboard.invite(g) {
+                    if let url = Leaderboard.invite(g, scheme: AppInfo.scheme) {
                         ShareLink(item: url, message: Text("Join \(g.name) on Productium")) { Label("Invite", systemImage: "person.badge.plus") }
                     }
                     Spacer()

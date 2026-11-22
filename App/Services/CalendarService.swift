@@ -5,7 +5,7 @@ import ProductiumCore
 final class CalendarService {
     static let shared = CalendarService()
     let store = EKEventStore()
-    private let calendarTitle = "Productium"
+    private let calendarTitle = AppInfo.name
 
     var authorized: Bool { EKEventStore.authorizationStatus(for: .event) == .fullAccess }
 

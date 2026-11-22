@@ -140,7 +140,8 @@ public enum Leaderboard {
         return rows
     }
 
-    /// Your own row is always what you last sent (the Worker's list can lag a write by up to a minute).
+    /// Your own row is always your current numbers (the Worker's list can lag a write by up to a minute, and a post
+    /// can fail offline).
     public static func withYou(_ board: Board, you: String, post: BoardPost?) -> Board {
         guard let post else { return board }
         var b = board
@@ -164,17 +165,17 @@ public enum Leaderboard {
         (8...64).contains(s.count) && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
     }
 
-    /// productium://join?s=<server>&g=<group>&n=<name>
-    public static func invite(_ g: BoardGroup) -> URL? {
+    /// productium://join?s=<server>&g=<group>&n=<name> (productium-dev:// from a dev build).
+    public static func invite(_ g: BoardGroup, scheme: String = "productium") -> URL? {
         var c = URLComponents()
-        c.scheme = "productium"
+        c.scheme = scheme
         c.host = "join"
         c.queryItems = [URLQueryItem(name: "s", value: g.server), URLQueryItem(name: "g", value: g.id), URLQueryItem(name: "n", value: g.name)]
         return c.url
     }
 
     public static func readInvite(_ s: String) -> (server: String, group: String, name: String)? {
-        guard let c = URLComponents(string: s.trimmingCharacters(in: .whitespacesAndNewlines)), c.scheme == "productium", c.host == "join",
+        guard let c = URLComponents(string: s.trimmingCharacters(in: .whitespacesAndNewlines)), c.scheme == "productium" || c.scheme == "productium-dev", c.host == "join",
               let server = c.queryItems?.first(where: { $0.name == "s" })?.value, server.hasPrefix("https://"),
               let group = c.queryItems?.first(where: { $0.name == "g" })?.value, isValidId(group) else { return nil }
         let name = c.queryItems?.first(where: { $0.name == "n" })?.value ?? "Friends"

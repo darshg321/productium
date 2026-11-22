@@ -79,9 +79,9 @@ public struct LearnedModel: Codable, Hashable, Sendable {
         if total > 30 { hourSuccess[hour] *= 30 / total; hourFail[hour] *= 30 / total }
     }
 
-    /// The hours with enough evidence, most reliable first (the planner's energy curve and the weekly note use them).
+    /// Hours with enough evidence that usually work (≥60%), most reliable first: Review and the weekly note.
     public func goodHours(limit: Int = 3) -> [Int] {
-        Array((0..<24).filter { hourSuccess[$0] + hourFail[$0] > 6 }
+        Array((0..<24).filter { hourSuccess[$0] + hourFail[$0] > 6 && hourReliability($0) >= 0.6 }
             .sorted { hourReliability($0) > hourReliability($1) }.prefix(limit))
     }
 
@@ -127,7 +127,7 @@ public enum EnergyModel {
 
 /// Follow-through and good hours from the log (v1.2: there is no "how did it go?" button; the log is the answer).
 /// Each finished day is read once: its planned work sessions (`planHistory`, as they stood when the day ended) against
-/// the time you logged on each task, plus the work you did at hours nothing was planned for.
+/// the time you logged on each task (any time that day), plus the hours the work actually happened in.
 public enum AdherenceLearner {
     public struct Day: Sendable {
         public var sessions: [SessionResult]
@@ -135,9 +135,10 @@ public enum AdherenceLearner {
         public var offPlan: [Int: Int]
     }
 
-    /// A session's window: 30 min early to 2 h late still counts as "at that hour".
+    /// A session's hour: work from 30 min before it to 30 min after it counts as "at that hour". Work later than that
+    /// (19:00 planned, done at 21:10) still makes the session done, but teaches 21:00, not 19:00.
     static let early: TimeInterval = 30 * 60
-    static let late: TimeInterval = 2 * 3600
+    static let late: TimeInterval = 30 * 60
 
     /// Work time actually done (not planned, not typed in ahead without a yes), clipped to `day`.
     static func work(_ entries: [Entry], day: DateInterval, tree: CategoryTree, now: Date) -> [(task: UUID?, start: Date, end: Date)] {

@@ -149,7 +149,8 @@ final class HealthService {
 
     /// Writes a mood logged in Productium to Health (valence -1...1). iOS 18+.
     func logStateOfMind(_ mood: Int, at date: Date = Date()) {
-        guard available, #available(iOS 18.0, *) else { return }
+        // Dev builds never write test moods into your real Health data.
+        guard available, !AppInfo.isDev, #available(iOS 18.0, *) else { return }
         let valence = Double(max(1, min(5, mood)) - 3) / 2
         let s = HKStateOfMind(date: date, kind: .dailyMood, valence: valence, labels: [], associations: [],
                               metadata: ["productium": true])
