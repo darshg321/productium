@@ -2,32 +2,43 @@ import SwiftUI
 import Charts
 import ProductiumCore
 
-// v1.2 G.1: Review, top to bottom. You open it every evening, so insights live here, not on Home.
-// 0. Today: untracked stretches to fill, assumed time to confirm, the day score with its parts vs your usual, patterns.
-// 1. The ring for a day / week / month, with drill-down and the last period beside each slice.
-// 2. Goals. 3. The day score and the four numbers that matter, how you work (follow-through, good hours), the
-// leaderboard, then Life Metrics. 4. Mood by time of day.
-// 5. Where. 6. Pinned charts. 7. The Weekly Note.
+// v1.3 C2: Review is opened once a day and once a week, so it has two segments and nothing else.
+// Day: the score and its parts against your usual day of this kind, today's rings beside your usual day's, the best and
+// worst hour, and what changed it. Week: this week against the last 4 (score per day, the rings per day, the four
+// numbers that matter), goals, how you work, the leaderboard, pinned charts, the Weekly Note, then "More stats".
+
+enum ReviewSegment: String, CaseIterable {
+    case day, week
+}
 
 struct ReviewView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var m = model
         NavigationStack {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
-                        EndOfDayCard().id("today")
-                        RingSection().id("ring")
-                        GoalsCard().id("goals")
-                        ScoreWeekCard().id("week")
-                        HowYouWorkCard().id("work")
-                        LeaderboardCard().id("leaderboard")
-                        MetricsSection().id("metrics")
-                        MoodMapCard().id("mood")
-                        WhereCard().id("where")
-                        ForEach(model.state.pinnedCharts) { p in LiveChart(query: p.query, title: p.title, pinnedId: p.id) }
-                        note.id("note")
+                        Picker("Review", selection: $m.reviewSegment) {
+                            Text("Day").tag(ReviewSegment.day)
+                            Text("Week").tag(ReviewSegment.week)
+                        }
+                        .pickerStyle(.segmented)
+                        if model.reviewSegment == .day {
+                            DayReviewCard().id("today")
+                        } else {
+                            ScoreWeekCard().id("week")
+                            GoalsCard().id("goals")
+                            HowYouWorkCard().id("work")
+                            LeaderboardCard().id("leaderboard")
+                            PinnedList().id("pinned")
+                            note.id("note")
+                            NavigationLink { MoreStatsView() } label: {
+                                Label("More Stats", systemImage: "chart.xyaxis.line").frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(.horizontal, 4).id("metrics")
+                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 32)
@@ -62,70 +73,91 @@ struct ReviewView: View {
     }
 }
 
-// MARK: - G7: the end-of-day review
+// MARK: - C2 Day
 
-struct EndOfDayCard: View {
+struct DayReviewCard: View {
     @Environment(AppModel.self) private var model
-    @State private var editing: DayEntry?
 
     var body: some View {
         let cal = Calendar.current
         let now = Date()
-        let today = Days.dayInterval(now, cal)
-        let slices = TimeLog.past(model.state.entries, in: today, now: now, book: model.state.dayRules, calendar: cal)
-        let gaps = TimeLog.untracked(slices, atLeast: 15).filter { $0.start >= today.start.addingTimeInterval(6 * 3600) }
-        let assumed = TimeLog.assumed(slices).filter { $0.end <= now && !model.state.categories.isUnder($0.category, CategoryTree.sleep) }
-        let buttons = model.startButtons(now: now).row.prefix(4)
-        let score = model.dayScore(now)
+        let today = model.rings(now)
+        let usual = model.usualRings(now)
+        let hours = DayCompare.hours(now, entries: model.state.entries, tree: model.state.categories, now: now,
+                                     book: model.state.dayRules, calendar: cal)
         Card {
-            CardHeader(title: "Today", symbol: "checkmark.seal.fill", color: .green,
-                       detail: gaps.isEmpty && assumed.isEmpty ? "All accounted for" : nil)
-            if !gaps.isEmpty {
-                Text("What were these?").font(.subheadline.weight(.semibold))
-                ForEach(gaps, id: \.start) { g in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(g.start.hm)–\(g.end.hm) · \(durationLabel(g.minutes))").font(.subheadline)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack {
-                                ForEach(Array(buttons)) { b in
-                                    Button(b.title) { model.logStretch(b.title, DateInterval(start: g.start, end: g.end)) }
-                                        .buttonStyle(.bordered).buttonBorderShape(.capsule).font(.caption)
-                                }
-                            }
-                        }
+            CardHeader(title: "Today", symbol: "checkmark.seal.fill", color: .green)
+            DayScoreView(score: model.dayScore(now), usual: model.scoreVsUsual(now).map { ($0.1, $0.2, $0.3) })
+            HStack(alignment: .top, spacing: 16) {
+                VStack(spacing: 4) {
+                    ActivityRings(rings: today, lineWidth: 12).frame(width: 110, height: 110)
+                    Text("Today").font(.caption.weight(.semibold))
+                }
+                if let usual {
+                    VStack(spacing: 4) {
+                        ActivityRings(rings: usual, lineWidth: 12).frame(width: 110, height: 110).opacity(0.75)
+                        Text(model.isSchoolDay(now) ? "Usual school day" : "Usual day off").font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Text("Or tell the box (“3 to 4 I was at the library”).").font(.caption).foregroundStyle(.secondary)
             }
-            if !assumed.isEmpty {
-                HStack {
-                    Text("Did these happen?").font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Button("Yes to All") { model.confirmAll(in: DateInterval(start: today.start, end: now)) }.font(.subheadline)
-                }
-                ForEach(assumed) { d in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(d.title).font(.subheadline)
-                            Text("\(d.start.hm)–\(d.end.hm)").font(.caption).foregroundStyle(.secondary)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture { editing = d }
-                        Spacer()
-                        Button { model.confirm(d) } label: { Image(systemName: "checkmark.circle.fill") }.foregroundStyle(.green)
-                            .accessibilityLabel("Yes, \(d.title) happened")
-                        Button { model.reject(d) } label: { Image(systemName: "xmark.circle.fill") }.foregroundStyle(.secondary)
-                            .accessibilityLabel("No, \(d.title) didn't happen")
-                    }
-                    .font(.title3).buttonStyle(.borderless)
-                }
+            .frame(maxWidth: .infinity)
+            RingLegendRows(rings: today, usual: usual)
+            if let line = model.whatChanged(now) {
+                Label(line, systemImage: "arrow.up.arrow.down").font(.subheadline).fixedSize(horizontal: false, vertical: true)
             }
-            DayScoreView(score: score, usual: model.scoreVsUsual(now).map { ($0.1, $0.2, $0.3) })
+            if let h = hours.best { Label("Best hour: \(hourLabel(h))", systemImage: "sun.max").font(.subheadline) }
+            if let h = hours.worst { Label("Hardest hour: \(hourLabel(h))", systemImage: "cloud").font(.subheadline) }
             ForEach(model.state.patterns) { p in
                 Label(p.text, systemImage: "lightbulb").font(.subheadline).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .sheet(item: $editing) { EntrySheet(day: $0) }
+    }
+
+    private func hourLabel(_ h: Int) -> String {
+        let d = Calendar.current.date(bySettingHour: h, minute: 0, second: 0, of: Date()) ?? Date()
+        let e = d.addingTimeInterval(3600)
+        return "\(d.formatted(.dateTime.hour()))–\(e.formatted(.dateTime.hour()))"
+    }
+}
+
+// MARK: - C2 Week: pinned charts, and what moved out of Review
+
+struct PinnedList: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if !model.state.pinnedCharts.isEmpty {
+            Card {
+                CardHeader(title: "Pinned", symbol: "pin.fill", color: .orange)
+                ForEach(model.state.pinnedCharts) { p in
+                    NavigationLink {
+                        ScrollView { LiveChart(query: p.query, title: p.title, pinnedId: p.id).padding(16) }
+                            .background(Theme.background)
+                            .navigationTitle(p.title)
+                    } label: {
+                        HStack { Text(p.title).font(.subheadline); Spacer(); Image(systemName: "chevron.right").foregroundStyle(.tertiary) }
+                    }
+                    .foregroundStyle(.primary)
+                }
+            }
+        }
+    }
+}
+
+/// Life Metrics, mood by time of day, and where the time went by period: one tap below Week.
+struct MoreStatsView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                RingSection()
+                MoodMapCard().id("mood")
+                MetricsSection()
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 32)
+        }
+        .background(Theme.background)
+        .navigationTitle("More Stats")
     }
 }
 
@@ -250,38 +282,60 @@ struct GoalsCard: View {
     }
 }
 
-// MARK: - G8: the week's scores and the four numbers that matter
+// MARK: - G8 / C2: the week against your last 4
 
 struct ScoreWeekCard: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         let cal = Calendar.current
-        let days = (0..<7).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: cal.startOfDay(for: Date())) }
+        let today = cal.startOfDay(for: Date())
+        let days = (0..<7).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
         let scores = days.map { ($0, model.dayScore($0)) }
+        let before = (7..<35).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }.map(model.dayScore)
+        let mood = MoodMap.make(model.state.moods, since: Date().addingTimeInterval(-30 * 86400), isSchoolDay: model.isSchoolDay, calendar: cal)
         Card {
-            CardHeader(title: "This Week", symbol: "chart.bar.fill", color: .indigo)
+            CardHeader(title: "This Week", symbol: "chart.bar.fill", color: .indigo, detail: "vs your last 4 weeks")
             Chart(scores, id: \.0) { d, s in
                 BarMark(x: .value("Day", d, unit: .day), y: .value("Score", s.score))
                     .foregroundStyle(Theme.focus)
             }
             .chartYScale(domain: 0...100)
             .frame(height: 110)
-            let tracked = scores.reduce(0) { $0 + $1.1.wakingMinutes - $1.1.untrackedMinutes }
-            let work = scores.reduce(0) { $0 + $1.1.workMinutes }
-            let met = scores.reduce(0) { $0 + $1.1.deadlinesMet }, due = scores.reduce(0) { $0 + $1.1.deadlinesDue }
-            let scroll = scores.reduce(0) { $0 + $1.1.scrollingMinutes }
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
-                GridRow { stat("Tracked", durationLabel(tracked)); stat("Work", durationLabel(work)) }
-                GridRow { stat("Deadlines", due == 0 ? "none due" : "\(met) met, \(due - met) missed"); stat("Scrolling", durationLabel(scroll)) }
+            HStack(spacing: 4) {
+                ForEach(days, id: \.self) { d in
+                    VStack(spacing: 2) {
+                        ActivityRings(rings: model.rings(d), lineWidth: 4).frame(width: 38, height: 38)
+                        Text(d.formatted(.dateTime.weekday(.narrow))).font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
             }
+            let week = totals(scores.map { $0.1 })
+            let avg = totals(before).map { $0 / 4 }
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                GridRow { stat("Tracked", durationLabel(week[0]), durationLabel(avg[0])); stat("Work", durationLabel(week[1]), durationLabel(avg[1])) }
+                GridRow {
+                    stat("Deadlines", week[3] == 0 ? "none due" : "\(week[2]) met, \(week[3] - week[2]) missed",
+                         avg[3] == 0 ? nil : "\(avg[2]) of \(avg[3])")
+                    stat("Scrolling", durationLabel(week[4]), durationLabel(avg[4]))
+                }
+            }
+            if let n = mood.noticed { Label(n, systemImage: "face.smiling").font(.subheadline) }
         }
     }
 
-    private func stat(_ t: String, _ v: String) -> some View {
+    /// Tracked, work, deadlines met, deadlines due, scrolling.
+    private func totals(_ xs: [DayScore]) -> [Int] {
+        [xs.reduce(0) { $0 + $1.wakingMinutes - $1.untrackedMinutes }, xs.reduce(0) { $0 + $1.workMinutes },
+         xs.reduce(0) { $0 + $1.deadlinesMet }, xs.reduce(0) { $0 + $1.deadlinesDue }, xs.reduce(0) { $0 + $1.scrollingMinutes }]
+    }
+
+    private func stat(_ t: String, _ v: String, _ usual: String?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(t).font(.caption).foregroundStyle(.secondary)
             Text(v).font(.subheadline.weight(.semibold)).monospacedDigit()
+            if let usual { Text("usual \(usual)").font(.caption2).foregroundStyle(.secondary) }
         }
     }
 }
@@ -318,39 +372,6 @@ struct MoodMapCard: View {
                 }
                 .frame(height: 170)
                 if let n = map.noticed { Text(n).font(.subheadline) }
-            }
-        }
-    }
-}
-
-// MARK: - E4: where
-
-struct WhereCard: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let cal = Calendar.current
-        let week = DateInterval(start: cal.date(byAdding: .day, value: -7, to: Date()) ?? Date(), end: Date())
-        let rows = Where.rows(visits: model.state.trace.visits, book: model.state.placeBook, entries: model.state.entries, range: week, now: Date())
-        if !rows.isEmpty {
-            Card {
-                CardHeader(title: "Where", symbol: "mappin.and.ellipse", color: .red, detail: "Last 7 days")
-                Chart(rows.prefix(6)) { r in
-                    SectorMark(angle: .value("Minutes", r.minutes), innerRadius: .ratio(0.6), angularInset: 1)
-                        .foregroundStyle(by: .value("Place", r.name))
-                }
-                .frame(height: 150)
-                ForEach(rows.prefix(8)) { r in
-                    VStack(alignment: .leading, spacing: 2) {
-                        LabeledContent(r.name, value: durationLabel(r.minutes))
-                        if !r.top.isEmpty {
-                            Text(r.top.map { "\(model.state.categories.node($0.0)?.name ?? $0.0) \(durationLabel($0.1))" }.joined(separator: " · "))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .font(.subheadline)
-                }
-                Text("Name a place by telling the box where you are: “this is the library”.").font(.caption2).foregroundStyle(.secondary)
             }
         }
     }

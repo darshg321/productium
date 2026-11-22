@@ -8,8 +8,8 @@ import ProductiumCore
 /// Commands (one per line, `#` comments):
 ///   scenario <fresh|today|history|evening|alerts|leaderboard>   reset   tab <today|schedule|tasks|review|settings>
 ///   open <productium://…>   say <text>   start <title>   start-next   stop   mood <1-5>   confirm-today   approve   decline
-///   answer <yes|no|skipped|sick|no-school>   dismiss   scroll <card>   refresh   replan   learn   leaderboard
-///   server [url]   wait <seconds>   shot <name>   dump <name>
+///   answer <yes|no|skipped|sick|no-school>   dismiss   scroll <card>   review <day|week>   now <action>   backup
+///   refresh   replan   learn   leaderboard   server [url]   wait <seconds>   shot <name>   dump <name>
 @MainActor
 final class TestHooks {
     static let shared = TestHooks()
@@ -128,6 +128,21 @@ final class TestHooks {
             await settle(0.9)
             m.scrollTarget = nil
             return "ok"
+        case "review":
+            guard let seg = ReviewSegment(rawValue: arg) else { return "error: review day|week" }
+            dismissSheets()
+            m.reviewSegment = seg
+            m.deepLink = "productium://review"
+            await settle(0.8)
+            return "ok"
+        case "now":
+            // A Now Live Activity button, as the Lock Screen would press it (stop, start:<title>, yes:<ref>, …).
+            m.nowAction(arg)
+            await settle(0.8)
+            return "ok: " + (m.nowState().map { "\($0.card.kind.rawValue) \($0.card.title)" } ?? "nothing")
+        case "backup":
+            await m.backupIfDue(force: true)
+            return m.state.backup.failing ? "error: \(m.state.backup.lastError ?? "")" : "ok: \(m.state.backup.lastFile ?? "no folder")"
         case "refresh":
             await m.refresh(full: false)
             return "ok"
@@ -202,6 +217,13 @@ final class TestHooks {
             let kind = d.entry.isRunning ? "running" : d.isPlannedSession ? "planned" : d.assumed ? "assumed" : d.end <= now ? "done" : "later"
             l.append("\(d.start.hm)–\(d.end.hm) \(kind.padding(toLength: 8, withPad: " ", startingAt: 0)) \(d.title) [\(s.categories.pathText(d.category))]")
         }
+        if let n = m.nowState(now: now) {
+            l.append("now activity: \(n.card.kind.rawValue) “\(n.card.title)” " + n.card.buttons.map(\.label).joined(separator: " | ")
+                     + (n.then.map { " → then \($0.kind.rawValue) at \(n.until?.hm ?? "?")" } ?? ""))
+        }
+        let r = m.rings(now)
+        l.append("rings: work \(r.workLabel), tracked \(r.trackedLabel) (\(r.trackedSubtitle)), limit \(r.limitLabel)")
+        l.append("grid: " + m.startButtons(now: now).row.map { $0.isPinned ? "\($0.title)📌" : $0.title }.joined(separator: ", "))
         let score = m.dayScore(now)
         l.append("score \(score.score): tracked \(Int(score.tracked)) work \(Int(score.work)) deadlines \(Int(score.deadlines)) scrolling \(Int(score.scrolling)); untracked \(score.untrackedMinutes)m, work \(score.workMinutes)/\(score.askedMinutes)m")
         l.append("\n## Plan (next 7 days)")

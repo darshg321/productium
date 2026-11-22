@@ -15,6 +15,10 @@ final class AppModel {
     var pendingInvite: String?
     /// Dev test runner: the card id a screen should scroll to (`scroll <card>`).
     var scrollTarget: String?
+    /// v1.3 C2: Review's segment (the test runner's `review day|week` sets it).
+    var reviewSegment: ReviewSegment = .day
+    /// v1.3 E: prompts set to Alarm, from the last scheduling pass.
+    @ObservationIgnored var promptAlarms: [PlannedAlarm] = []
     var busy: Set<String> = []
     var serverOnline: Bool?
     var serverUsage: ServerUsage?
@@ -39,6 +43,10 @@ final class AppModel {
         if let e = Persistence.loadError {
             state.telemetry.record(.storage, "decode_failed", level: .error, ["error": e])
             Persistence.loadError = nil
+        }
+        if let from = Persistence.migratedFrom {
+            state.telemetry.record(.storage, "migrated", ["from": "\(from)", "to": "\(AppState.schema)"])
+            Persistence.migratedFrom = nil
         }
     }
 
@@ -174,6 +182,7 @@ final class AppModel {
         state.prune(now: Date())
         recordMissedBlocks()
         replan()
+        await backupIfDue()
         if !state.outbox.items.isEmpty { await flushOutbox() }
         if full {
             serverOnline = await ClaudeClient.shared.ping()
@@ -235,7 +244,7 @@ final class AppModel {
         ].filter { !$0.value.isEmpty })
         checkGoalMoments()
         LocationService.shared.tracking(running != nil)
-        RunningActivity.sync(running, path: running.map { state.categories.pathText($0.category) } ?? "", goalLine: goalLine(for: running))
+        syncNowActivity()
         save()
         applyPlanEffects()
     }
@@ -257,7 +266,7 @@ final class AppModel {
         let nudges = nudgeInput(now: now)
         if state.integrations.notifications {
             state.prompts.roll(now: now)
-            let buttons = startButtons(now: now).row.map(\.title)
+            let buttons = startButtons(now: now).top.map(\.title)
             NotificationService.register(buttons: buttons)
             var planned = NudgePlanner.plan(nudges)
             // D4: "What are you up to?" timed by the 30-minute goal; A7: the morning sleep check; D6: the running entry
@@ -269,17 +278,19 @@ final class AppModel {
             }
             planned += prompts
             if let q = TrackPrompts.sleepQuestion(entries: state.entries, now: now, log: state.prompts, calendar: cal) { planned.append(q) }
-            if !RunningActivity.enabled {
+            if !RunningActivity.showing {
                 planned += TrackPrompts.running(running, tree: state.categories, goalLine: goalLine(for: running), now: now)
             }
             planned += questionNudges(now: now)
+            planned = state.prefs.prompts.filter(planned, liveActivity: RunningActivity.showing)
             log(.notification, "scheduled", ["count": "\(planned.count)", "prompts": "\(prompts.count)",
                                              "next": planned.filter { $0.kind != .running }.min { $0.at < $1.at }.map { "\($0.title) at \($0.at)" } ?? "none"])
             NotificationService.schedule(planned)
+            promptAlarms = state.prefs.prompts.alarms(from: planned, alarmsAllowed: state.integrations.alarms)
             NotificationService.scheduleHousekeeping(expiry: signatureExpiry)
         }
         let n = state.prefs.nudges
-        LocalStore.defaults.set(n.scrollCheckIns && state.integrations.notifications ? n.level.scrollCheckIns : [],
+        LocalStore.defaults.set(state.prefs.prompts.notifies(.scrollCheckIns) && state.integrations.notifications ? n.level.scrollCheckIns : [],
                                   forKey: LocalStore.Key.scrollCheckIns)
         syncAlarms(nudges)
         if state.integrations.calendarExport { CalendarService.shared.export(plan: plan) }
@@ -290,7 +301,7 @@ final class AppModel {
     func startButtons(now: Date = Date()) -> QuickStarts.Ranked {
         let covered = QuickStarts.covered(today: now, items: state.items, planned: state.entries.filter { $0.source == .plan }, calendar: cal)
         return state.quickStarts.ranked(entries: state.entries, now: now, place: currentPlaceId, covered: covered,
-                                        book: state.dayRules, calendar: cal)
+                                        book: state.dayRules, schoolDays: state.prefs.schoolDays, calendar: cal)
     }
 
     /// One tap: starts it with no AI call (the same path as "starting X" typed).
@@ -303,7 +314,8 @@ final class AppModel {
     /// Starts something by name (a notification's start button, Siri, a Shortcut): the button's filing if there's one.
     func start(title: String, at: Date? = nil, source: String) {
         var f = BoxFields(title: title)
-        if let b = state.quickStarts.buttons.first(where: { $0.key == CategoryRules.key(title) }) {
+        if let b = state.quickStarts.button(for: title), !b.removed {
+            f.title = b.title
             f.category = b.category
             f.topics = b.topics.isEmpty ? nil : b.topics
         } else if let task = QuickParse.task(named: title, quickContext) {
@@ -335,7 +347,7 @@ final class AppModel {
     /// "What were you doing 3:10–4:30?" answered with a button: that stretch becomes a told entry.
     func logStretch(_ title: String, _ window: DateInterval) {
         let f = BoxFields(title: title, start: QuickParse.stamp(window.start, cal), end: QuickParse.stamp(min(window.end, Date()), cal),
-                          category: state.quickStarts.buttons.first { $0.key == CategoryRules.key(title) }?.category
+                          category: state.quickStarts.button(for: title)?.category
                               ?? state.categoryRules.category(for: title, tree: state.categories, scrollingApps: state.scrollingApps))
         applyUI([BoxOp(.entry, .add, f)], what: "stretch \(title)")
     }
@@ -365,8 +377,8 @@ final class AppModel {
     func syncAlarms(_ input: NudgeInput? = nil) {
         // O4: the wake alarm is the planned Sleep's alert; your own alarms are entries' alerts (approved only, J).
         let entryAlarms = AlarmPlanner.entryAlarms(state.entries, now: Date(), allowed: state.integrations.alarms,
-                                                   wake: state.prefs.wakeAlarms, book: state.dayRules, calendar: cal)
-        AlarmService.sync(AlarmPlanner.desired(input ?? nudgeInput(), entryAlarms: entryAlarms))
+                                                   wake: state.prefs.prompts[.wake] == .alarm, book: state.dayRules, calendar: cal)
+        AlarmService.sync(AlarmPlanner.desired(input ?? nudgeInput(), entryAlarms: entryAlarms + promptAlarms))
     }
 
     func nudgeInput(now: Date = Date()) -> NudgeInput {
@@ -375,7 +387,8 @@ final class AppModel {
         return NudgeInput(now: now, calendar: cal, plan: state.plan, items: state.items, settings: state.prefs.nudges,
                           startedBlockId: Sessions.block(for: running, in: state.plan, now: now)?.id, answeredBlockIds: answered, snoozedBlockIds: snoozed,
                           running: running, timeLabel: { $0.formatted(date: .omitted, time: .shortened) },
-                          policy: state.policy, dayRules: state.dayRules)
+                          policy: state.policy, dayRules: state.dayRules, prompts: state.prefs.prompts,
+                          alarmsAllowed: state.integrations.alarms, liveActivity: RunningActivity.showing)
     }
 
 
@@ -743,6 +756,7 @@ final class AppModel {
         x.trackRecord = state.taskHistory.summary()
         x.goals = goalsAll.map { progress($0).line }
         x.aiGoals = state.goals.filter { $0.origin == .ai }
+        x.grid = GridTidy.summary(state.quickStarts, entries: state.entries, now: now)
         x.answers = state.inference.answers.suffix(8).map { "\($0.answer) (\($0.kind.rawValue), \($0.at.formatted(.dateTime.weekday(.abbreviated))))" }
         guard let out = try? await ClaudeClient.shared.structured(
             feature: .review, system: InsightPass.system(), user: InsightPass.request(x), schema: InsightPass.schema,

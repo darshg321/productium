@@ -35,8 +35,7 @@ struct SettingsView: View {
             Section {
                 row("Sleep", "bed.double.fill", Theme.sleep, durationLabel(p.sleepNeedMinutes)) { SleepSettings() }
                 row("Screen Time", "hourglass", Theme.screen, model.state.taper.targetMinutes.map { durationLabel($0) }) { ScreenTimeSettings() }
-                row("Notifications", "bell.badge.fill", .red, model.state.integrations.notifications ? p.nudges.level.title : "Off") { NudgeSettingsView() }
-                row("Alarms", "alarm.fill", .orange, model.state.integrations.alarms ? "On" : "Off") { AlarmsSettings() }
+                row("Notifications", "bell.badge.fill", .red, model.state.integrations.notifications ? p.nudges.level.title : "Off") { NotificationsSettings() }
             }
 
             Section {
@@ -48,7 +47,7 @@ struct SettingsView: View {
             Section {
                 row("Connections", "link", .green, nil) { ConnectionSettings() }
                 row("Shortcuts & Automations", "square.stack.3d.up.fill", .indigo, nil) { ShortcutsGuideView() }
-                row("Privacy", "hand.raised.fill", .blue, nil) { PrivacySettings() }
+                row("Places", "mappin.and.ellipse", .red, "\(model.state.placeBook.places.filter { $0.name != nil }.count)") { PlacesSettings() }
                 row("What Productium Thinks", "brain.head.profile", .orange, nil) { ThinksView() }
                 row("About You", "person.text.rectangle.fill", .teal, nil) { AboutYouView() }
             }
@@ -416,12 +415,14 @@ struct ScrollingAppsView: View {
     }
 }
 
-struct NudgeSettingsView: View {
+/// v1.3 E: every kind of prompt in one list, each with a severity (Off, Quiet, Live Activity, Notification, Alarm).
+struct NotificationsSettings: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var m = model
         let on = model.state.integrations.notifications
+        let alarms = model.state.integrations.alarms
         List {
             if !on {
                 Section {
@@ -435,6 +436,31 @@ struct NudgeSettingsView: View {
                     Text("Nothing below is sent until notifications are on. If you said no before, turn them on in Settings → Notifications → Productium.")
                 }
             }
+
+            Section {
+                Toggle(isOn: Binding(get: { alarms }, set: { v in
+                    Task {
+                        m.state.integrations.alarms = v ? await AlarmService.requestAuthorization() : false
+                        model.log(.alarm, "master", ["on": "\(m.state.integrations.alarms)"])
+                        model.replan()
+                        if v && !m.state.integrations.alarms { model.toast = "Alarms aren't allowed. Settings → Productium → Alarms." }
+                    }
+                })) {
+                    SettingsLabel(title: "Alarms Allowed", symbol: "alarm.waves.left.and.right.fill", color: .orange)
+                }
+                .disabled(!alarmKitAvailable)
+            }
+
+            Section {
+                ForEach(PromptKind.allCases, id: \.self) { k in
+                    Picker(selection: Binding(get: { model.state.prefs.prompts[k] }, set: { m.state.prefs.prompts[k] = $0 })) {
+                        ForEach(Severity.allCases, id: \.self) { sev in Text(sev.title).tag(sev) }
+                    } label: {
+                        Label(k.title, systemImage: k.symbol)
+                    }
+                    .pickerStyle(.menu)
+                }
+            } header: { Text("Each Kind") }
 
             Section {
                 ForEach(NudgeLevel.allCases, id: \.self) { level in
@@ -452,48 +478,24 @@ struct NudgeSettingsView: View {
                     }
                     .accessibilityAddTraits(model.state.prefs.nudges.level == level ? .isSelected : [])
                 }
-            } header: { Text("How Much to Interrupt") } footer: {
-                Text("Every start notification has Start Focus, In 10 Minutes and Can't Today buttons. Starting focus, or answering, stops the rest for that block.")
-            }
-
-            Section {
-                Toggle(isOn: $m.state.prefs.nudges.deadlines) {
-                    SettingsLabel(title: "Deadline Reminders", symbol: "flag.fill", color: .red)
-                }
                 Toggle(isOn: $m.state.prefs.nudges.arrivingHome) {
                     SettingsLabel(title: "When You Get Home", symbol: "house.fill", color: .blue)
                 }
                 .disabled(!model.state.integrations.location)
-                Toggle(isOn: $m.state.prefs.nudges.scrollCheckIns) {
-                    SettingsLabel(title: "Scrolling Check-ins", symbol: "hand.raised.fill", color: .purple)
-                }
-                Toggle(isOn: $m.state.prefs.nudges.movement) {
-                    SettingsLabel(title: "Stand-Up Breaks", symbol: "figure.walk", color: .green)
-                }
-                Toggle(isOn: $m.state.prefs.nudges.daylight) {
-                    SettingsLabel(title: "Morning Light", symbol: "sun.max.fill", color: .yellow)
-                }
-            } footer: {
-                Text("“When you get home” needs Places. Scrolling check-ins come after “Go back anyway” in a pause: \(model.state.prefs.nudges.level.scrollCheckIns.map { "\($0)" }.joined(separator: ", ")) minutes in, and the next only comes if you answer Yes, so they stop on a locked phone. Stand-up breaks come after about 90 minutes of study; morning light only on days with nothing fixed.")
-            }
+            } header: { Text("How Much to Interrupt") }
 
             Section {
-                Toggle(isOn: Binding(get: { model.state.prefs.nudges.alarms }, set: { v in
-                    Task {
-                        let ok = v ? await AlarmService.requestAuthorization() : false
-                        m.state.prefs.nudges.alarms = v && ok
-                        model.syncAlarms()
-                        if v && !ok { model.toast = "Alarms aren't allowed. Settings → Productium → Alarms." }
+                if model.entryAlarmList.isEmpty { Text("None yet. Ask the box: “alarm at 6:40 on school days”.").foregroundStyle(.secondary) }
+                ForEach(model.entryAlarmList) { e in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(e.title)
+                        Text(e.start.hm + (e.repeats.map { " · " + $0.days.text(.current) } ?? "") + (e.alert?.approved == true ? "" : " · waiting for Allow"))
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                })) {
-                    SettingsLabel(title: "Alarms for the Important Ones", symbol: "alarm.waves.left.and.right.fill", color: .orange)
+                    .swipeActions { Button("Turn Off", role: .destructive) { model.removeAlarm(e) } }
                 }
-                .disabled(!alarmKitAvailable)
-            } footer: {
-                Text(alarmKitAvailable
-                     ? "A real alarm, through silent mode and Focus, at bedtime, when it's time to leave, and 10 minutes into a work block you haven't started (with a Start button). Starting focus cancels that one."
-                     : "Needs iOS 26.1 or later. Until then the notifications above do the job.")
-            }
+                ForEach(model.approvals.filter(\.addsAlarm)) { ApprovalRow(approval: $0) }
+            } header: { Text("Your Alarms") }
 
             if on {
                 Section {
@@ -508,14 +510,12 @@ struct NudgeSettingsView: View {
                             }
                         }
                     }
-                } header: { Text("Coming Up") } footer: {
-                    Text("A Focus can hold notifications back. Settings → Focus → each Focus → Apps → Add Productium.")
-                }
+                } header: { Text("Coming Up") }
             }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Notifications")
-        .onChange(of: model.state.prefs.nudges) { _, _ in model.replan() }
+        .onChange(of: model.state.prefs) { _, _ in model.replan() }
     }
 
     private var alarmKitAvailable: Bool {
@@ -620,6 +620,8 @@ struct BackupSettings: View {
 
     var body: some View {
         List {
+            DailyBackupSection()
+
             Section {
                 Button {
                     Task {
@@ -702,6 +704,38 @@ struct BackupSettings: View {
         } message: {
             Text("Back up first if you might want it again.")
         }
+    }
+}
+
+/// v1.3 H1: a file a day in a folder outside the app, so an uninstall doesn't take everything with it.
+struct DailyBackupSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var picking = false
+
+    var body: some View {
+        let b = model.state.backup
+        Section {
+            Button { picking = true } label: {
+                LabeledContent {
+                    Text(b.folderName ?? "Not set")
+                } label: {
+                    SettingsLabel(title: BackupService.hasFolder ? "Daily Backup Folder" : "Choose a Daily Backup Folder",
+                                  symbol: "folder.fill.badge.gearshape", color: .blue)
+                }
+            }
+            .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { r in
+                if case .success(let url) = r { model.chooseBackupFolder(url) }
+            }
+            if let w = b.lastWrite {
+                LabeledContent("Last Daily Backup", value: w.formatted(date: .abbreviated, time: .shortened))
+            }
+            if b.failing, let e = b.lastError {
+                Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.alert).font(.subheadline)
+            }
+            if BackupService.hasFolder {
+                Button("Back Up Now") { Task { await model.backupIfDue(force: true) } }
+            }
+        } header: { Text("Every Day") }
     }
 }
 

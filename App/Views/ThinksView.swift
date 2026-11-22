@@ -150,8 +150,9 @@ struct ChangesView: View {
             Section {
                 if log.history.isEmpty { Text("Nothing yet.").foregroundStyle(.secondary) }
                 ForEach(log.history) { c in ChangeRow(change: c) }
-            } footer: {
-                Text("Changed with the weekly note, in small steps, at most once a week each. Undo anything here; Productium won't try it again for a month.")
+                NavigationLink { TaxonomyRunsView() } label: {
+                    LabeledContent("Category Tidy-Ups", value: "\(model.state.taxonomy.runs.filter { !$0.reverted }.count)")
+                }
             }
             Section {
                 if model.busy.contains("review") {
@@ -195,6 +196,9 @@ struct ChangeRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(change.title).font(.subheadline)
             Text("\(statusLine) · \(change.reason)").font(.caption).foregroundStyle(.secondary)
+            if !change.evidence.isEmpty {
+                Text(change.evidence.prefix(4).joined(separator: " · ")).font(.caption2).foregroundStyle(.secondary)
+            }
             if change.status == .applied {
                 HStack(spacing: 16) {
                     Button("Revert") { model.revertChange(change.id) }

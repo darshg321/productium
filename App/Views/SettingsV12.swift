@@ -1,50 +1,6 @@
 import SwiftUI
+import Charts
 import ProductiumCore
-
-// MARK: - J3: Settings → Alarms
-
-struct AlarmsSettings: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var m = model
-        List {
-            Section {
-                Toggle(isOn: Binding(get: { model.state.integrations.alarms }, set: { on in
-                    Task {
-                        m.state.integrations.alarms = on ? await AlarmService.requestAuthorization() : false
-                        model.log(.alarm, "master", ["on": "\(m.state.integrations.alarms)"])
-                        model.replan()
-                    }
-                })) { SettingsLabel(title: "Full-Screen Alarms", symbol: "alarm.fill", color: .orange) }
-            } footer: {
-                Text("Off: Productium never rings full screen; you get normal notifications instead. A new alarm the AI wants always waits for your Allow.")
-            }
-            Section("Productium's Alarms") {
-                Toggle("Wake-Up (the end of your planned sleep)", isOn: $m.state.prefs.wakeAlarms)
-                Toggle("Bedtime, Leave-By and Missed Start", isOn: $m.state.prefs.nudges.alarms)
-            }
-            Section {
-                if model.entryAlarmList.isEmpty { Text("None yet. Ask the box: “alarm at 6:40 on school days”.").foregroundStyle(.secondary) }
-                ForEach(model.entryAlarmList) { e in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(e.title)
-                        Text(e.start.hm + (e.repeats.map { " · " + $0.days.text(.current) } ?? "") + (e.alert?.approved == true ? "" : " · waiting for Allow"))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .swipeActions { Button("Turn Off", role: .destructive) { model.removeAlarm(e) } }
-                }
-            } header: { Text("Yours") } footer: { Text("Swipe to turn one off. Turning alarms off or moving them never needs approval.") }
-            let waiting = model.approvals.filter(\.addsAlarm)
-            if !waiting.isEmpty {
-                Section("Waiting for You") { ForEach(waiting) { ApprovalRow(approval: $0) } }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle("Alarms")
-        .onChange(of: model.state.prefs) { _, _ in model.replan() }
-    }
-}
 
 // MARK: - K4: Settings → Categories (the same edits the box can do)
 
@@ -178,32 +134,21 @@ struct GoalsSettings: View {
     }
 }
 
-// MARK: - E5: Settings → Privacy
+// MARK: - v1.3 G: Settings → Places (from Review's Where; the Privacy screen is gone)
 
-struct PrivacySettings: View {
+struct PlacesSettings: View {
     @Environment(AppModel.self) private var model
-    @State private var confirm = false
     @State private var renaming: UUID?
     @State private var newName = ""
 
     var body: some View {
         List {
-            Section {
-                LabeledContent("Visits kept", value: "\(model.state.trace.visits.count)")
-                LabeledContent("Places", value: "\(model.state.placeBook.places.count)")
-                LabeledContent("Location", value: LocationService.shared.statusText)
-            } footer: {
-                Text("The location history stays on this phone and in backups you make. It's kept 180 days, then dropped.")
-            }
+            Section { WhereCard().listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
             Section {
                 ForEach(model.state.placeBook.places.filter { $0.name != nil }) { p in
                     Button { newName = p.title; renaming = p.id } label: { Text(p.title).foregroundStyle(.primary) }
-                        .swipeActions { Button("Forget", role: .destructive) { model.forgetPlace(p.id) } }
                 }
             } header: { Text("Named Places") }
-            Section {
-                Button("Forget Location History", role: .destructive) { confirm = true }
-            }
         }
         .listStyle(.insetGrouped)
         .alert("Rename place", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
@@ -215,9 +160,40 @@ struct PrivacySettings: View {
             }
             Button("Cancel", role: .cancel) { renaming = nil }
         }
-        .navigationTitle("Privacy")
-        .confirmationDialog("Forget every visit, place and the place on every entry?", isPresented: $confirm, titleVisibility: .visible) {
-            Button("Forget", role: .destructive) { model.forgetLocationHistory() }
+        .navigationTitle("Places")
+    }
+}
+
+// MARK: - E4: where
+
+struct WhereCard: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let cal = Calendar.current
+        let week = DateInterval(start: cal.date(byAdding: .day, value: -7, to: Date()) ?? Date(), end: Date())
+        let rows = Where.rows(visits: model.state.trace.visits, book: model.state.placeBook, entries: model.state.entries, range: week, now: Date())
+        if !rows.isEmpty {
+            Card {
+                CardHeader(title: "Where", symbol: "mappin.and.ellipse", color: .red, detail: "Last 7 days")
+                Chart(rows.prefix(6)) { r in
+                    SectorMark(angle: .value("Minutes", r.minutes), innerRadius: .ratio(0.6), angularInset: 1)
+                        .foregroundStyle(by: .value("Place", r.name))
+                }
+                .frame(height: 150)
+                ForEach(rows.prefix(8)) { r in
+                    VStack(alignment: .leading, spacing: 2) {
+                        LabeledContent(r.name, value: durationLabel(r.minutes))
+                        if !r.top.isEmpty {
+                            Text(r.top.map { "\(model.state.categories.node($0.0)?.name ?? $0.0) \(durationLabel($0.1))" }.joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.subheadline)
+                }
+                Text("Name a place by telling the box where you are: “this is the library”.").font(.caption2).foregroundStyle(.secondary)
+            }
         }
     }
 }
+

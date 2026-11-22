@@ -13,9 +13,17 @@ enum Persistence {
 
     /// Set when the stored state couldn't be read; `AppModel` writes it to the telemetry on launch (T2).
     nonisolated(unsafe) static var loadError: String?
+    /// The schema a migrated state was stored with (M); its file is kept as `state-schema-<n>.json`.
+    nonisolated(unsafe) static var migratedFrom: Int?
 
     static func load() -> AppState {
         guard let data = try? Data(contentsOf: url) else { return AppState() }
+        let stored = Migrations.storedSchema(data)
+        if stored >= Migrations.oldest && stored < AppState.schema {
+            migratedFrom = stored
+            let copy = LocalStore.containerURL.appendingPathComponent("state-schema-\(stored).json")
+            if !FileManager.default.fileExists(atPath: copy.path) { try? data.write(to: copy, options: .atomic) }
+        }
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
         do {

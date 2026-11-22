@@ -16,6 +16,7 @@ struct ProductiumApp: App {
         }
         .onChange(of: phase) { _, p in
             if p == .active { model.foreground() }
+            if p == .inactive { model.syncNowActivity() }
             if p == .background { BackgroundRefresh.schedule(); Persistence.save(model.state) }
         }
     }

@@ -1,5 +1,6 @@
 import SwiftUI
 import ProductiumCore
+import UniformTypeIdentifiers
 
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model
@@ -10,11 +11,17 @@ struct OnboardingView: View {
     @State private var permissionsDone = false
     @State private var workingPermissions = false
     @State private var showGuide = false
+    /// A1: templates you unticked (title keys).
+    @State private var unticked: Set<String> = []
+    /// H2: a backup found in the folder remembered from before a reinstall.
+    @State private var offer: RestorePreview?
+    @State private var importing = false
+    @State private var restoreError: String?
 
     enum ServerState { case untested, testing, ok, badKey, failed }
 
     enum Page: Int, CaseIterable {
-        case welcome, claude, week, sleep, permissions, scrolling, keepAlive
+        case welcome, claude, week, activities, sleep, permissions, scrolling, backup, keepAlive
     }
 
     private var pages: [Page] {
@@ -56,6 +63,13 @@ struct OnboardingView: View {
         }
         .background(Theme.background)
         .sheet(isPresented: $showGuide) { ShortcutsGuideView(inSheet: true) }
+        .onAppear { if offer == nil { offer = model.backupToOffer() } }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { r in
+            guard case .success(let url) = r else { return }
+            do { model.applyRestore(try model.readBackup(from: url)) } catch {
+                restoreError = (error as? ExportBundle.ReadError)?.description ?? "That file isn't a Productium backup."
+            }
+        }
     }
 
     private var canContinue: Bool {
@@ -72,6 +86,7 @@ struct OnboardingView: View {
 
     private func advance() {
         if page == pages.last {
+            model.seedGrid(skipping: unticked)
             model.state.onboarded = true
             model.save()
             Task { await model.refresh() }
@@ -85,9 +100,11 @@ struct OnboardingView: View {
         case .welcome: welcome
         case .claude: claude
         case .week: week
+        case .activities: activities
         case .sleep: sleep
         case .permissions: permissions
         case .scrolling: scrolling
+        case .backup: backup
         case .keepAlive: keepAlive
         }
     }
@@ -99,6 +116,47 @@ struct OnboardingView: View {
             Text("You type what's due, what happened, and what changed, in any order and as messily as you like. Productium works out when to do things, protects your sleep and free time, and learns your routine so you don't have to log it.")
                 .font(.body).lineSpacing(3)
             Text("Setup takes about two minutes.").foregroundStyle(.secondary)
+            if let o = offer {
+                Button { model.applyRestore(o) } label: { Label(o.summary, systemImage: "clock.arrow.circlepath") }
+                    .buttonStyle(.borderedProminent)
+            }
+            Button("Restore from a Backup File") { importing = true }.buttonStyle(.bordered)
+            if let e = restoreError { Text(e).font(.footnote).foregroundStyle(Theme.alert) }
+        }
+    }
+
+    /// A1: the activity grid starts full; untick what doesn't apply.
+    private var activities: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            IconTile(symbol: "square.grid.3x3.fill", color: .orange, size: 56)
+            Text("What do you do?").font(.largeTitle.weight(.bold))
+            Text("Untick what doesn't apply.").lineSpacing(3)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ForEach(QuickStartTemplate.all, id: \.title) { t in
+                    let key = CategoryRules.key(t.title)
+                    let on = !unticked.contains(key)
+                    Button {
+                        if on { unticked.insert(key) } else { unticked.remove(key) }
+                    } label: {
+                        TileLabel(title: t.title, symbol: t.symbol, color: on ? .accentColor : .secondary, on: on)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+        }
+    }
+
+    /// H1: a daily backup outside the app.
+    private var backup: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            IconTile(symbol: "externaldrive.fill", color: .gray, size: 56)
+            Text("Keep a daily backup").font(.largeTitle.weight(.bold))
+            Text("Pick a folder in iCloud Drive or On My iPhone for a daily backup.").lineSpacing(3)
+            List { DailyBackupSection() }
+                .listStyle(.insetGrouped)
+                .scrollDisabled(true)
+                .frame(height: 230)
         }
     }
 

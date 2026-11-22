@@ -17,6 +17,63 @@ struct RunningAttributes: ActivityAttributes {
     var entryId: UUID
 }
 
+/// v1.3 B: the one "Now" activity, always there: running, a question, untracked time, assumed time, or up next.
+/// A mirror of ProductiumCore's `NowCard` (the extension doesn't link the core).
+struct NowAttributes: ActivityAttributes {
+    struct Button: Codable, Hashable {
+        /// Run by `NowActionIntent` in the app: stop, start:<title>, answer:<id>:<answer>, yes:<ref>, no:<ref>, task:<id>.
+        var action: String
+        var label: String
+        var symbol: String?
+    }
+
+    struct Card: Codable, Hashable {
+        /// running, question, untracked, assumed, upNext
+        var kind: String
+        var title: String
+        var subtitle: String?
+        var since: Date?
+        var buttons: [Button]
+        var other: Bool
+    }
+
+    /// D2: today's three rings, small, in the expanded view.
+    struct Rings: Codable, Hashable {
+        var work: Double
+        var tracked: Double
+        var limit: Double
+        var workLabel: String
+        var trackedLabel: String
+        var limitLabel: String
+    }
+
+    struct ContentState: Codable, Hashable {
+        var card: Card
+        /// Shown once the content is stale (`ActivityContent.staleDate` = when `card` stops being true).
+        var then: Card?
+        var rings: Rings?
+    }
+}
+
+/// A button on the Now activity. Runs in the app's process, so it logs, replans and updates the activity in place.
+struct NowActionIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Now Activity Button"
+    static var isDiscoverable = false
+
+    @Parameter(title: "Action") var action: String
+
+    init() {}
+    init(action: String) { self.action = action }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        #if !WIDGET_EXTENSION
+        AppModel.shared.nowAction(action)
+        #endif
+        return .result()
+    }
+}
+
 // The intents below run in the app's process (LiveActivityIntent), so the extension's copies never do any work.
 
 struct StopActivityIntent: LiveActivityIntent {

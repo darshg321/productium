@@ -233,24 +233,6 @@ extension AppModel {
 
     func renamePlace(_ id: UUID, _ name: String) { state.placeBook.name(id, name); save() }
 
-    func forgetPlace(_ id: UUID) {
-        var es = state.entries
-        state.placeBook.forget(id, entries: &es)
-        state.entries = es
-        save()
-    }
-
-    /// Settings → Privacy: the whole location history, places and every entry's place.
-    func forgetLocationHistory() {
-        state.trace = LocationTrace()
-        state.visits = []
-        state.placeBook = PlaceBook()
-        for i in state.entries.indices { state.entries[i].placeId = nil }
-        log(.sensor, "location_forgotten")
-        toast = "Location history forgotten."
-        save()
-    }
-
     func placeName(_ id: UUID?) -> String? { id.flatMap { pid in state.placeBook.places.first { $0.id == pid }?.title } }
 
     // MARK: Categories (C4, K4)

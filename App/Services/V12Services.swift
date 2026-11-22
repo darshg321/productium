@@ -175,32 +175,57 @@ enum OnDeviceModel {
     }
 }
 
-// MARK: - D5: the running entry as a Live Activity (Lock Screen, Dynamic Island)
+// MARK: - D5 / v1.3 B: the Now Live Activity (Lock Screen, Dynamic Island)
 
 @MainActor
 enum RunningActivity {
-    /// Live Activities allowed in Settings; when off, the passive running notification (D6) is the fallback.
+    /// Live Activities allowed in Settings; when off, notifications (and the passive running one, D6) are the fallback.
     static var enabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
-    /// One activity for the running entry: same entry → update; another or none → end the old one (and start the new).
-    static func sync(_ running: Entry?, path: String, goalLine: String?) {
-        let current = Activity<RunningAttributes>.activities
-        guard let e = running, e.isRunning, enabled else {
+    /// The Now activity is on the Lock Screen, so prompts set to Live Activity aren't also sent as notifications (B2).
+    static var showing: Bool { enabled && !Activity<NowAttributes>.activities.isEmpty }
+
+    static let startedKey = "now.activityStartedAt"
+    /// iOS ends an activity after 8 hours; one older than this is replaced while the app is open.
+    static let renewAfter: TimeInterval = 7 * 3600
+
+    /// One activity for whatever's now: updated in place, started when there's none, ended when there's nothing to show.
+    static func sync(_ now: NowState?, rings: DayRings?, foreground: Bool) {
+        for a in Activity<RunningAttributes>.activities { Task { await a.end(nil, dismissalPolicy: .immediate) } }
+        var current = Activity<NowAttributes>.activities
+        guard enabled, let now else {
             for a in current { Task { await a.end(nil, dismissalPolicy: .immediate) } }
             return
         }
-        let state = RunningAttributes.ContentState(title: e.title, path: path, start: e.start, goalLine: goalLine)
-        let content = ActivityContent(state: state, staleDate: nil)
-        for a in current where a.attributes.entryId != e.id { Task { await a.end(nil, dismissalPolicy: .immediate) } }
-        if let a = current.first(where: { $0.attributes.entryId == e.id }) {
-            if a.content.state != state { Task { await a.update(content) } }
+        let state = NowAttributes.ContentState(card: card(now.card), then: now.then.map(card), rings: rings.map(mirror))
+        let content = ActivityContent(state: state, staleDate: now.until)
+        let started = LocalStore.defaults.double(forKey: startedKey)
+        if foreground, !current.isEmpty, Date().timeIntervalSince1970 - started > renewAfter {
+            for a in current { Task { await a.end(nil, dismissalPolicy: .immediate) } }
+            current = []
+        }
+        if let a = current.first {
+            for extra in current.dropFirst() { Task { await extra.end(nil, dismissalPolicy: .immediate) } }
+            if a.content.state != state || a.content.staleDate != now.until { Task { await a.update(content) } }
             return
         }
         do {
-            _ = try Activity.request(attributes: RunningAttributes(entryId: e.id), content: content, pushType: nil)
-            AppModel.shared.log(.notification, "live_activity_started", ["title": e.title])
+            _ = try Activity.request(attributes: NowAttributes(), content: content, pushType: nil)
+            LocalStore.defaults.set(Date().timeIntervalSince1970, forKey: startedKey)
+            AppModel.shared.log(.notification, "live_activity_started", ["kind": now.card.kind.rawValue])
         } catch {
-            AppModel.shared.log(.notification, "live_activity_failed", level: .error, ["error": "\(error)"])
+            AppModel.shared.log(.notification, "live_activity_failed", level: .error, ["error": "\(error)", "foreground": "\(foreground)"])
         }
+    }
+
+    static func card(_ c: NowCard) -> NowAttributes.Card {
+        NowAttributes.Card(kind: c.kind.rawValue, title: c.title, subtitle: c.subtitle, since: c.since,
+                           buttons: c.buttons.map { NowAttributes.Button(action: $0.action, label: $0.label, symbol: $0.symbol) },
+                           other: c.other)
+    }
+
+    static func mirror(_ r: DayRings) -> NowAttributes.Rings {
+        NowAttributes.Rings(work: r.work, tracked: r.tracked, limit: r.limit, workLabel: r.workLabel, trackedLabel: r.trackedLabel,
+                            limitLabel: r.limitLabel)
     }
 }

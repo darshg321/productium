@@ -115,7 +115,7 @@ actor AlarmScheduler {
         switch a.kind {
         case .wake, .bedtime: tint = .indigo
         case .leave: tint = .green
-        case .missedStart, .entry: tint = .blue
+        case .missedStart, .entry, .prompt: tint = .blue
         }
         let attrs = AlarmAttributes<Metadata>(presentation: AlarmPresentation(alert: alert), metadata: Metadata(), tintColor: tint)
         let secondary: (any LiveActivityIntent)? = a.kind == .missedStart ? StartFocusIntent() : nil
