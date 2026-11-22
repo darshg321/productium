@@ -9,7 +9,7 @@ import ProductiumCore
 ///   scenario <fresh|today|history|evening|alerts|leaderboard>   reset   tab <today|schedule|tasks|review|settings>
 ///   open <productium://…>   say <text>   start <title>   start-next   stop   mood <1-5>   confirm-today   approve   decline
 ///   answer <yes|no|skipped|sick|no-school>   dismiss   scroll <card>   refresh   replan   learn   leaderboard
-///   wait <seconds>   shot <name>   dump <name>
+///   server [url]   wait <seconds>   shot <name>   dump <name>
 @MainActor
 final class TestHooks {
     static let shared = TestHooks()
@@ -140,6 +140,19 @@ final class TestHooks {
         case "leaderboard":
             await m.refreshLeaderboards(force: true)
             return "ok"
+        case "server":
+            // The key arrives as Documents/test/server-key.txt (scripts/test/connect-server.sh) and goes straight to the
+            // Keychain; it's never echoed. `server <url>` also sets the address (default: the Pi over Tailscale).
+            let file = Self.dir.appendingPathComponent("server-key.txt")
+            if let key = (try? String(contentsOf: file, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+                ClaudeClient.shared.apiKey = key
+            }
+            try? FileManager.default.removeItem(at: file)
+            if let url = URL(string: arg), arg.hasPrefix("https://") { ClaudeClient.shared.baseURL = url }
+            guard ClaudeClient.shared.isConfigured else { return "error: no key (push server-key.txt first)" }
+            let check = await ClaudeClient.shared.verify()
+            m.serverOnline = check == .ok
+            return check == .ok ? "ok: connected to \(ClaudeClient.shared.baseURL?.host ?? "")" : "error: \(check) (Tailscale on?)"
         case "wait":
             await settle(Double(arg) ?? 1)
             return "ok"

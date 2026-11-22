@@ -15,6 +15,7 @@ Dev builds (`dev` branch → `dev-build` pre-release, "Productium Dev", bundle i
 | `start <title>` · `start-next` (what the pause sheet / Control Center do) · `stop` · `mood <1-5>` · `confirm-today` | the log |
 | `approve` · `decline` · `answer <yes\|no\|skipped\|sick\|no-school>` · `dismiss` | cards and sheets |
 | `refresh` · `replan` · `learn` · `leaderboard` | background work, on demand |
+| `server [url]` | Claude server key from `Documents/test/server-key.txt` (`connect-server.sh`) into the Keychain |
 | `wait <s>` · `shot <name>` · `dump <name>` | timing, a screenshot (`shots/`), the state as text + JSON (`dumps/`) |
 
 Results go to `results.txt` (`ok` / `ERR` per line, then `DONE`). Taps and typing aren't simulated: every action has

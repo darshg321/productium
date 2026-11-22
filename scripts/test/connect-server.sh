@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Connects Productium Dev on a USB iPhone to your claude-server: pushes the key from .claude-server.key (git-ignored)
+# as a file the app moves into its Keychain and deletes, then checks the connection.
+#   scripts/test/connect-server.sh [https://server]    # default: the Pi over Tailscale (the app's default)
+# Productium Dev must be open; the phone needs Tailscale on to reach the Pi.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+P="uvx pymobiledevice3"
+bundle=$($P apps list 2>/dev/null | python3 -c 'import json,sys; ids=[k for k in json.load(sys.stdin) if "productium.dev" in k]; print(ids[0] if ids else "")')
+[ -n "$bundle" ] || { echo "Productium Dev isn't installed"; exit 1; }
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+tr -d '[:space:]' < .claude-server.key > "$tmp/server-key.txt"
+$P apps push "$bundle" "$tmp/server-key.txt" Documents/test/server-key.txt >/dev/null
+printf 'server %s\nwait 1\ntab settings\nshot server\n' "${1:-}" > "$tmp/cmds.txt"
+scripts/test/device.sh "$tmp/cmds.txt"
