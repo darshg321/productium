@@ -29,7 +29,8 @@ changes; **all scheduling is deterministic code on the phone**.
 ### 0.1 Seeing the app: the test runner
 
 Write a command script and run `scripts/test/sim.sh script.txt` (CI simulator, ~10 min) or
-`scripts/test/device.sh script.txt` (the phone over USB, Productium Dev open), then read `shots/*.png`,
+`scripts/test/device.sh [--wifi] script.txt` (the phone over USB, or the same Wi-Fi with `--wifi` after one USB install
+from this computer; Productium Dev open), then read `shots/*.png`,
 `dumps/*.txt` and `results.txt` under `test-runs/<time>/`. Add a scenario in `Scenarios.swift` (with a
 `ScenarioTests` case) when a state can't be reached with commands.
 
@@ -536,7 +537,11 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
   logs `lifecycle.unclean_exit` with the 20 events before it at the next launch (`app.runActive`). Wake and sleep are
   settings in your words (`wake` "7:30" / "9:00 free days" turns off working back from the first class; `sleep` "9h";
   `rotation` "today 2"), Settings → Sleep says when Health has no sleep, calendar events are filed by title through
-  `CategoryRules` (`CalendarEntries.merge(classify:)`), and Places can be merged. Not done: screenshots in the
+  `CategoryRules` (`CalendarEntries.merge(classify:)`). Places: each gets its street address (`Place.address`, a few
+  per refresh), Settings → Places ranks them by time (Day / Week / Month) under a map, places can be merged, and Today
+  asks what a place visited twice or more is called (one at a time, `placesToName`; ✕ = never ask). Finishing or
+  clearing a task can be undone (the toast's Undo, Tasks → Not Done, or the box: task change text "reopen"); its
+  track-record entry goes with it. Not done: screenshots in the
   Shortcuts guide.
 
 - v1.3 / v1.4 are released: core for M, A, B, D, E, H and the C2 comparisons is done with tests;
