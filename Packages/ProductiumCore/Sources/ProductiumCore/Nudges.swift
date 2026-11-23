@@ -138,7 +138,7 @@ public enum NudgeKind: String, Codable, CaseIterable, Sendable {
 public enum NotificationCategory: String, CaseIterable, Sendable {
     case start = "BLOCK_START", lead = "LEAD_UP", checkIn = "CHECK_IN", deadline = "DEADLINE", scroll = "SCROLL"
     case untracked = "UNTRACKED", sleepConfirm = "SLEEP_CONFIRM", question = "QUESTION", running = "RUNNING"
-    case sessionEnd = "SESSION_END"
+    case sessionEnd = "SESSION_END", focusRating = "FOCUS_RATING"
 
     public var takesText: Bool {
         switch self {

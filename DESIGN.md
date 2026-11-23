@@ -213,7 +213,9 @@ when you tracked the same thing yourself (same category, any Travel counts as th
 45 min; ≥3 min or running): the planned "Walk home" and the Walking you tracked are one walk (`Days.superseding`).
 A stop under a minute after a start removes the entry ("Cancelled", a mis-tap). Work you finish (≥10 min, a task or
 under Work) asks how focused you were (Not Very · Normal · Very → `Entry.focus` 1–3, 0 = skipped; `TimeLog.unratedWork`,
-`focusMinutes`; Review → Focused Work).
+`focusMinutes`; Review → Focused Work). Stopped from outside the app (Live Activity, a notification) it asks by
+notification instead (`FOCUS_RATING`, `askFocusIfAway`). `TimeLog.focusStats` (focused share by part of day, 14 days)
+feeds the insight pass ("Focus ratings") and How You Work.
 
 `TimeLog.past` resolves a range; an Untracked slice of 15 minutes or less with something on both sides becomes Transition
 (Essentials › Transition, already confirmed, not editable). The tracking goal is no untracked waking stretch over 15

@@ -38,6 +38,19 @@ final class TimeLogTests: XCTestCase {
         XCTAssertEqual(TimeLog.focusMinutes([hw], in: Days.dayInterval(Fx.mon(12), cal)), [3: 45])
     }
 
+    func testFocusStatsByPartOfDay() {
+        var morning = told("Math", Fx.mon(9), Fx.mon(10), cat: CategoryTree.studying)
+        var evening = told("Essay", Fx.mon(19), Fx.mon(20, 30), cat: CategoryTree.studying)
+        morning.focus = 3
+        evening.focus = 1
+        let f = TimeLog.focusStats([morning, evening], in: Days.dayInterval(Fx.mon(12), cal), calendar: cal)
+        XCTAssertEqual(f.total, 150)
+        XCTAssertEqual(f.focused, 60)
+        XCTAssertEqual(f.best, "morning")
+        XCTAssertEqual(f.line(days: 14), "Focus ratings (14 days): 2h 30m rated, 40% normal or very; morning 100% of 1h, evening 0% of 1h 30m")
+        XCTAssertNil(TimeLog.focusStats([], in: Days.dayInterval(Fx.mon(12), cal), calendar: cal).line(days: 14))
+    }
+
     func testTrackedWalkReplacesThePlannedOne() {
         let planned = Entry(title: "Walk home", start: Fx.mon(15), end: Fx.mon(15, 20), category: CategoryTree.travel, source: .plan)
         let ready = Entry(title: "Get ready", start: Fx.mon(7), end: Fx.mon(7, 40), category: CategoryTree.gettingReady, source: .plan)

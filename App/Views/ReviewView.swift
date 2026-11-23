@@ -508,6 +508,12 @@ struct HowYouWorkCard: View {
                     LabeledContent("Best hours", value: hours.sorted().map(hourLabel).joined(separator: ", "))
                 }
                 LabeledContent("Focus block", value: durationLabel(Int(l.focusMinutes)))
+                let f = TimeLog.focusStats(model.state.entries, in: DateInterval(start: Date().addingTimeInterval(-14 * 86400), end: Date()),
+                                           calendar: .current)
+                if f.total >= 60 {
+                    LabeledContent("Focused (2 weeks)", value: "\(Int((f.share * 100).rounded()))%")
+                    if let best = f.best { LabeledContent("Most focused", value: best.capitalized) }
+                }
         }
         }
     }

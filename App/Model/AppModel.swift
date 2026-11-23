@@ -438,6 +438,7 @@ final class AppModel {
         log(.intent, "stop", ["source": source])
         applyUI([BoxOp(.entry, .stop)], what: "stop (\(source))", quiet: true)
         Haptics.stop()
+        askFocusIfAway()
         // I: a work session that just ended gets its moment (minutes, or a new focus-hour milestone).
         if r.taskId != nil {
             let before = state.entries.filter { $0.taskId != nil && $0.id != r.id }
@@ -622,7 +623,10 @@ final class AppModel {
 
     func complete(_ id: UUID) {
         guard let i = state.items.firstIndex(where: { $0.id == id }), !state.items[i].isDone else { return }
-        if running?.taskId == id { applyUI([BoxOp(.entry, .stop)], what: "stop (done)", quiet: true) }
+        if running?.taskId == id {
+            applyUI([BoxOp(.entry, .stop)], what: "stop (done)", quiet: true)
+            askFocusIfAway()
+        }
         clearPlannedSessions(of: id)
         state.items[i].isDone = true
         state.items[i].doneAt = Date()
@@ -917,6 +921,8 @@ final class AppModel {
         x.goals = goalsAll.map { progress($0).line }
         x.aiGoals = state.goals.filter { $0.origin == .ai }
         x.grid = GridTidy.summary(state.quickStarts, entries: state.entries, now: now)
+        x.focus = TimeLog.focusStats(state.entries, in: DateInterval(start: now.addingTimeInterval(-14 * 86400), end: now), calendar: cal)
+            .line(days: 14)
         x.answers = state.inference.answers.suffix(8).map { "\($0.answer) (\($0.kind.rawValue), \($0.at.formatted(.dateTime.weekday(.abbreviated))))" }
         guard let out = try? await ClaudeClient.shared.structured(
             feature: .review, system: InsightPass.system(), user: InsightPass.request(x), schema: InsightPass.schema,

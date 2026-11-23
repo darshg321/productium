@@ -60,8 +60,18 @@ extension AppModel {
         guard let i = state.entries.firstIndex(where: { $0.id == id }) else { return }
         state.entries[i].focus = focus
         log(.log, "focus_rated", ["title": state.entries[i].title, "focus": "\(focus)"])
+        NotificationService.clearDelivered(prefixes: ["rate.\(id)"])
         Haptics.tap()
         save()
+    }
+
+    /// Work that just stopped while the app isn't in front asks its focus by notification instead of on Today.
+    func askFocusIfAway() {
+        let now = Date()
+        guard UIApplication.shared.applicationState != .active,
+              let e = TimeLog.unratedWork(state.entries, tree: state.categories, now: now),
+              now.timeIntervalSince(e.end ?? e.start) < 120 else { return }
+        NotificationService.askFocus(e.title, entryId: e.id)
     }
 
     // MARK: D: the rings

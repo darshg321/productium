@@ -212,6 +212,43 @@ public enum TimeLog {
         }
     }
 
+    /// v1.5: rated work in `range` as (focused = normal or very, total) minutes, overall and by part of day.
+    public struct FocusStats: Sendable {
+        public var focused = 0, total = 0
+        public var parts: [(name: String, focused: Int, total: Int)] = []
+        public var share: Double { total == 0 ? 0 : Double(focused) / Double(total) }
+
+        /// The part of day with the highest share, when at least two parts have an hour of ratings.
+        public var best: String? {
+            let enough = parts.filter { $0.total >= 60 }
+            guard enough.count >= 2 else { return nil }
+            return enough.max { Double($0.focused) / Double($0.total) < Double($1.focused) / Double($1.total) }?.name
+        }
+
+        /// For the insight pass: "Focus ratings (14 days): 5h rated, 70% normal or very; morning 80% of 2h, …".
+        public func line(days: Int) -> String? {
+            guard total > 0 else { return nil }
+            let p = parts.filter { $0.total > 0 }.map { "\($0.name) \(Int((Double($0.focused) / Double($0.total) * 100).rounded()))% of \(minutesLabel($0.total))" }
+            return "Focus ratings (\(days) days): \(minutesLabel(total)) rated, \(Int((share * 100).rounded()))% normal or very"
+                + (p.isEmpty ? "" : "; " + p.joined(separator: ", "))
+        }
+    }
+
+    public static func focusStats(_ entries: [Entry], in range: DateInterval, calendar cal: Calendar) -> FocusStats {
+        let names = ["morning", "afternoon", "evening"]
+        var f = [0, 0, 0], t = [0, 0, 0]
+        for e in entries {
+            guard let r = e.focus, (1...3).contains(r), let end = e.end, end > range.start, e.start < range.end else { continue }
+            let start = max(e.start, range.start)
+            let m = Int(min(end, range.end).timeIntervalSince(start) / 60)
+            let h = cal.component(.hour, from: start)
+            let i = h < 12 ? 0 : h < 17 ? 1 : 2
+            t[i] += m
+            if r >= 2 { f[i] += m }
+        }
+        return FocusStats(focused: f.reduce(0, +), total: t.reduce(0, +), parts: (0..<3).map { (names[$0], f[$0], t[$0]) })
+    }
+
     /// Minutes per category in the resolved slices (Untracked included).
     public static func totals(_ slices: [LogSlice]) -> [CategoryID: Int] {
         slices.reduce(into: [:]) { $0[$1.category, default: 0] += $1.minutes }
