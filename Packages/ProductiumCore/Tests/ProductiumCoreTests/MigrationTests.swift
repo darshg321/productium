@@ -105,6 +105,18 @@ final class MigrationTests: XCTestCase {
         XCTAssertTrue(b.state.quickStarts.live.contains { $0.origin == .template })
     }
 
+    func testABackupWithDamagedExtrasStillRestores() throws {
+        let state = try XCTUnwrap(String(data: try Self.fixture(), encoding: .utf8))
+        let bundle = #"{"format":"productium-export","version":4,"callLog":{"calls":[{"feature":"gone"}]},"#
+            + #""pendingNotifications":[{"id":1}],"files":[],"state":"# + state + "}"
+        let b = try ExportBundle.read(Data(bundle.utf8))
+        XCTAssertGreaterThan(b.state.entries.count, 100)
+        XCTAssertTrue(b.callLog.calls.isEmpty)
+        XCTAssertThrowsError(try ExportBundle.read(Data(#"{"format":"productium-export","version":4}"#.utf8))) {
+            guard case ExportBundle.ReadError.unreadable = $0 else { return XCTFail("\($0)") }
+        }
+    }
+
     func testOlderThan122StartsFresh() throws {
         let s = try decoder().decode(AppState.self, from: Data(#"{"schema":3,"onboarded":true,"entries":[]}"#.utf8))
         XCTAssertFalse(s.onboarded)

@@ -75,7 +75,7 @@ struct OnboardingView: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { r in
             guard case .success(let url) = r else { return }
             do { model.applyRestore(try model.readBackup(from: url)) } catch {
-                restoreError = (error as? ExportBundle.ReadError)?.description ?? "That file isn't a Productium backup."
+                restoreError = (error as? ExportBundle.ReadError)?.description ?? error.localizedDescription
             }
         }
     }

@@ -1351,7 +1351,18 @@ final class AppModel {
     func readBackup(from url: URL) throws -> RestorePreview {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
-        let b = try ExportBundle.read(try Data(contentsOf: url))
+        // Coordinated so a file in iCloud Drive that isn't on the phone yet is downloaded first.
+        var coordinated: NSError?
+        var read: Result<Data, Error> = .failure(ExportBundle.ReadError.unreadable("the file couldn't be opened"))
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinated) { u in
+            read = Result { try Data(contentsOf: u, options: .mappedIfSafe) }
+        }
+        if let coordinated { throw ExportBundle.ReadError.unreadable(coordinated.localizedDescription) }
+        let data: Data
+        do { data = try read.get() } catch let e as ExportBundle.ReadError { throw e } catch {
+            throw ExportBundle.ReadError.unreadable(error.localizedDescription)
+        }
+        let b = try ExportBundle.read(data)
         return RestorePreview(exportedAt: b.exportedAt, summary: b.summary, bundle: b)
     }
 

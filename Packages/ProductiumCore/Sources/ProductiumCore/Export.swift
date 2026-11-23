@@ -78,6 +78,28 @@ public struct ExportBundle: Codable, Sendable {
         self.serverSnapshots = serverSnapshots
     }
 
+    /// Lenient like `AppState`: only the format, version and state are needed; anything else unreadable is left empty
+    /// so an older or partly damaged backup still restores its data.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func v<T: Decodable>(_ k: CodingKeys, _ def: T) -> T { (try? c.decodeIfPresent(T.self, forKey: k)) ?? def }
+        format = try c.decode(String.self, forKey: .format)
+        version = try c.decode(Int.self, forKey: .version)
+        state = try c.decode(AppState.self, forKey: .state)
+        exportedAt = v(.exportedAt, Date.distantPast)
+        device = v(.device, Device(timeZone: TimeZone.current.identifier))
+        aboutMe = v(.aboutMe, "")
+        callLog = v(.callLog, AICallLog())
+        sharedDefaults = v(.sharedDefaults, [:])
+        appDefaults = v(.appDefaults, [:])
+        files = v(.files, [:])
+        pendingNotifications = v(.pendingNotifications, [])
+        deliveredNotifications = v(.deliveredNotifications, [])
+        permissions = v(.permissions, [:])
+        serverSnapshots = v(.serverSnapshots, [:])
+        diagnostics = v(.diagnostics, [:])
+    }
+
     public static let nonStateStores = ["aboutMe", "callLog", "sharedDefaults", "appDefaults", "files"]
 
     public static func encoder() -> JSONEncoder {
@@ -94,10 +116,11 @@ public struct ExportBundle: Codable, Sendable {
     }
 
     public enum ReadError: Error, CustomStringConvertible {
-        case notAnExport, oldFormat(Int)
+        case notAnExport, oldFormat(Int), unreadable(String)
         public var description: String {
             switch self {
             case .notAnExport: return "That file isn't a Productium export."
+            case .unreadable(let why): return "Couldn't read that backup: \(why)"
             case .oldFormat(let v): return "That export is format \(v), from an older Productium. v1.2 starts fresh and only imports format 4 (v1.2) exports."
             }
         }
@@ -108,7 +131,13 @@ public struct ExportBundle: Codable, Sendable {
         let head = try? decoder().decode(Head.self, from: data)
         guard let head, head.format == formatID else { throw ReadError.notAnExport }
         guard (head.version ?? 0) >= currentVersion else { throw ReadError.oldFormat(head.version ?? 0) }
-        return try decoder().decode(ExportBundle.self, from: data)
+        do {
+            return try decoder().decode(ExportBundle.self, from: data)
+        } catch let DecodingError.dataCorrupted(ctx), let DecodingError.keyNotFound(_, ctx),
+                  let DecodingError.typeMismatch(_, ctx), let DecodingError.valueNotFound(_, ctx) {
+            let path = ctx.codingPath.map(\.stringValue).joined(separator: ".")
+            throw ReadError.unreadable("\(path.isEmpty ? "" : path + ": ")\(ctx.debugDescription)")
+        }
     }
 
     public var summary: String {
