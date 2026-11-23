@@ -702,7 +702,7 @@ struct BackupSettings: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { r in
             switch r {
             case .success(let url):
-                do { pending = try model.readBackup(from: url) } catch { errorText = (error as? ExportBundle.ReadError)?.description ?? "That file isn't a Productium export." }
+                do { pending = try model.readBackup(from: url) } catch { errorText = (error as? ExportBundle.ReadError)?.description ?? error.localizedDescription }
             case .failure(let e):
                 errorText = e.localizedDescription
             }
