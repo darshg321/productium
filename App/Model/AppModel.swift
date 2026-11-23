@@ -232,6 +232,7 @@ final class AppModel {
         await syncMotion()
         estimateSleep()
         syncCalendar()
+        if !state.quickStarts.seedSubjects(tree: &state.categories, at: Date()).isEmpty { log(.log, "subject_buttons") }
         syncScreen()
         await refreshLog()
         learnCapacities()
@@ -491,7 +492,24 @@ final class AppModel {
     }
 
     var activeWarnings: [PlanWarning] {
-        state.plan.warnings.filter { !state.dismissed.contains($0.message) }
+        state.plan.warnings.filter { !state.dismissed.contains($0.dismissKey) }
+    }
+
+    /// C5: a task that doesn't fit: plan less of it, or give it another day.
+    func shorten(_ w: PlanWarning) {
+        guard let id = w.itemId, let mins = w.shortfall, let i = state.items.firstIndex(where: { $0.id == id }) else { return }
+        state.items[i].estimateMinutes = max(state.items[i].completedMinutes + 15, state.items[i].estimateMinutes - mins)
+        toast = "\(state.items[i].title): planned \(mins) min shorter"
+        replan()
+    }
+
+    func moveDue(_ w: PlanWarning, days: Int = 1) {
+        guard let id = w.itemId, let i = state.items.firstIndex(where: { $0.id == id }) else { return }
+        let old = state.items
+        state.items[i].due = cal.date(byAdding: .day, value: days, to: state.items[i].due) ?? state.items[i].due
+        Avoidance.recordDueMoves(before: old, after: &state.items, at: Date(), reason: "Doesn't fit")
+        toast = "\(state.items[i].title) is due \(state.items[i].due.relativeDay)"
+        replan()
     }
 
     // MARK: Running entry (D3: starting a task is starting an entry with its id)

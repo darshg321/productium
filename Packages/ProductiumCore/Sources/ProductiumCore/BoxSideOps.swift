@@ -83,11 +83,18 @@ public enum BoxSideOps {
 
     static func screenTime(_ sc: BoxScreen?, _ s: inout AppState, _ now: Date, _ cal: Calendar, _ r: inout Result) {
         guard let sc else { r.problems.append("A screen_time op needs a screen reading"); return }
-        var rawApps = (sc.apps ?? []).filter { !$0.name.isEmpty }
+        var rawApps = (sc.apps ?? []).filter { ScreenOCR.isAppName($0.name) }
         let period = (sc.period ?? "day").lowercased()
         let isAverage = period.contains("week") || period.contains("average") || period.contains("avg")
         if isAverage, let perDay = ScreenDay.dailyFactor(average: sc.minutes, total: sc.totalMinutes, appsTotal: rawApps.reduce(0) { $0 + $1.minutes }) {
             for i in rawApps.indices { rawApps[i].minutes = Int((Double(rawApps[i].minutes) * perDay).rounded()) }
+        }
+        // E3: one day (or a day's average) can't hold more than 24 hours: it's a week's totals read as a day.
+        let appsTotal = rawApps.reduce(0) { $0 + $1.minutes }
+        if appsTotal > 24 * 60 {
+            r.problems.append("Those apps add up to \(appsTotal / 60) h, more than a day, so that looks like a week's totals. "
+                              + "Send the Day view (Screen Time → See All Activity → Day), or the Week view with its daily average showing.")
+            return
         }
         ScrollingApps.register(rawApps.map { ($0.name, $0.category) }, into: &s.scrollingApps)
         let apps = rawApps.map {

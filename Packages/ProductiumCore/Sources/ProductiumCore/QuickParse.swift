@@ -43,7 +43,7 @@ public enum QuickParse {
         let t = normalise(raw)
         guard !t.isEmpty, t.count <= 80, !t.contains("?"), !t.contains("\n") else { return nil }
         let parsers: [(String, QuickContext) -> QuickParsed?] = [
-            { t, _ in mood(t) }, confirm, woke, stop, since, start, doing, log, tileOnly,
+            { t, _ in mood(t) }, { t, _ in rotation(t) }, confirm, woke, stop, since, start, doing, log, tileOnly,
         ]
         for parse in parsers { if let r = parse(t, c) { return r } }
         return nil
@@ -154,6 +154,14 @@ public enum QuickParse {
         let topics = CategoryRules.topics(for: title, category: cat, tree: c.tree)
         if !topics.isEmpty { f.topics = topics }
         return QuickParsed(kind: .start, ops: [BoxOp(.entry, .start, f)])
+    }
+
+    // MARK: v1.5 G2: "today is a day 2"
+
+    static func rotation(_ t: String) -> QuickParsed? {
+        guard let m = match(t, #"(?:(today|tomorrow)(?: is|'s)? (?:a )?day ([12])|(?:it'?s |it is )?(?:a )?day ([12]) (today|tomorrow))"#) else { return nil }
+        let when = m[1] ?? m[4] ?? "today", n = m[2] ?? m[3] ?? "1"
+        return QuickParsed(kind: .confirm, ops: [BoxOp(.setting, .change, BoxFields(title: "rotation", text: "\(when) \(n)"))])
     }
 
     // MARK: v1.5 B3: backfill ("X since 11:15", "X since 10 mins ago", "X 5 minutes ago")

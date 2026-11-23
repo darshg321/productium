@@ -40,6 +40,7 @@ struct TodayView: View {
                             if model.screenshotOffer != nil { ScreenshotOfferCard() }
                         }
                         StartList(now: now).id("grid")
+                        FocusCard(now: now)
                         MoodButtons(now: now)
                         GapsCard(now: now).id("gaps")
                         AssumedCard(now: now).id("assumed")
@@ -355,6 +356,33 @@ struct MoodButtons: View {
     }
 }
 
+/// v1.5: after a stretch of work, how focused it was (time alone doesn't say how much got done).
+struct FocusCard: View {
+    @Environment(AppModel.self) private var model
+    let now: Date
+    static let levels: [(Int, String)] = [(1, "Not Very"), (2, "Normal"), (3, "Very")]
+
+    var body: some View {
+        if let e = TimeLog.unratedWork(model.state.entries, tree: model.state.categories, now: now) {
+            Card {
+                HStack {
+                    Text("How focused were you on \(e.title)?").font(.subheadline.weight(.semibold)).lineLimit(2)
+                    Spacer(minLength: 4)
+                    Button { withAnimation { model.rateFocus(e.id, 0) } } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("Skip")
+                }
+                HStack(spacing: 8) {
+                    ForEach(Self.levels, id: \.0) { f, label in
+                        Button(label) { withAnimation { model.rateFocus(e.id, f) } }
+                            .buttonStyle(.bordered).buttonBorderShape(.capsule).frame(maxWidth: .infinity)
+                    }
+                }
+                .font(.subheadline.weight(.medium))
+            }
+        }
+    }
+}
+
 // MARK: - N7: one question at a time
 
 struct QuestionCard: View {
@@ -642,9 +670,15 @@ struct AlertCard: View {
                     CardHeader(title: "Heads Up", symbol: w.level == .critical ? "exclamationmark.triangle.fill" : "info.circle.fill",
                                color: w.level == .critical ? Theme.alert : .orange)
                     Text(w.message).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                    Button("Dismiss") { withAnimation { model.state.dismissed.insert(w.message) }; model.save() }
-                        .font(.subheadline)
-                        .buttonStyle(.borderless)
+                    HStack(spacing: 16) {
+                        if w.shortfall != nil {
+                            Button("Shorten") { model.shorten(w) }
+                            Button("Move Due") { model.moveDue(w) }
+                        }
+                        Button(w.shortfall != nil ? "Keep" : "Dismiss") { withAnimation { model.state.dismissed.insert(w.dismissKey) }; model.save() }
+                    }
+                    .font(.subheadline)
+                    .buttonStyle(.borderless)
                 }
                 .id(w.message)
                 .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))

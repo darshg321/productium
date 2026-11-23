@@ -29,6 +29,15 @@ final class TimeLogTests: XCTestCase {
         XCTAssertTrue(r.lines.first?.hasPrefix("Trimmed Homework to 15:00–16:00 and 17:00–18:00") ?? false, r.lines.description)
     }
 
+    func testFocusIsAskedOnceForFinishedWork() {
+        var hw = told("Essay", Fx.mon(16), Fx.mon(16, 45), cat: CategoryTree.studying)
+        let walk = told("Walk", Fx.mon(16, 45), Fx.mon(17), cat: CategoryTree.travel)
+        XCTAssertEqual(TimeLog.unratedWork([hw, walk], tree: CategoryTree(), now: Fx.mon(17, 30))?.title, "Essay")
+        hw.focus = 3
+        XCTAssertNil(TimeLog.unratedWork([hw, walk], tree: CategoryTree(), now: Fx.mon(17, 30)))
+        XCTAssertEqual(TimeLog.focusMinutes([hw], in: Days.dayInterval(Fx.mon(12), cal)), [3: 45])
+    }
+
     func testTrackedWalkReplacesThePlannedOne() {
         let planned = Entry(title: "Walk home", start: Fx.mon(15), end: Fx.mon(15, 20), category: CategoryTree.travel, source: .plan)
         let ready = Entry(title: "Get ready", start: Fx.mon(7), end: Fx.mon(7, 40), category: CategoryTree.gettingReady, source: .plan)

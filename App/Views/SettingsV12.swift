@@ -140,6 +140,7 @@ struct PlacesSettings: View {
     @Environment(AppModel.self) private var model
     @State private var renaming: UUID?
     @State private var newName = ""
+    @State private var merging: Place?
 
     var body: some View {
         List {
@@ -154,8 +155,10 @@ struct PlacesSettings: View {
                             Text(source(p)).foregroundStyle(.secondary)
                         }
                     }
+                    .swipeActions { Button("Merge") { merging = p }.tint(.orange) }
+                    .contextMenu { Button("Merge Into…", systemImage: "arrow.triangle.merge") { merging = p } }
                 }
-            } header: { Text("Your Places") } footer: { Text("Tap a place to rename it.") }
+            } header: { Text("Your Places") } footer: { Text("Tap a place to rename it. Swipe to merge two that are the same spot.") }
         }
         .listStyle(.insetGrouped)
         .alert("Rename Place", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
@@ -168,6 +171,14 @@ struct PlacesSettings: View {
             Button("Cancel", role: .cancel) { renaming = nil }
         }
         .navigationTitle("Places")
+        .confirmationDialog("Merge \(merging?.title ?? "") into…", isPresented: Binding(get: { merging != nil }, set: { if !$0 { merging = nil } }),
+                            titleVisibility: .visible) {
+            if let m = merging {
+                ForEach(model.state.placeBook.places.filter { $0.id != m.id }.sorted { $0.visits > $1.visits }.prefix(8)) { p in
+                    Button(p.title) { model.mergePlace(m.id, into: p.id); merging = nil }
+                }
+            }
+        }
     }
 
     private func source(_ p: Place) -> String {

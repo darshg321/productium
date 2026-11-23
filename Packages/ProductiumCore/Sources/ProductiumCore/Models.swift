@@ -466,12 +466,18 @@ public struct PlanWarning: Codable, Hashable, Sendable {
     public var level: WarningLevel
     public var message: String
     public var itemId: UUID?
+    /// v1.5 C5: minutes of the task (in your terms) that don't fit before it's due.
+    public var shortfall: Int?
 
-    public init(level: WarningLevel, message: String, itemId: UUID? = nil) {
+    public init(level: WarningLevel, message: String, itemId: UUID? = nil, shortfall: Int? = nil) {
         self.level = level
         self.message = message
         self.itemId = itemId
+        self.shortfall = shortfall
     }
+
+    /// What Dismiss remembers: a task's shortfall once (its minutes change with every replan), anything else by its words.
+    public var dismissKey: String { shortfall != nil ? "shortfall:\(itemId?.uuidString ?? message)" : message }
 }
 
 public struct Plan: Codable, Hashable, Sendable {

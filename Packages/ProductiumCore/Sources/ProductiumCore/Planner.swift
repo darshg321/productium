@@ -728,7 +728,8 @@ public enum Planner {
                     : "Aim for a complete, solid version rather than a perfect one, or ask for an extension now, not the night before."
                 let mins = Planner.shownMinutes(mins, for: item, learned: input.learned)
                 warnings.append(PlanWarning(level: item.importance >= 4 ? .critical : .caution,
-                                            message: "≈\(mins) min of “\(item.title)” doesn't fit before it's due. \(advice)", itemId: id))
+                                            message: "≈\(mins) min of “\(item.title)” doesn't fit before it's due. \(advice)", itemId: id,
+                                            shortfall: mins))
             }
             let borrowed = days.reduce(0) { $0 + $1.borrowed }
             if borrowed > 0 {

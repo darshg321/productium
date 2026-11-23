@@ -132,4 +132,13 @@ final class ExportTests: XCTestCase {
         s.prune(now: Fx.mon(12))
         XCTAssertEqual(s.entries.count, before)
     }
+
+    func testExportFilesNeverNestBackupsOrAbsolutePaths() {
+        XCTAssertTrue(ExportFiles.keep("container/about-me.md"))
+        XCTAssertTrue(ExportFiles.keep("documents/test/commands.txt"))
+        for bad in ["documents/Backups/Productium-2026-11-22.json", "documents/Backups", "container//private/var/mobile/x.json",
+                    "container/Library/Caches/x", "container/../x", "elsewhere/x", "container"] {
+            XCTAssertFalse(ExportFiles.keep(bad), bad)
+        }
+    }
 }

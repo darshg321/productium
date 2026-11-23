@@ -251,6 +251,15 @@ extension AppModel {
 
     func renamePlace(_ id: UUID, _ name: String) { state.placeBook.name(id, name); save() }
 
+    /// H2: two places that are the same spot become one (the first keeps its name; time there moves with it).
+    func mergePlace(_ gone: UUID, into keep: UUID) {
+        var es = state.entries
+        state.placeBook.merge(keep, gone, entries: &es)
+        state.entries = es
+        log(.sensor, "places_merged")
+        save()
+    }
+
     func placeName(_ id: UUID?) -> String? { id.flatMap { pid in state.placeBook.places.first { $0.id == pid }?.title } }
 
     // MARK: Categories (C4, K4)

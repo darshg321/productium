@@ -120,6 +120,7 @@ public enum Registry {
         KnobSpec("schoolDayWake", .learned, "HH:mm"), KnobSpec("freeDayWake", .learned, "HH:mm"),
         KnobSpec("wake", .learned, "HH:mm, + \"free days\" or \"every day\" (default school days)"),
         KnobSpec("sleep", .learned, "hours of sleep needed, e.g. 9 h", reflectionForbidden: true),
+        KnobSpec("rotation", .data, "a date and its day of the timetable rotation: \"today 2\", \"2026-11-24 1\""),
         KnobSpec("study.schoolDayCapacity", .learned, "minutes", range: 30...480),
         KnobSpec("study.freeDayCapacity", .learned, "minutes", range: 30...600),
         KnobSpec("study.schoolDayFreeTime", .learned, "minutes", range: 0...360),
@@ -203,6 +204,19 @@ public enum Knobs {
                 lines.append("Free-day wake → \(t.label)")
             }
             return .changed(lines.joined(separator: ", "))
+        }
+        if ["rotation", "rotationday", "dayrotation", "schoolday", "daynumber"].contains(k) {
+            // "today 2", "2026-11-24 day 1", "tomorrow is a day 2"
+            guard let n = v.split(whereSeparator: { !$0.isNumber }).compactMap({ Int($0) }).last(where: { (1...2).contains($0) }) else {
+                return .refused("Say which day of the rotation, like “today 2”")
+            }
+            let cal = Calendar.current
+            let today = cal.startOfDay(for: Date())
+            var date = today
+            if v.contains("tomorrow") { date = cal.date(byAdding: .day, value: 1, to: today) ?? today }
+            if let r = v.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression), let d = DayKeys.date(String(v[r]), cal) { date = d }
+            Rotation.set(date, to: n, book: &s.dayRules, calendar: cal)
+            return .changed("\(DateFormatter.local("EEE d MMM", cal).string(from: date)) is a Day \(n)")
         }
         if ["sleep", "sleepneed", "sleephours", "sleepminutes", "sleeplength", "sleepneeded"].contains(k) {
             guard let n = Double(v.prefix { $0.isNumber || $0 == "." }), n > 0 else { return .refused("“\(value)” isn't an amount of sleep (like 9 h)") }

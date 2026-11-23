@@ -174,7 +174,10 @@ public enum BoxContext {
         let cal = c.calendar, now = c.now, s = c.state
         func f(_ p: String) -> DateFormatter { DateFormatter.local(p, cal) }
         let hm = f("HH:mm"), dayF = f("EEE yyyy-MM-dd"), dt = f("EEE MM-dd HH:mm")
-        func parity(_ d: Date) -> String { cal.component(.day, from: d) % 2 == 1 ? "odd date" : "even date" }
+        func parity(_ d: Date) -> String {
+            let rotation = Rotation.day(d, entries: s.entries, tree: s.categories, book: s.dayRules, calendar: cal).map { ", Day \($0)" } ?? ""
+            return (cal.component(.day, from: d) % 2 == 1 ? "odd date" : "even date") + rotation
+        }
         func path(_ id: CategoryID) -> String { s.categories.pathText(id) }
         func task(_ id: UUID?) -> String { id.map { " task " + Ref.task($0) } ?? "" }
         var l: [String] = []

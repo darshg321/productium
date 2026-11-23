@@ -107,4 +107,23 @@ final class DayRuleTests: XCTestCase {
         XCTAssertEqual(DayRule.nthOf(sequence: "school", mod: 2, eq: 1).text(cal), "B days (school)")
         XCTAssertEqual(DayRule.all([.weekdays([2, 4]), .not(.label("exam-week"))]).text(cal), "Mon, Wed and not exam-week")
     }
+
+    func testRotationDaysAndFlips() {
+        let cal = Fx.cal
+        let odd = Entry(title: "P1 Math", start: Fx.mon(8, 30), end: Fx.mon(9, 30), category: CategoryTree.school,
+                        repeats: Repeat(.all([.weekdays([2, 3, 4, 5, 6]), .dateParity(odd: true)])), source: .you)
+        let even = Entry(title: "P1 Spare", start: Fx.mon(8, 30), end: Fx.mon(9, 30), category: CategoryTree.school,
+                         repeats: Repeat(.all([.weekdays([2, 3, 4, 5, 6]), .dateParity(odd: false)])), source: .you)
+        var book = DayRuleBook()
+        let mon = Fx.mon(12), tue = Fx.mon(12, plusDays: 1)
+        let monDay = cal.component(.day, from: mon) % 2 == 1 ? 1 : 2
+        XCTAssertEqual(Rotation.day(mon, entries: [odd, even], tree: CategoryTree(), book: book, calendar: cal), monDay)
+        XCTAssertNil(Rotation.day(Fx.mon(12, plusDays: 5), entries: [odd, even], tree: CategoryTree(), book: book, calendar: cal), "Saturday")
+        XCTAssertTrue(Rotation.set(tue, to: monDay, book: &book, calendar: cal))
+        XCTAssertEqual(Rotation.day(tue, entries: [odd, even], tree: CategoryTree(), book: book, calendar: cal), monDay)
+        let on = Days.on(tue, [odd, even], now: mon, book: book, calendar: cal).map(\.title)
+        XCTAssertEqual(on, [monDay == 1 ? "P1 Math" : "P1 Spare"], "the flipped day runs the other timetable")
+        XCTAssertFalse(Rotation.set(tue, to: monDay, book: &book, calendar: cal))
+        XCTAssertEqual(QuickParse.parse("today is a day 2", QuickContext(now: mon, calendar: cal, entries: [], items: []))?.ops.first?.fields.text, "today 2")
+    }
 }

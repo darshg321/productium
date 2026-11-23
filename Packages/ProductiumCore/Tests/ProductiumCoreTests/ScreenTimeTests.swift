@@ -20,6 +20,21 @@ final class ScreenTimeTests: XCTestCase {
 
 
 
+    func testJunkRowsAndMoreThanADayAreRefused() {
+        var st = AppState()
+        var me = AboutMe()
+        var sc = BoxScreen()
+        sc.period = "day"
+        sc.apps = [BoxScreen.App(name: ":2h", minutes: 120), BoxScreen.App(name: ">", minutes: 5), BoxScreen.App(name: "Instagram", minutes: 30)]
+        let ok = BoxSideOps.apply([BoxOp(.screen_time, .add, BoxFields(screen: sc))], to: &st, aboutMe: &me, now: Fx.mon(20), calendar: cal)
+        XCTAssertEqual(st.screen.last?.apps?.map(\.name), ["Instagram"], ok.problems.description)
+        sc.apps = [BoxScreen.App(name: "Instagram", minutes: 802), BoxScreen.App(name: "Discord", minutes: 551), BoxScreen.App(name: "Safari", minutes: 300)]
+        var st2 = AppState()
+        let r = BoxSideOps.apply([BoxOp(.screen_time, .add, BoxFields(screen: sc))], to: &st2, aboutMe: &me, now: Fx.mon(20), calendar: cal)
+        XCTAssertTrue(st2.screen.isEmpty)
+        XCTAssertTrue(r.problems.first?.contains("more than a day") ?? false)
+    }
+
     func testAppLiteralIsIgnored() {
         for name in ["App", " app ", "", "Scrolling app", "Shortcut Input"] { XCTAssertTrue(AppKinds.isPlaceholder(name), name) }
         for name in ["Instagram", "App Store", "Apple TV"] { XCTAssertFalse(AppKinds.isPlaceholder(name), name) }

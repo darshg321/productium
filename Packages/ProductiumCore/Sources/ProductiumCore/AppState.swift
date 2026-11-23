@@ -71,9 +71,9 @@ public struct Feedback: Codable, Hashable, Identifiable, Sendable {
 }
 
 public struct AppState: Codable, Sendable {
-    /// 4 = v1.2.2 (the first real data), 5 = v1.3, 6 = v1.3 (category colours, feedback). Older states migrate
+    /// 4 = v1.2.2 (the first real data), 5 = v1.3, 6 = v1.3 (category colours, feedback), 7 = v1.5 (focus ratings). Older states migrate
     /// (`Migrations`); below 4 decodes as fresh.
-    public static let schema = 6
+    public static let schema = 7
     public var schema = AppState.schema
     public var onboarded = false
     /// v1.2 Part 0: everything timed (classes, events, sessions, sleep, the log, the plan's blocks).

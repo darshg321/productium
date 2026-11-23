@@ -195,6 +195,23 @@ public enum TimeLog {
         return a.id < b.id
     }
 
+    /// v1.5: the last stretch of work you finished (≥10 min, in the last 3 hours) that has no focus rating yet.
+    public static func unratedWork(_ entries: [Entry], tree: CategoryTree, now: Date) -> Entry? {
+        entries.filter { e in
+            guard e.source == .you, e.repeats == nil, e.focus == nil, let end = e.end, end <= now, end > now.addingTimeInterval(-3 * 3600),
+                  end.timeIntervalSince(e.start) >= 600 else { return false }
+            return e.taskId != nil || tree.isUnder(e.category, CategoryTree.work)
+        }.max { ($0.end ?? $0.start) < ($1.end ?? $1.start) }
+    }
+
+    /// Minutes of rated work per focus level (1 not very, 2 normal, 3 very) in `range`.
+    public static func focusMinutes(_ entries: [Entry], in range: DateInterval) -> [Int: Int] {
+        entries.reduce(into: [:]) { out, e in
+            guard let f = e.focus, (1...3).contains(f), let end = e.end, end > range.start, e.start < range.end else { return }
+            out[f, default: 0] += Int(min(end, range.end).timeIntervalSince(max(e.start, range.start)) / 60)
+        }
+    }
+
     /// Minutes per category in the resolved slices (Untracked included).
     public static func totals(_ slices: [LogSlice]) -> [CategoryID: Int] {
         slices.reduce(into: [:]) { $0[$1.category, default: 0] += $1.minutes }

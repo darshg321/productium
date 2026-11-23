@@ -58,6 +58,48 @@ public struct DayRuleBook: Codable, Hashable, Sendable {
 
 }
 
+/// v1.5 G2: a Day 1 / Day 2 timetable. Odd-date classes are Day 1 (the original order), even-date ones Day 2; a
+/// counted sequence (`nthOf`) numbers its days from the anchor. A date can be flipped ("today is a day 2", a snow day).
+public enum Rotation {
+    public static let flipLabel = "rotation-flip"
+
+    static func rules(_ r: DayRule) -> [DayRule] {
+        switch r {
+        case .all(let rs), .any(let rs): return rs.flatMap(rules)
+        case .not: return []
+        default: return [r]
+        }
+    }
+
+    /// "Day 1" / "Day 2" (or Day n of a longer rotation) on a school day with a rotating timetable, else nil.
+    public static func day(_ date: Date, entries: [Entry], tree: CategoryTree, book: DayRuleBook, calendar cal: Calendar) -> Int? {
+        let school = entries.filter { $0.repeats != nil && tree.isUnder($0.category, CategoryTree.school) }
+        let ev = DayRuleEvaluator(book: book, calendar: cal)
+        guard school.contains(where: { e in e.repeats.map { ev.matches($0.days, on: date) } ?? false }) else { return nil }
+        let inner = school.flatMap { rules($0.repeats!.days) }
+        if inner.contains(where: { if case .dateParity = $0 { return true } else { return false } }) {
+            return ev.matches(.dateParity(odd: true), on: date) ? 1 : 2
+        }
+        for r in inner {
+            if case let .nthOf(seq, mod, _) = r, mod > 1, let i = ev.index(in: seq, of: date) { return ((i % mod) + mod) % mod + 1 }
+        }
+        return nil
+    }
+
+    /// Makes `date` the `number`th day (1 or 2) of a date-parity rotation. Returns false when it already was.
+    @discardableResult
+    public static func set(_ date: Date, to number: Int, book: inout DayRuleBook, calendar cal: Calendar) -> Bool {
+        let key = CapacityLearner.dayKey(date, cal)
+        let natural = cal.component(.day, from: date) % 2 == 1 ? 1 : 2
+        var flips = Set(book.labels[flipLabel] ?? [])
+        let wasFlipped = flips.contains(key)
+        if (natural == number) == !wasFlipped { return false }
+        if natural == number { flips.remove(key) } else { flips.insert(key) }
+        book.labels[flipLabel] = flips.isEmpty ? nil : flips.sorted()
+        return true
+    }
+}
+
 /// Evaluates rules for one planning run. Pure apart from its memo, so create one per run (or per day range).
 public final class DayRuleEvaluator {
     public let calendar: Calendar
@@ -94,7 +136,9 @@ public final class DayRuleEvaluator {
             let k = key(day)
             return !ds.contains { key($0) == k }
         case .dateParity(let odd):
-            return (calendar.component(.day, from: day) % 2 == 1) == odd
+            // v1.5 G2: a date you said is the other day of the rotation ("today is a day 2") flips.
+            let flipped = labelSets[Rotation.flipLabel]?.contains(key(day)) ?? false
+            return ((calendar.component(.day, from: day) % 2 == 1) != flipped) == odd
         case let .weekParity(anchor, odd):
             guard let a = calendar.dateInterval(of: .weekOfYear, for: anchor)?.start,
                   let w = calendar.dateInterval(of: .weekOfYear, for: day)?.start else { return false }

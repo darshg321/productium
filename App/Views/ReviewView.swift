@@ -175,6 +175,12 @@ struct GlanceGrid: View {
                 if let slept {
                     StatTile(title: "Sleep", symbol: "bed.double.fill", color: Theme.sleep, value: minutesLabel(slept))
                 }
+                let focus = TimeLog.focusMinutes(model.state.entries, in: Days.dayInterval(day, cal))
+                let total = focus.values.reduce(0, +)
+                if total > 0 {
+                    StatTile(title: "Focused Work", symbol: "scope", color: .purple, value: minutesLabel((focus[3] ?? 0) + (focus[2] ?? 0)),
+                             unit: "/ \(minutesLabel(total))", progress: Double((focus[3] ?? 0) + (focus[2] ?? 0)) / Double(total))
+                }
                 if let m = mood {
                     StatTile(title: "Mood", symbol: "face.smiling", color: .yellow,
                              value: MoodButtons.faces.first { $0.0 == m.mood }?.1 ?? "🙂")

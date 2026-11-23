@@ -145,10 +145,11 @@ public enum ScreenOCR {
                                                            || lower[$0].hasPrefix("notifications")) } ?? lines.count
             while i < end {
                 let name = lines[i], next = i + 1 < end ? lines[i + 1] : ""
-                if !notApps.contains(name.lowercased()), duration(name) == nil, name.count <= 40, let m = duration(next) {
+                if !notApps.contains(name.lowercased()), duration(name) == nil, name.count <= 40, isAppName(name),
+                   let m = duration(next) {
                     r.apps.append(BoxScreen.App(name: name, minutes: m))
                     i += 2
-                } else if let (n, m) = inline(name), !notApps.contains(n.lowercased()) {
+                } else if let (n, m) = inline(name), !notApps.contains(n.lowercased()), isAppName(n) {
                     r.apps.append(BoxScreen.App(name: n, minutes: m))
                     i += 1
                 } else {
@@ -158,6 +159,11 @@ public enum ScreenOCR {
         }
         guard r.minutes != nil || !r.apps.isEmpty || r.pickups != nil else { return nil }
         return r
+    }
+
+    /// E3: a row OCR made of a stray time or symbol (":2h", ">") isn't an app; "X" is.
+    public static func isAppName(_ s: String) -> Bool {
+        s.contains(where: \.isLetter) && s.range(of: #"^[\W\d_]*\d+\s*[hm]?[\W_]*$"#, options: .regularExpression) == nil
     }
 
     /// "Instagram 1h 36m" on one line.

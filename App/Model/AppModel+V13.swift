@@ -53,6 +53,17 @@ extension AppModel {
         syncNowActivity()
     }
 
+    // MARK: v1.5: how focused a session was
+
+    /// 1 not very, 2 normal, 3 very; 0 = you skipped the question.
+    func rateFocus(_ id: UUID, _ focus: Int) {
+        guard let i = state.entries.firstIndex(where: { $0.id == id }) else { return }
+        state.entries[i].focus = focus
+        log(.log, "focus_rated", ["title": state.entries[i].title, "focus": "\(focus)"])
+        Haptics.tap()
+        save()
+    }
+
     // MARK: D: the rings
 
     var ringLimit: Int { DayRings.limit(goals: state.goals, taper: state.taper, tree: state.categories) }

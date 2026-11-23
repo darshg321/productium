@@ -68,12 +68,17 @@ struct WeekStrip: View {
                             .foregroundStyle(on ? Color(.systemBackground) : (today ? .red : .primary))
                             .frame(width: 36, height: 36)
                             .background(Circle().fill(on ? (today ? Color.red : Color.primary) : Color.clear))
-                        Circle().fill(Color.orange).frame(width: 5, height: 5).opacity(due ? 1 : 0)
+                        HStack(spacing: 2) {
+                            if let r = rotation(d) { Text("D\(r)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) }
+                            Circle().fill(Color.orange).frame(width: 5, height: 5).opacity(due ? 1 : 0)
+                        }
+                        .frame(height: 10)
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).month().day()) + (today ? ", today" : "") + (due ? ", something due" : ""))
+                .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).month().day()) + (today ? ", today" : "")
+                                    + (rotation(d).map { ", Day \($0)" } ?? "") + (due ? ", something due" : ""))
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
             Button { shift(1) } label: { Image(systemName: "chevron.right") }
@@ -85,6 +90,11 @@ struct WeekStrip: View {
         .gesture(DragGesture(minimumDistance: 30).onEnded { v in
             if v.translation.width < -40 { shift(1) } else if v.translation.width > 40 { shift(-1) }
         })
+    }
+
+    /// G2: Day 1 / Day 2 of a rotating timetable.
+    private func rotation(_ d: Date) -> Int? {
+        Rotation.day(d, entries: model.state.entries, tree: model.state.categories, book: model.state.dayRules, calendar: .current)
     }
 
     private func shift(_ weeks: Int) {
@@ -106,6 +116,7 @@ struct DayEntryList: View {
     let day: Date
     @State private var editing: DayEntry?
     @State private var filling: LogSlice?
+    @State private var sleepSettings = false
 
     static let hourHeight: CGFloat = 64
     static let gutter: CGFloat = 52
@@ -133,6 +144,11 @@ struct DayEntryList: View {
                 .onChange(of: day) { _, _ in scrollToStart(proxy, rows: rows, span: span, now: now) }
             }
             .sheet(item: $editing) { EntrySheet(day: $0) }
+            .sheet(isPresented: $sleepSettings) {
+                NavigationStack {
+                    SleepSettings().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sleepSettings = false } } }
+                }
+            }
             .confirmationDialog(filling.map { "\($0.start.hm) – \($0.end.hm)" } ?? "", isPresented: Binding(
                 get: { filling != nil }, set: { if !$0 { filling = nil } }), titleVisibility: .visible) {
                 if let g = filling {
@@ -190,7 +206,14 @@ struct DayEntryList: View {
                     EntryBlock(entry: p.entry, now: now, height: max(y(p.entry.end, span) - top - 2, 20))
                         .frame(width: w - 2)
                         .offset(x: Self.gutter + w * CGFloat(p.column), y: top + 1)
-                        .onTapGesture { editing = p.entry }
+                        .onTapGesture {
+                            // G3: the planned night opens the sleep settings it comes from.
+                            if p.entry.source == .plan && model.state.categories.isUnder(p.entry.category, CategoryTree.sleep) {
+                                sleepSettings = true
+                            } else {
+                                editing = p.entry
+                            }
+                        }
                         .contextMenu { menu(p.entry, span: span, now: now) }
                 }
                 if span.contains(now) {
