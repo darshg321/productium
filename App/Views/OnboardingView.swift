@@ -316,11 +316,11 @@ struct OnboardingView: View {
             }
             Text("Let Productium see your apps").font(.headline).padding(.top, 8)
             VStack(alignment: .leading, spacing: 8) {
-                step(1, "In Shortcuts, open Automation and tap +. Choose App.")
-                step(2, "Tap Choose and tick every app you use. Keep Is Opened, untick Is Closed.")
-                step(3, "Pick Run Immediately, tap Next, then Create New Shortcut.")
-                step(4, "Add the Productium action Opened an App, and set App to Shortcut Input.")
-                step(5, "For a pause before the apps you scroll on, see Pause Before Scrolling in the full guide.")
+                step(1, "Shortcuts → Automation → + → App.")
+                step(2, "Choose: tick every app. Is Opened on, Is Closed off.")
+                step(3, "Run Immediately → Next → Create New Shortcut.")
+                step(4, "Search for Opened an App and tap it.")
+                step(5, "Tap the blue word App, then Shortcut Input above the keyboard. Done.")
             }
             HStack {
                 Button("Open Shortcuts") { if let u = URL(string: "shortcuts://") { UIApplication.shared.open(u) } }

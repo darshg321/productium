@@ -13,6 +13,15 @@ final class BoxRiskTests: XCTestCase {
         let gone = BoxApplier.apply([BoxOp(.entry, .skip, ref: EntryRef.entry(e.id))], to: &s, now: Fx.mon(16, 12), calendar: Fx.cal)
         XCTAssertEqual(gone.held.count, 1, "skipping over an hour you logged still asks")
     }
+
+    func testConfirmingAPlannedRoutine() {
+        let p = Entry(title: "Dinner", start: Fx.mon(18), end: Fx.mon(18, 30), category: CategoryTree.other, source: .plan, createdAt: Fx.mon(8))
+        var s = BoxState()
+        s.planned = [p]
+        let r = BoxApplier.apply([BoxOp(.entry, .confirm, ref: EntryRef.entry(p.id))], to: &s, now: Fx.mon(19), calendar: Fx.cal, approved: true)
+        XCTAssertTrue(r.problems.isEmpty, "\(r.problems)")
+        XCTAssertEqual(s.planned[0].marks["2026-11-16"], .confirmed)
+    }
 }
 
 final class BoxOpsTests: XCTestCase {

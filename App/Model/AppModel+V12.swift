@@ -150,7 +150,7 @@ extension AppModel {
     func checkGoalMoments() {
         let now = Date()
         let month = cal.dateInterval(of: .month, for: now)
-        let days = month.map { m in stride(from: m.start, to: min(m.end, now), by: 86400).map { $0 } } ?? []
+        let days = (month.map { m in stride(from: m.start, to: min(m.end, now), by: 86400).map { $0 } } ?? []).filter(isTracked)
         for g in state.goals where g.active && g.direction == .atLeast {
             let p = progress(g)
             if p.met {
@@ -178,24 +178,18 @@ extension AppModel {
 
     // MARK: Day score and the forecast (G.0a, G.0c)
 
+    /// The first day you used Productium (see `AppState.trackingSince`).
+    var trackingStart: Date { cal.startOfDay(for: state.trackingSince ?? Date()) }
+
+    /// A day the log can say something about. Health and Screen Time from before it still count; the log doesn't.
+    func isTracked(_ day: Date) -> Bool { cal.startOfDay(for: day) >= trackingStart }
+
+    /// The day's score, or nil for a day before you used Productium.
+    func trackedScore(_ day: Date) -> DayScore? { isTracked(day) ? dayScore(day) : nil }
+
     func dayScore(_ day: Date) -> DayScore {
         DayScore.make(day, asked: state.dayPlans[DayKeys.key(day, cal)] ?? [:], entries: state.entries, items: state.items,
                       tree: state.categories, now: Date(), book: state.dayRules, calendar: cal)
-    }
-
-    var forecast: DayForecast? {
-        DayForecast.make(entries: state.entries, tree: state.categories, now: Date(), isSchoolDay: isSchoolDay,
-                         book: state.dayRules, calendar: cal)
-    }
-
-    func verdict(_ f: DayForecast) -> ForecastVerdict {
-        let today = Days.dayInterval(Date(), cal)
-        var soFar: [CategoryID: Int] = [:]
-        for s in TimeLog.past(state.entries, in: today, now: Date(), book: state.dayRules, calendar: cal) {
-            let p = state.categories.path(s.category)
-            soFar[p.count >= 2 ? p[1].id : (p.first?.id ?? s.category), default: 0] += s.minutes
-        }
-        return ForecastVerdict.make(f, actualSoFar: soFar, tree: state.categories, goals: state.goals, now: Date(), calendar: cal)
     }
 
     /// Today's score against the median of your similar days (the last 4 same weekdays): (score, usual, label, top differences).
@@ -203,11 +197,15 @@ extension AppModel {
         let today = cal.startOfDay(for: now)
         let weekday = cal.component(.weekday, from: today)
         let same = (1...28).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
-            .filter { cal.component(.weekday, from: $0) == weekday }.prefix(4)
+            .filter { cal.component(.weekday, from: $0) == weekday && isTracked($0) }.prefix(4)
         let scores = same.map { dayScore($0).score }.sorted()
         guard scores.count >= 3 else { return nil }
         let usual = scores[scores.count / 2]
-        let diffs = forecast.map { verdict($0).differences.map { "\($0.name) \($0.minutes >= 0 ? "+" : "−")\(minutesLabel(abs($0.minutes)))" } } ?? []
+        let minutes = { (d: Date) in
+            DayCompare.minutes(d, entries: self.state.entries, tree: self.state.categories, now: Date(), book: self.state.dayRules, calendar: self.cal)
+        }
+        let diffs = DayCompare.changes(today: minutes(today), usual: same.map(minutes), tree: state.categories)
+            .map { "\($0.name) \($0.minutes >= 0 ? "+" : "−")\(minutesLabel(abs($0.minutes)))" }
         return (dayScore(today).score, usual, "usual \(DateFormatter.local("EEEE", cal).string(from: today))", diffs)
     }
 
@@ -224,10 +222,29 @@ extension AppModel {
         save()
     }
 
-    /// E2: Apple's map data names a new place when nothing better does (Starbucks, a school).
+    /// E2: the address names a new place when nothing better does (a school, "12 Oak St").
     func nameFromMap(_ p: Place) async {
-        guard let poi = await LocationService.shared.pointOfInterest(latitude: p.latitude, longitude: p.longitude) else { return }
-        state.placeBook.setPOI(p.id, poi)
+        guard let name = await LocationService.shared.placeName(latitude: p.latitude, longitude: p.longitude) else { return }
+        state.placeBook.setPOI(p.id, name)
+        save()
+    }
+
+    private static var renaming = false
+    /// Places named before 1.4.2 took the nearest business ("Jolhar"); they're renamed from their address once.
+    func renameMapPlaces() async {
+        let key = "places.addressNames"
+        guard !UserDefaults.standard.bool(forKey: key), !Self.renaming else { return }
+        Self.renaming = true
+        defer { Self.renaming = false }
+        var all = true
+        for p in state.placeBook.places where p.named == .map || p.named == nil {
+            guard let name = await LocationService.shared.placeName(latitude: p.latitude, longitude: p.longitude) else { all = false; continue }
+            guard let i = state.placeBook.places.firstIndex(where: { $0.id == p.id }) else { continue }
+            state.placeBook.places[i].poi = name
+            state.placeBook.places[i].name = name
+            state.placeBook.places[i].named = .map
+        }
+        UserDefaults.standard.set(all, forKey: key)
         save()
     }
 
@@ -522,9 +539,8 @@ extension AppModel {
     /// The last 7 days, for Review → Your Week.
     func weekRecap() -> WeekRecap? {
         let today = cal.startOfDay(for: Date())
-        let days = (0..<7).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
-        let before = (7..<35).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }.map(dayScore)
-            .filter { $0.wakingMinutes > $0.untrackedMinutes }
+        let days = (0..<7).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }.filter(isTracked)
+        let before = (7..<35).compactMap { cal.date(byAdding: .day, value: -$0, to: today) }.compactMap(trackedScore)
         return WeekRecap.make(days: days, scores: days.map(dayScore), before: before, entries: state.entries, tree: state.categories,
                               moods: state.moods, now: Date(), book: state.dayRules, calendar: cal)
     }
@@ -537,6 +553,7 @@ extension AppModel {
         let scrolled = rebuildAppEntries(save: false)
         let placed = EntryBuilder.places(&state.entries, visits: state.trace.visits, book: state.placeBook,
                                          since: now.addingTimeInterval(-3 * 86400), now: now)
+        Task { await renameMapPlaces() }
         let named = state.placeBook.nameFromEntries(state.entries, tree: state.categories)
         let expired = state.taskHistory.expire(state.items, entries: state.entries, now: now, calendar: cal)
         log(.log, "rebuild", level: .debug,

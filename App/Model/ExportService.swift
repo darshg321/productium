@@ -83,10 +83,15 @@ enum ExportService {
     static func files() -> [String: String] {
         var out: [String: String] = [:]
         for (prefix, root) in [("container", LocalStore.containerURL), ("documents", documentsURL)] {
+            // Enumerated URLs are under /private/var while the root is /var: compare resolved paths.
+            let base = root.resolvingSymlinksInPath().path + "/"
             guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else { continue }
             for case let url as URL in e {
+                let path = url.resolvingSymlinksInPath().path
+                guard path.hasPrefix(base) else { continue }
+                let rel = String(path.dropFirst(base.count))
+                if rel == "Library" || rel == BackupService.defaultFolderName { e.skipDescendants(); continue }
                 guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
-                let rel = url.path.replacingOccurrences(of: root.path + "/", with: "")
                 let key = "\(prefix)/\(rel)"
                 guard !representedFiles.contains(key), !rel.hasPrefix("Library/"), !rel.hasPrefix(BackupService.defaultFolderName + "/"),
                       let data = try? Data(contentsOf: url) else { continue }
@@ -145,7 +150,9 @@ enum ExportService {
         for (key, base64) in b.files where key != "container/state-before-restore.json" {
             guard let data = Data(base64Encoded: base64) else { continue }
             let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { continue }
+            // Exports before 1.4.2 could hold absolute paths and old backups (the /private/var mismatch).
+            guard parts.count == 2, !parts[1].hasPrefix("/"), !parts[1].hasPrefix("Library/"),
+                  !parts[1].hasPrefix(BackupService.defaultFolderName + "/") else { continue }
             let root = parts[0] == "documents" ? documentsURL : LocalStore.containerURL
             let url = root.appendingPathComponent(parts[1])
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

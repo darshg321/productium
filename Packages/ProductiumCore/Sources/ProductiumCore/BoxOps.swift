@@ -474,6 +474,11 @@ public enum BoxApplier {
 
         /// Yes to assumed time.
         mutating func confirm(_ op: BoxOp, _ s: inout BoxState) {
+            if let ref = op.ref, find(ref, s) == nil, let hit = EntryRef.resolve(ref, in: s.planned) {
+                let key = hit.occurrence ?? DayKeys.key(s.planned[hit.index].start, cal)
+                s.planned[hit.index].marks[key] = .confirmed
+                return r.lines.append("Confirmed \(s.planned[hit.index].title) on \(key)")
+            }
             guard let (i, occ) = find(op.ref, s) else { return problem("Couldn't find entry \(op.ref ?? "?")") }
             let old = s.entries
             let key = occ ?? DayKeys.key(s.entries[i].start, cal)

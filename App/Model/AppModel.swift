@@ -198,14 +198,17 @@ final class AppModel {
         replan()
         await backupIfDue()
         if !state.outbox.items.isEmpty { await flushOutbox() }
-        if full {
-            serverOnline = await ClaudeClient.shared.ping()
-            await insightPass()
-            await taxonomyPass()
-            await refreshServerUsage()
-            await refreshSubscription()
-            await refreshLeaderboards()
-        }
+        if full { await refreshRemote() }
+    }
+
+    /// The server half of a refresh (Claude passes, usage, leaderboards): slow, so pull-to-refresh doesn't wait for it.
+    func refreshRemote() async {
+        serverOnline = await ClaudeClient.shared.ping()
+        await insightPass()
+        await taxonomyPass()
+        await refreshServerUsage()
+        await refreshSubscription()
+        await refreshLeaderboards()
     }
 
     /// The timetable as `Commitment`s, for the readers that haven't moved to entries yet (marker parsing, place offers,

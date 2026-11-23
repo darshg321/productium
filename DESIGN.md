@@ -15,7 +15,7 @@ changes; **all scheduling is deterministic code on the phone**.
   previous schema, and a test that decodes a saved 1.2.2 `state.json` fixture without losing anything. Never fall back
   to a fresh state for an older schema. Restores from backup files go through the same migrations.
 - **Docs:** only `README.md` (for people installing the app) and this file are in the repo. Plans (`*plan.md`) stay
-  local and untracked; the current one is `v1.3_plan.md`.
+  local and untracked.
 - Core tests: `export PATH=$HOME/.local/swift/swift-6.2.1-RELEASE-ubuntu24.04/usr/bin:$PATH; cd Packages/ProductiumCore
   && swift build --build-tests && swift test --skip-build [--filter X]`. The App only compiles on CI (no Mac).
 - Box evals without network: `cd scripts/inbox-eval && swift run -q H --v12-reference`.
@@ -82,7 +82,7 @@ App/                       SwiftUI app (iOS 17+, XcodeGen). Thin: views, service
 Shared/                    LocalStore (standard defaults, Application Support, friction keys)
 project.yml                XcodeGen spec: one app target, free Apple ID, HealthKit the only capability
 .github/workflows/ios.yml  CI (see §10)
-scripts/                   install-on-iphone.sh, make-source.py
+scripts/                   install.sh (latest release or `--dev`, with Impactor), make-source.py
                            (SideStore source), inbox-eval (runs the real box prompt against a claude-server)
 source.json                static SideStore source; CI attaches a fresh one to each release
 ```
@@ -124,6 +124,10 @@ survives. Main parts:
 - **Feedback:** `feedback` (notes typed in Settings → Backup & Restore; they travel in every export and backup).
 - **AI / misc:** `conversation`, `archive`, `usage`, `draft`, `review`, `pinnedCharts`, `telemetry`, `prefs`,
   `integrations` (health, calendar, location, motion, alarms, notifications, reminders, photos), `rewards`.
+- **Before you used it:** `AppState.trackingSince` (the first entry you told or the planner made, message, app open or
+  task). Days before it keep Health and Screen Time (sleep and screenshots compare fine) but have no log: day scores,
+  usuals, the week chart, the recap, goals' days met, the leaderboard and Where Your Time Went skip them
+  (`AppModel.isTracked`, `trackedScore`).
 - Outside state: `about-me.md`, `ai-calls.json`, `UserDefaults` (scroll log, `alarms.ledger`, charger times, the
   Reminders list id, the last screenshot seen), `drafts/` images, Keychain (API key, never exported).
 - Gone in v1.2 (do not reintroduce): commitments, one-offs, events, exceptions, situations, markers, outcomes, the
@@ -309,9 +313,10 @@ on school mornings) + bedtime / leave / missed start; the reconciler diffs with 
 ## 7. Places, signals, inferences (E, N)
 
 - `LocationService`: visits and significant changes always (Always permission, `location` background mode), a
-  `CLBackgroundActivitySession` while an entry runs, coarse points ≤1 per 5 min into `LocationTrace`, map points of
-  interest to name new places. `PlaceBook.cluster` (150 m, centre = mean of its visits); names: yours > what you logged
-  there (≥3, ≥60%) > the map. `EntryBuilder.places` gives each one-off entry the place of the visit covering most of it.
+  `CLBackgroundActivitySession` while an entry runs, coarse points ≤1 per 5 min into `LocationTrace`, reverse geocoding
+  to name new places (a landmark iOS knows there, else the street address; never the nearest business). `PlaceBook.cluster`
+  (150 m, centre = mean of its visits); names: yours > what you logged there (≥3, ≥60%) > the address. Settings → Places
+  lists every place with where its name came from; tap to rename. `EntryBuilder.places` gives each one-off entry the place of the visit covering most of it.
 - `Signals.make`: visits, motion spans, pedometer counts per walk, pickups, the charger, alarm stops (the alarm's Stop
   runs `AlarmStoppedIntent`), workouts, Health nights. `InferenceEngine.run`: plan vs reality ("You're at home, but
   school's on until 3. What happened?" Sick · No school today · Skipped), left early, missing the usual, walks
@@ -360,7 +365,7 @@ identical except `exportedAt`. Restore previews, then replaces (saving `state-be
   unsigned device build; the widget extension, then the app (with the HealthKit entitlement), ad-hoc signed.
   `concurrency: release-<branch>`. Local toolchain: `export PATH=$HOME/.local/swift/swift-6.2.1-RELEASE-ubuntu24.04/usr/bin:$PATH`.
 - Variable `BUNDLE_PREFIX` (currently `com.darshg321`) forms bundle ids `<prefix>.productium[.extension]`.
-- Install (free Apple ID, Linux): `scripts/install-on-iphone.sh` (latest release + Impactor; or pass a signed .ipa), or SideStore
+- Install (free Apple ID, Linux): `scripts/install.sh` (latest release, or `--dev`, signed with Impactor), or SideStore
   with the source `https://github.com/darshg321/productium/releases/latest/download/source.json` (needs a public
   repo). Free signing lasts 7 days; SideStore refreshes it; the app reads its own expiry (`Signature`). Free
   account limits: 3 apps, 10 App IDs / 7 days, no Family Controls, no time-sensitive entitlement, App Groups fail in
@@ -375,14 +380,17 @@ identical except `exportedAt`. Restore previews, then replaces (saving `state-be
 Tabs: Today · Schedule · Tasks · Review · Settings; token meter top right.
 - **Today (v1.3 C1, "now"):** the box (a compose field; thread with receipts, Approve / Decline, Undo, charts; typing
   stays in the view and is saved when it pauses, and Today's 30 s clock holds while the box has the keyboard), alerts,
-  the question card, the running entry (tinted by its category, elapsed, path, goal line, Stop / Done / Switch), Start
-  (the activity grid as Home Screen icons in each category's colour, 4 columns, the running one ringed and saying
-  "Running", More; long press: rename / recategorise, pin here, hide), mood, "What were you doing?" (closed untracked
+  the question card. The running entry is one row above the box (round icon, "Started h:mm" or its goal line, elapsed,
+  Done for a task, red Stop). Below: Start / Switch To, a segmented Suggested · Work · Essentials · Free over a list of
+  start buttons (Suggested = the 4 likeliest, the first marked "Usual now"; the others by category group, 6 each; All
+  opens every button and the hidden ones; long press: rename / recategorise, hide), mood, "What were you doing?" (closed untracked
   stretches today, tiles as answers), "Did these happen?" (assumed time, the last 5, Yes to All), Rings (tap: the
   day's categories), Up Next. Section titles sit above their cards (Health / Fitness style, `SectionHeader`,
   `TitledCard`). Seed categories have colours (School orange, Essentials green, Travel brown, Scrolling pink…).
-- **Schedule:** week strip + the day as entries in one style: past, assumed (dashed), running, planned; due items and
-  untracked gaps inline; swipe right Yes (or "All to Here"), left No; every row opens the entry sheet.
+- **Schedule:** week strip + the day as Calendar draws it: blocks to scale on an hour grid (overlaps side by side), a
+  red now line, scrolled to the hour before now. Past = tinted with a colour bar, assumed = paler, planned = dashed
+  outline, untracked stretches = dashed gray (tap: pick what it was). Due items in a card above. Tap a block for the
+  entry sheet; long press: It Happened / Everything Until Here / Start / Edit / Didn't Happen.
 - **Tasks:** smart list; swipes Done / Start / Clear (asks why) / Delete; a read-only task sheet (first step, the
   track-record warning) with Start / Done / Clear / Delete. No "+" or forms: the box does it (K1).
 - **Review (v1.3):** one page, every stat, no drilling in: Your Week (a banner opening `RecapView`, full-screen cards
@@ -483,7 +491,7 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
 
 ## 13. Status and known loose ends (2026-11-22)
 
-- v1.3 (`v1.3_plan.md`) is in progress on `dev`: core for M, A, B, D, E, H and the C2 comparisons is done with tests;
+- v1.3 / v1.4 are released: core for M, A, B, D, E, H and the C2 comparisons is done with tests;
   the app side is written but only compiles on CI. To check on the phone: the Now activity from the Lock Screen
   (including starting it from a `LiveActivityIntent` in the background) and uninstall → reinstall → restore.
 
@@ -498,7 +506,6 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
   **M7** is wired only for entries that `CategoryRules` leaves in Other: on iOS 26 with Apple Intelligence on,
   `OnDeviceModel.categorise` files them (not into School) and teaches `CategoryRules` the answer; otherwise they stay in
   Other until the box or the taxonomy pass files them.
-- Everything marked "checked on the phone by you" in `v1.2_plan.md` is still to check (L3).
 - ScreenOCR reads the iOS 18 layouts (written by hand) and iOS 26's Week view (from real screenshots, 1.4.1): "Last
   Week's Average", "Total Screen Time" (a week view's apps are weekly totals, scaled to a day by average ÷ total,
   `ScreenDay.dailyFactor`; averages saved wrongly by 1.4.0 are repaired on load), Pickups' average, and "First Used

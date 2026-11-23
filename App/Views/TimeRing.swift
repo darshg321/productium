@@ -9,53 +9,57 @@ struct TimeBreakdown: View {
     let ring: RingModel
     let tree: CategoryTree
     var showSleep = false
-    var limit = 7
     var onSelect: (String) -> Void = { _ in }
-
-    private func color(_ s: RingSlice) -> Color {
-        s.id == CategoryTree.untracked ? Color(.systemGray4) : Theme.color(category: s.id, tree: tree)
-    }
 
     var body: some View {
         let slices = ring.categories.filter { $0.minutes > 0 && $0.id != CategoryTree.untracked
             && (showSleep || !tree.isUnder($0.id, CategoryTree.sleep)) }
-            .sorted { $0.minutes > $1.minutes }
-        let total = max(1, slices.reduce(0) { $0 + $1.minutes })
-        let most = max(1, slices.first?.minutes ?? 1)
-        VStack(alignment: .leading, spacing: 12) {
+        let groups = CategoryGroup.allCases.compactMap { g -> (CategoryGroup, [RingSlice], Int)? in
+            let mine = slices.filter { $0.group == g }.sorted { $0.minutes > $1.minutes }
+            let total = mine.reduce(0) { $0 + $1.minutes }
+            return total > 0 ? (g, mine, total) : nil
+        }
+        let total = max(1, groups.reduce(0) { $0 + $1.2 })
+        VStack(alignment: .leading, spacing: 14) {
+            // One bar by group (four colours that are easy to tell apart), then each group with its categories.
             GeometryReader { g in
                 HStack(spacing: 2) {
-                    ForEach(slices) { s in
-                        Rectangle().fill(color(s))
-                            .frame(width: max(2, (g.size.width - CGFloat(slices.count) * 2) * CGFloat(s.minutes) / CGFloat(total)))
+                    ForEach(groups, id: \.0) { grp, _, mins in
+                        Rectangle().fill(Theme.color(group: grp))
+                            .frame(width: max(3, (g.size.width - CGFloat(groups.count) * 2) * CGFloat(mins) / CGFloat(total)))
                     }
                 }
-                .clipShape(Capsule())
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             }
-            .frame(height: 14)
+            .frame(height: 18)
             .accessibilityHidden(true)
-            ForEach(slices.prefix(limit)) { s in
-                Button { onSelect(s.id) } label: {
-                    HStack(spacing: 12) {
-                        IconTile(symbol: s.id == CategoryTree.untracked ? "questionmark" : Theme.symbol(category: s.id, tree: tree),
-                                 color: color(s))
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(alignment: .firstTextBaseline) {
+            ForEach(groups, id: \.0) { grp, mine, mins in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        HStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Theme.color(group: grp)).frame(width: 12, height: 12)
+                            Text(grp.title).font(.headline)
+                        }
+                        Spacer()
+                        Text(minutesLabel(mins)).font(.headline.monospacedDigit())
+                        Text("\(Int((Double(mins) / Double(total) * 100).rounded()))%").font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary).frame(width: 40, alignment: .trailing)
+                    }
+                    ForEach(mine) { s in
+                        Button { onSelect(s.id) } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: Theme.symbol(category: s.id, tree: tree))
+                                    .font(.subheadline).foregroundStyle(Theme.color(category: s.id, tree: tree)).frame(width: 24)
                                 Text(s.name).lineLimit(1)
                                 Spacer(minLength: 6)
                                 Text(minutesLabel(s.minutes)).monospacedDigit().foregroundStyle(.secondary)
                             }
-                            GeometryReader { g in
-                                Capsule().fill(color(s).opacity(0.85))
-                                    .frame(width: max(4, g.size.width * CGFloat(s.minutes) / CGFloat(most)), height: 5)
-                            }
-                            .frame(height: 5)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(s.name), \(minutesLabel(s.minutes))")
                     }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(s.name), \(durationLabel(s.minutes))")
             }
         }
     }

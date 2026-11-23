@@ -2,7 +2,7 @@ import SwiftUI
 import Charts
 import ProductiumCore
 
-// v1.3 C1: Home is "now", top to bottom: the box, anything waiting on you, what's running, the activity grid, mood,
+// v1.3 C1: Home is "now", top to bottom: what's running, the box, anything waiting on you, Start / Switch To, mood,
 // "What were you doing?", assumed time to confirm, today's rings, then Up Next. How the day and week went is Review.
 
 struct TodayView: View {
@@ -22,14 +22,14 @@ struct TodayView: View {
                                 .foregroundStyle(.secondary)
                                 .textCase(.uppercase)
                                 .padding(.horizontal, 4)
+                            if let r = model.running { RunningCard(entry: r, now: now) }
                             DumpBox()
                             AlertCard(now: now)
                             ForEach(model.approvals.filter { $0.turnId == nil }) { a in Card { ApprovalRow(approval: a) } }
                             if let q = model.state.inference.pending.first { QuestionCard(question: q) }
                             if model.screenshotOffer != nil { ScreenshotOfferCard() }
-                            if let r = model.running { RunningCard(entry: r, now: now) }
                         }
-                        ActivityGrid(now: now).id("grid")
+                        StartList(now: now).id("grid")
                         MoodButtons(now: now)
                         GapsCard(now: now).id("gaps")
                         AssumedCard(now: now).id("assumed")
@@ -43,7 +43,11 @@ struct TodayView: View {
                 .onChange(of: model.scrollTarget) { _, t in if let t { proxy.scrollTo(t, anchor: .top) } }
             }
             .background(Theme.background)
-            .refreshable { await model.refresh(); now = Date() }
+            .refreshable {
+                await model.refresh(full: false)
+                now = Date()
+                Task { await model.refreshRemote() }
+            }
             .onReceive(tick) { t in if !model.boxFocused { now = t } }
             .onChange(of: model.state.entries.count) { _, _ in now = Date() }
             .navigationTitle("Today")
@@ -52,123 +56,136 @@ struct TodayView: View {
     }
 }
 
-// MARK: - D1 / D6: what's running
+// MARK: - D1 / D6: what's running (design E: one row above the box)
 
 struct RunningCard: View {
     @Environment(AppModel.self) private var model
     let entry: Entry
     let now: Date
-    @State private var switching = false
-    @State private var next = ""
 
     var body: some View {
         let tree = model.state.categories
         let color = Theme.color(category: entry.category, tree: tree)
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                IconTile(symbol: Theme.symbol(category: entry.category, tree: tree), color: color, size: 44)
-                    .symbolEffect(.pulse, options: .repeating)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.title).font(.headline).lineLimit(1)
-                    Text(tree.node(entry.category)?.name ?? tree.pathText(entry.category))
-                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Text(timerInterval: entry.start...Date.distantFuture, countsDown: false)
-                    .font(.system(.title2, design: .rounded).monospacedDigit().weight(.semibold))
-                    .frame(maxWidth: 110, alignment: .trailing)
+        HStack(spacing: 12) {
+            Image(systemName: Theme.symbol(category: entry.category, tree: tree))
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(color, in: Circle())
+                .symbolEffect(.pulse, options: .repeating)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.title).font(.headline).lineLimit(1)
+                Text(model.goalLine(for: entry) ?? "Started \(entry.start.hm)")
+                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
-            if let g = model.goalLine(for: entry) { Text(g).font(.subheadline).foregroundStyle(.secondary) }
-            if switching {
-                HStack {
-                    TextField("What now?", text: $next).textFieldStyle(.roundedBorder).onSubmit(doSwitch)
-                    Button("Start", action: doSwitch).disabled(next.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+            Spacer(minLength: 6)
+            Text(timerInterval: entry.start...Date.distantFuture, countsDown: false)
+                .font(.system(.title2, design: .rounded).monospacedDigit().weight(.semibold))
+                .frame(maxWidth: 104, alignment: .trailing)
+            if let t = entry.taskId, model.state.items.contains(where: { $0.id == t && $0.isOpen }) {
+                Button { model.complete(t) } label: { circle("checkmark", .green) }
+                    .accessibilityLabel("Done")
             }
-            HStack(spacing: 8) {
-                Button { model.stopRunning(source: "home") } label: { Label("Stop", systemImage: "stop.fill").frame(maxWidth: .infinity) }
-                    .buttonStyle(.borderedProminent).tint(.red)
-                if let t = entry.taskId, model.state.items.contains(where: { $0.id == t && $0.isOpen }) {
-                    Button { model.complete(t) } label: { Label("Done", systemImage: "checkmark").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered)
-                }
-                Button { withAnimation { switching.toggle() } } label: {
-                    Label("Switch", systemImage: "arrow.left.arrow.right").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
-            .font(.subheadline.weight(.semibold))
-            .controlSize(.large)
+            Button { model.stopRunning(source: "home") } label: { circle("stop.fill", .red) }
+                .accessibilityLabel("Stop \(entry.title)")
         }
-        .padding(16)
+        .buttonStyle(TilePress())
+        .padding(14)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
     }
 
-    private func doSwitch() {
-        let t = next.trimmingCharacters(in: .whitespaces)
-        guard !t.isEmpty else { return }
-        model.start(title: t, source: "switch")
-        next = ""
-        switching = false
+    private func circle(_ symbol: String, _ color: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 36, height: 36)
+            .background(color, in: Circle())
     }
 }
 
-// MARK: - v1.3 A2: the activity grid
+// MARK: - Design E: Start / Switch To as a list, filtered by group
 
-struct ActivityGrid: View {
+struct StartList: View {
     @Environment(AppModel.self) private var model
     let now: Date
+    @State private var filter = Filter.suggested
     @State private var showMore = false
     @State private var editing: QuickStart?
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
+    enum Filter: String, CaseIterable, Identifiable {
+        case suggested = "Suggested", work = "Work", essentials = "Essentials", free = "Free"
+        var id: String { rawValue }
+    }
 
     var body: some View {
         let ranked = model.startButtons(now: now)
         let running = model.running.map { CategoryRules.key($0.title) }
+        let all = (ranked.row + ranked.more).filter { !$0.keys.contains(running ?? "") }
+        let shown = rows(all)
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader("Start", action: "All") { showMore = true }
-            if ranked.row.isEmpty && ranked.more.isEmpty {
+            SectionHeader(model.running == nil ? "Start" : "Switch To", action: "All") { showMore = true }
+            if all.isEmpty {
                 Card {
-                    Text("Say “starting …” in the box once, and it gets a tile here.")
+                    Text("Say “starting …” in the box once, and it shows up here.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             } else {
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(Array(ranked.row.enumerated()), id: \.element.id) { i, b in tile(b, slot: i, running: b.keys.contains(running ?? "")) }
-                    Button { showMore = true } label: {
-                        TileLabel(title: "More", symbol: "ellipsis", color: Color(.systemGray), on: false)
-                    }
-                    .buttonStyle(TilePress())
+                Picker("Show", selection: $filter) {
+                    ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
                 }
+                .pickerStyle(.segmented)
+                VStack(spacing: 0) {
+                    if shown.isEmpty {
+                        Text("Nothing here yet").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                    }
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { i, b in
+                        if i > 0 { Divider().padding(.leading, 58) }
+                        row(b, usual: filter == .suggested && i == 0)
+                    }
+                }
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
             }
         }
         .sheet(isPresented: $showMore) { MoreButtonsSheet(buttons: ranked.row + ranked.more) }
         .sheet(item: $editing) { b in ButtonEditor(button: b) }
     }
 
-    private func tile(_ b: QuickStart, slot: Int, running: Bool) -> some View {
-        let color = Theme.color(category: b.category, tree: model.state.categories)
-        return Button { if !running { model.start(b) } } label: {
-            TileLabel(title: b.title, symbol: b.symbol ?? Theme.symbol(category: b.category, tree: model.state.categories),
-                      color: color, on: running, pinned: b.isPinned)
+    private func rows(_ all: [QuickStart]) -> [QuickStart] {
+        let tree = model.state.categories
+        switch filter {
+        case .suggested: return Array(all.prefix(4))
+        case .work: return Array(all.filter { tree.group($0.category) == .productive }.prefix(6))
+        case .essentials: return Array(all.filter { tree.group($0.category) == .essential }.prefix(6))
+        case .free: return Array(all.filter { [.rest, .unproductive].contains(tree.group($0.category)) }.prefix(6))
         }
-        .buttonStyle(TilePress())
-        .accessibilityLabel(running ? "\(b.title), running" : "Start \(b.title)")
+    }
+
+    private func row(_ b: QuickStart, usual: Bool) -> some View {
+        let tree = model.state.categories
+        return Button { model.start(b) } label: {
+            HStack(spacing: 14) {
+                IconTile(symbol: b.symbol ?? Theme.symbol(category: b.category, tree: tree),
+                         color: Theme.color(category: b.category, tree: tree), size: 30)
+                Text(b.title).foregroundStyle(.primary).lineLimit(1)
+                Spacer(minLength: 8)
+                if usual { Text("Usual now").font(.subheadline).foregroundStyle(.secondary) }
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start \(b.title)")
         .contextMenu {
             Button("Rename or Change Category", systemImage: "pencil") { editing = b }
-            if b.isPinned {
-                Button("Unpin", systemImage: "pin.slash") { model.pinTile(b, at: nil) }
-            } else {
-                Button("Pin Here", systemImage: "pin") { model.pinTile(b, at: slot) }
-            }
             Button("Hide", systemImage: "eye.slash", role: .destructive) { model.hideTile(b) }
         }
     }
 }
 
-/// A Home Screen icon: the category's colour, its symbol in white, the name under it. The running one has a ring
-/// around it and says "Running" (colour is never the only cue).
+/// A Home Screen icon: the category's colour, its symbol in white, the name under it (onboarding's activity picker).
 struct TileLabel: View {
     let title: String
     let symbol: String
@@ -478,19 +495,21 @@ struct UpNextCard: View {
                 }
                 ForEach(Array(ordered.enumerated()), id: \.element.id) { i, b in
                     let item = b.itemId.flatMap { id in items.first { $0.id == id } }
-                    let color = item.map { Theme.color(category: $0.category ?? CategoryTree.studying, tree: tree) } ?? Theme.focus
-                    if i > 0 { Divider() }
+                    // Each task keeps the colour and kind symbol it has in Tasks, so two sessions of different tasks never look alike.
+                    let color = item.map { Theme.color(for: $0, in: model.state) } ?? Theme.focus
+                    let name = Theme.session(b.title)
+                    if i > 0 { Divider().padding(.leading, 46) }
                     HStack(alignment: .center, spacing: 12) {
-                        Capsule().fill(color).frame(width: 4)
+                        IconTile(symbol: item?.kind.symbol ?? "pencil.line", color: color, size: 34)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(b.title).font(.body.weight(.medium)).lineLimit(1)
-                            Text("\(b.start.hm) · \(durationLabel(b.minutes))").font(.subheadline).foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            Text(name.title).font(i == 0 ? .headline : .body).lineLimit(1)
+                            Text("\(b.start.hm) – \(b.end.hm)" + (name.part.map { " · \($0)" } ?? ""))
+                                .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer(minLength: 4)
                         if let item {
                             Button { model.startTask(item) } label: { Image(systemName: "play.fill") }
-                                .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
+                                .buttonStyle(.borderedProminent).buttonBorderShape(.circle).tint(color)
                                 .accessibilityLabel("Start \(item.title)")
                             Menu {
                                 Button("Done", systemImage: "checkmark") { model.complete(item.id) }

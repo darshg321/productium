@@ -48,7 +48,7 @@ func metricSymbolColor(_ id: MetricID) -> Color {
 
 struct MetricsSection: View {
     @Environment(AppModel.self) private var model
-    @State private var period: MetricPeriod = .week
+    let period: MetricPeriod
     @State private var editing = false
 
     var body: some View {
@@ -56,10 +56,6 @@ struct MetricsSection: View {
         let cal = Calendar.current
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader("Life Metrics", action: "Edit") { editing = true }
-            Picker("Period", selection: $period) {
-                ForEach(MetricPeriod.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                 ForEach(model.state.metricTiles, id: \.self) { id in
                     if let s = series[id], Metrics.compare(s, period: period, now: Date(), calendar: cal).current != nil {
