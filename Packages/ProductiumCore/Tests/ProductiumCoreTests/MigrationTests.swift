@@ -13,6 +13,15 @@ final class MigrationTests: XCTestCase {
     func encoder() -> JSONEncoder { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.outputFormatting = .sortedKeys; return e }
     func object(_ d: Data) throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: d) as? [String: Any]) }
 
+    func testSchema7FoldsRetiredButtonsAndAddsSubjectStudy() throws {
+        let s = try decoder().decode(AppState.self, from: try Self.fixture())
+        XCTAssertNil(s.quickStarts.live.first { $0.key == "walking" && $0.origin == .template })
+        XCTAssertTrue(s.quickStarts.button(for: "Commute")?.keys.contains("walking") ?? false)
+        let subjects = s.categories.children(CategoryTree.school).map(\.name)
+        for name in subjects { XCTAssertNotNil(s.quickStarts.button(for: "\(name) study"), name) }
+        XCTAssertTrue(s.entries.allSatisfy { $0.focus == nil })
+    }
+
     func testFixtureIsSchema4() throws {
         XCTAssertEqual(Migrations.storedSchema(try Self.fixture()), 4)
     }

@@ -232,7 +232,12 @@ final class AppModel {
         await syncMotion()
         estimateSleep()
         syncCalendar()
-        if !state.quickStarts.seedSubjects(tree: &state.categories, at: Date()).isEmpty { log(.log, "subject_buttons") }
+        var tree = state.categories, buttons = state.quickStarts
+        if !buttons.seedSubjects(tree: &tree, at: Date()).isEmpty {
+            state.categories = tree
+            state.quickStarts = buttons
+            log(.log, "subject_buttons")
+        }
         syncScreen()
         await refreshLog()
         learnCapacities()

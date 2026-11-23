@@ -1,0 +1,31 @@
+# v1.5: backfill, extend, Done clears the plan, wake change, rings back a day, rotation.
+scenario today
+say productium development since 10 mins ago
+wait 1
+dump 01-backfill
+shot 01-backfill
+stop
+say woke up at 7:15
+say out of bed
+wait 1
+shot 02-getting-ready
+stop
+say wake 7:30 on school days
+wait 1
+tab settings
+shot 03-settings
+say today is a day 2
+tab schedule
+shot 04-schedule-rotation
+tab today
+start-next
+wait 1
+shot 05-running-task
+stop
+scroll ring
+shot 06-rings
+scroll assumed
+shot 07-assumed-queue
+tab review
+shot 08-review
+dump 09-end

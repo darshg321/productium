@@ -94,8 +94,9 @@ every exhaustive `switch` in `App/Views/Theme.swift` and core.
 
 ## 2. Data model (`AppState`, one Codable struct, persisted as `state.json` in Application Support)
 
-`AppState.schema = 6` (v1.3: 5 = grid templates and prompt severities, 6 = seed category colours, Transition and
-Messaging, `feedback`). Schema 4 (v1.2.2) and later migrate: `AppState.init(from:)` decodes leniently, then
+`AppState.schema = 7` (v1.3: 5 = grid templates and prompt severities, 6 = seed category colours, Transition and
+Messaging, `feedback`; v1.5: 7 = `Entry.focus`, Walking / Homework / Class buttons folded into Commute and Studying,
+a "<subject> study" button per class subject). Schema 4 (v1.2.2) and later migrate: `AppState.init(from:)` decodes leniently, then
 `Migrations.upgrade` runs one step per bump (state.json, restores and backups all go through it; the app keeps the old
 file as `state-schema-<n>.json`). Below 4 decodes as fresh; a format-3 export is refused. `MigrationTests` decode the
 1.2.2 fixture (`Tests/…/Fixtures/state-1.2.2.json`, the `history` scenario saved by the phone) and check every field
@@ -162,6 +163,12 @@ work) → `finish` (adds wind-down, sleep, free/gap blocks, warnings, shortfalls
   floors at 10 (15 if unfinished). `Planner.shownMinutes` converts back to the student's terms for warnings.
 - Hard work scores into the student's real peak hours (`EnergyModel` alertness × learned hour reliability).
 - Block length ≤ `BehaviourPolicy.maxBlockMinutes`; a break (`study.breakMinutes`) follows each block.
+- v1.5 C1–C2: sessions are titled with the task's name only (no "· 2 of 3"). No session is cut shorter than
+  `Planner.minSession` (30 min, reading 25) except a leftover; a second session of a task on the same day scores much
+  lower; `mergeAdjacent` joins two sessions of a task with only a break between (up to 75 min or the day's rule cap).
+- C5: a task that doesn't fit gets one warning (`PlanWarning.shortfall`, dismissed per task, not per wording) with
+  Shorten (estimate − shortfall) · Move Due (+1 day) · Keep.
+- B5: Done or Clear removes every planned session of the task (past ones too), so Schedule keeps only what you tracked.
 - At-school errands (`WorkItem.isAtSchoolErrand`: `atSchool` flag, or chore starting ask/email/tell… with a
   teacher word) are not study: `placeErrands` puts one `.event` block (with `itemId`) inside school hours (a
   Lunch/break period if the timetable has one, else 10 min after school starts), before the due time, and
@@ -200,6 +207,13 @@ Sleep's start. At 10:00, if nothing measured the night: "Slept about 23:20–7:0
 
 ### 3.4 The log, the ring, the forecast
 
+v1.5: `Days.expand` drops a planned trip or routine (a `plan` entry or unconfirmed series under Travel / Essentials)
+when you tracked the same thing yourself (same category, any Travel counts as the same; overlapping or starting within
+45 min; ≥3 min or running): the planned "Walk home" and the Walking you tracked are one walk (`Days.superseding`).
+A stop under a minute after a start removes the entry ("Cancelled", a mis-tap). Work you finish (≥10 min, a task or
+under Work) asks how focused you were (Not Very · Normal · Very → `Entry.focus` 1–3, 0 = skipped; `TimeLog.unratedWork`,
+`focusMinutes`; Review → Focused Work).
+
 `TimeLog.past` resolves a range; an Untracked slice of 15 minutes or less with something on both sides becomes Transition
 (Essentials › Transition, already confirmed, not editable). The tracking goal is no untracked waking stretch over 15
 minutes (`TrackPrompts.goalMinutes`: the Tracked ring's gaps, Goals, Schedule's Untracked rows; "What are you up to?"
@@ -220,7 +234,9 @@ and the best / hardest hour.
 
 ### 3.4a The activity grid and the Now activity (v1.3 A, B)
 
-- `QuickStartTemplate.all` (20) seed the grid (onboarding unticks; the 4 → 5 migration adds them). Tiles have `origin`
+- `QuickStartTemplate.all` (17; v1.5: one button per distinction worth comparing: Commute covers walking / the bus /
+  driving as aliases, Studying covers homework, and `seedSubjects` adds "<subject> study" under Work › Studying for each
+  class subject) seed the grid (onboarding unticks; the 4 → 5 migration adds them). Tiles have `origin`
   (template / you / ai), `symbol`, `pin` (a slot), `edited` (you renamed / recategorised / pinned: the AI leaves it),
   `aliases` (titles merged in). `ranked` scores each past start by time of day (σ 45 min), same kind of day (school /
   free + labels; other kinds ×0.25), weekday, place, "after what just ended", halving every 21 days; ties in template
@@ -232,6 +248,9 @@ and the best / hardest hour.
   severity is Live Activity. The app mirrors it into `NowAttributes` (Shared) and the widget draws it; buttons are
   `NowActionIntent(action:)` run in the app (`AppModel.nowAction`). Synced after every replan and on going inactive;
   renewed after 7 h in the foreground (iOS ends it at 8).
+- v1.5 D1: a running task session's card counts down to the planned session's end (`NowCard.ends`), says what's next,
+  and has Done (`done:<task>`) · +15 (`extend:<task>:15`) · Stop. `NowAttributes.ContentState.busy` shows "Sorting
+  categories" etc. while Claude works in the background (also on Today's date line, `AppModel.aiWorking`).
 
 ### 3.5 Notifications and prompts
 
@@ -242,9 +261,12 @@ the Now activity isn't showing. `NudgePlanner.plan` and the app's final list are
 rings bedtime / leave / missed start only when set to Alarm; the wake alarm when `.wake` is Alarm; any other
 notification whose kind is Alarm also rings (`PromptSettings.alarms(from:)`, `PlannedAlarm.Kind.prompt`). `NudgeSettings`
 keeps only `level` and `arrivingHome` in use (the toggles are migrated). The box sets one with `prompt.<kind>`.
-`NudgePlanner.plan`: task starts (H4: first step · minutes, sessions done, what it leads to), one lead-up, at most
-one follow-up (none while you track something else), wind-down, bedtime, leave, deadlines, check-in, intentions. No
-"How did it go?". `TrackPrompts`: "What are you up to?" at 25 min untracked then every 30; quiet in sleep, wind-down,
+`NudgePlanner.plan`: task starts (H4: first step · minutes, what it leads to), one lead-up, at most one follow-up
+(none while you track something else; v1.5 D1: neither while the Live Activity shows), the running session's end
+(`sessionEnd`, `SESSION_END`: +15 · +30 · Finish Tomorrow · Done, with the stand-up break after ~85 min of work folded
+in), wind-down, bedtime, leave, deadlines, check-in, intentions. No "How did it go?". D2: the app keeps at most
+`NudgePlanner.dailyCap` (8) a day, least important dropped first (`capped`; alarms aren't counted), and logs what it
+dropped. There's no expiry notification (the Home card still warns 2 days ahead). `TrackPrompts`: "What are you up to?" at 25 min untracked then every 30; quiet in sleep, wind-down,
 planned study and before wake; stops after 2 ignored that day; past stretches asked once in the past tense; the top 3
 start buttons are its actions. The running entry's passive notification every 10 min. Categories live in core
 (`NotificationCategory`); copy may invite a reply only with a text field (`testReplyCopyHasTextField`). Alarms:
@@ -254,8 +276,12 @@ on school mornings) + bedtime / leave / missed start; the reconciler diffs with 
 ## 4. The box (Part 0, O6–O8)
 
 - Everything said goes through `AppModel.submit`: saved to the `Outbox` (and disk) first, then `QuickParse` (start,
-  "I'm showering (now)" → the tile whose name matches the -ing word, stop / done, "X from A to B", mood, "school as usual"; certain or pass, no network), then Sonnet inside a
-  background task. A reply from a notification always gets a quiet receipt; unsent ones retry on launch and refresh.
+  "I'm showering (now)" → the tile whose name matches the -ing word, stop / done, "X from A to B", mood, "school as usual";
+  v1.5 B3: "X since 11:15", "X since 10 mins ago", "X 5 minutes ago", "woke up (at 7:15)" (ends the night),
+  "out of bed" (starts Getting ready), "done getting ready" (today's assumed occurrence ends now), a tile's name alone
+  ("shower"), "today is a day 2"; titles never keep time words and no button is made from one; certain or pass, no
+  network), then Sonnet inside a background task. C4: the reply follows the receipt (`BoxReceipt.honest`): when nothing
+  asked for worked it says so, and failures are added to a partial success. A reply from a notification always gets a quiet receipt; unsent ones retry on launch and refresh.
 - Sonnet: `BoxPrompt.system()` (fixed, < 6,500 characters, cached), `BoxContext.make` (Settings, About Me, the
   running entry, the series, yesterday … +7 days with refs and flags, open tasks, track record, goals, places, rules,
   the category tree), forced tool `BoxSchema.result` (`ops`, `reply`, `gap`, `queries`, `facts`), lenient
@@ -295,6 +321,9 @@ on school mornings) + bedtime / leave / missed start; the reconciler diffs with 
   charger/alarm/Focus, `checkIn`, `checkInIgnored`, `estimated`). A session with no end is credited the median of
   that app's observed sessions (prior 8 min, cap 30), marked estimated. `calibrate` stores per-app over-count
   factors from screenshots ("Shortcuts over-counts Instagram ~1.4×").
+- v1.5 E1: "Opened an App" sending the word "App" (its App field not set to Shortcut Input; `AppKinds.isPlaceholder`)
+  is ignored and Settings → Screen Time says how to fix it (Test It waits for the next app's name). E3: OCR rows that
+  are a stray time or symbol aren't apps (`ScreenOCR.isAppName`); a reading whose apps add up to over 24 h is refused.
 - v1.3 every app: the "Opened an App" intent (`OpenedAppIntent`, an "App is opened" automation with every app ticked
   and App = Shortcut Input) calls `AppModel.appOpened`: `ScrollLog.seen` ends what was open and starts that app's
   session (`ScrollSession.scrolling` false for apps not on the list; the pause automation's repeat within 15 s is the same
@@ -339,7 +368,8 @@ One JSON file, `format: productium-export`, `version: 4` (format 3 and older are
 feedback), `aboutMe`,
 `callLog`, `sharedDefaults`, `appDefaults`, `files` (every file in the container/Documents not otherwise
 represented, base64, includes `drafts/` and `last-ai-error.txt`), pending/delivered notifications, permission
-statuses, device info, server snapshots. Nothing is pruned before export. API key excluded. A test checks every
+statuses, device info, server snapshots. `ExportFiles.keep` decides which files go in and come back (relative paths
+only; never Library, Backups/ or an absolute path). Nothing is pruned before export. API key excluded. A test checks every
 `AppState` property is exported (`ExportTests.populated()` must set any new field) and that round-trip is
 identical except `exportedAt`. Restore previews, then replaces (saving `state-before-restore.json`).
 
@@ -348,6 +378,10 @@ identical except `exportedAt`. Restore previews, then replaces (saving `state-be
 - Server: claude-server on a Raspberry Pi over Tailscale (separate repo `../claude-server`), Anthropic-compatible
   `/v1/messages` with images, `output_config.effort`, `cache_control ttl 1h`, `/v1/subscription`, usage endpoint.
   `ClaudeClient` (App) sends, retries once, logs every call (`AICall`) to `AICallLog` (kept in full).
+- The category tidy-up (`TaxonomyPass`, v1.5): at most every 4 hours (foreground or background refresh) when 3+
+  things you logged went into Other or new / thin leaves, else weekly; ops merge / rename / move / create and `file`
+  (a title in Other → an existing node, its entries move and `CategoryRules` learns it). Splits only where you'd
+  compare (study per subject); ways of getting somewhere are one Travel. Its runs are revertible.
 - `AIFeature.route`: box, project steps (breakdown), the weekly note / insight pass and the category tidy-up → Sonnet /
   low effort. Only output tokens count toward the daily budget (`UsageLedger`, default 10k); over budget, background
   AI waits (the box always works). Screenshots ≤1280 px.
@@ -381,16 +415,19 @@ Tabs: Today · Schedule · Tasks · Review · Settings; token meter top right.
 - **Today (v1.3 C1, "now"):** the box (a compose field; thread with receipts, Approve / Decline, Undo, charts; typing
   stays in the view and is saved when it pauses, and Today's 30 s clock holds while the box has the keyboard), alerts,
   the question card. The running entry is one row above the box (round icon, "Started h:mm" or its goal line, elapsed,
-  Done for a task, red Stop). Below: Start / Switch To, a segmented Suggested · Work · Essentials · Free over a list of
+  + (15 / 30 more minutes, finish tomorrow) and Done for a task, red Stop); tap "Started" to correct the start (B2), and
+  long press a start button for "5 · 10 · 15 · 30 min ago · Pick a Time" (B1). Below: Start / Switch To, a segmented Suggested · Work · Essentials · Free over a list of
   start buttons (Suggested = the 4 likeliest, the first marked "Usual now"; the others by category group, 6 each; All
   opens every button and the hidden ones; long press: rename / recategorise, hide), mood, "What were you doing?" (closed untracked
-  stretches today, tiles as answers), "Did these happen?" (assumed time, the last 5, Yes to All), Rings (tap: the
-  day's categories), Up Next. Section titles sit above their cards (Health / Fitness style, `SectionHeader`,
+  stretches today, tiles as answers), "Did these happen?" (a queue, oldest first, the next one peeking out below
+  (`PeekStack`); Heads Up warnings queue the same way), the focus question, Rings (swipe back through earlier days,
+  `RingPager` over `ringDays`; tap: the day's categories), Up Next (time and length, ⋯: +15 / +30 min). Section titles sit above their cards (Health / Fitness style, `SectionHeader`,
   `TitledCard`). Seed categories have colours (School orange, Essentials green, Travel brown, Scrolling pink…).
-- **Schedule:** week strip + the day as Calendar draws it: blocks to scale on an hour grid (overlaps side by side), a
+- **Schedule:** week strip (D1 / D2 under rotating-timetable days, `Rotation`) + the day as Calendar draws it: blocks to scale on an hour grid (overlaps side by side), a
   red now line, scrolled to the hour before now. Past = tinted with a colour bar, assumed = paler, planned = dashed
   outline, untracked stretches = dashed gray (tap: pick what it was). Due items in a card above. Tap a block for the
-  entry sheet; long press: It Happened / Everything Until Here / Start / Edit / Didn't Happen.
+  entry sheet (the planned Sleep opens Sleep settings); long press: It Happened / Everything Until Here / Start / Edit /
+  Didn't Happen.
 - **Tasks:** smart list; swipes Done / Start / Clear (asks why) / Delete; a read-only task sheet (first step, the
   track-record warning) with Start / Done / Clear / Delete. No "+" or forms: the box does it (K1).
 - **Review (v1.3):** one page, every stat, no drilling in: Your Week (a banner opening `RecapView`, full-screen cards
@@ -489,7 +526,18 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
   timing earlier and added about 47 min of weeknight sleep, but it was a package with devices, so the nudge only
   suggests ten minutes outside on days with nothing fixed.
 
-## 13. Status and known loose ends (2026-11-22)
+## 13. Status and known loose ends (2026-11-23)
+
+- v1.5 (on `dev`): see the sections above. Also: `AppModel.refresh` runs one at a time and at most every 15 s
+  (`force` for pull-to-refresh, the test runner and Settings), unlocking only refreshes when the app is in front or the
+  last refresh is 30 min old, and the background refresh runs the taxonomy pass. Today's heavy reads (start buttons,
+  rings per day, today's log) are memoised per minute and per log change (`AppModel.memo`, `MemoKey`; array equality is
+  O(1) when nothing changed) and log `lifecycle.perf` when one takes ≥100 ms. A run that never reached the background
+  logs `lifecycle.unclean_exit` with the 20 events before it at the next launch (`app.runActive`). Wake and sleep are
+  settings in your words (`wake` "7:30" / "9:00 free days" turns off working back from the first class; `sleep` "9h";
+  `rotation` "today 2"), Settings → Sleep says when Health has no sleep, calendar events are filed by title through
+  `CategoryRules` (`CalendarEntries.merge(classify:)`), and Places can be merged. Not done: screenshots in the
+  Shortcuts guide.
 
 - v1.3 / v1.4 are released: core for M, A, B, D, E, H and the C2 comparisons is done with tests;
   the app side is written but only compiles on CI. To check on the phone: the Now activity from the Lock Screen
