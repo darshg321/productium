@@ -17,20 +17,20 @@
       "category": "productivity",
       "versions": [
         {
-          "version": "1.4.3",
-          "buildVersion": "57",
-          "date": "2026-11-23T17:34:50Z",
-          "localizedDescription": "See https://github.com/darshg321/productium/releases/tag/v1.4.3",
+          "version": "1.5.0",
+          "buildVersion": "64",
+          "date": "2026-11-23T23:38:23Z",
+          "localizedDescription": "See https://github.com/darshg321/productium/releases/tag/v1.5.0",
           "downloadURL": "https://github.com/darshg321/productium/releases/latest/download/Productium-free.ipa",
-          "size": 5272984,
+          "size": 5478134,
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.4.3",
-      "versionDate": "2026-11-23T17:34:50Z",
-      "versionDescription": "See https://github.com/darshg321/productium/releases/tag/v1.4.3",
+      "version": "1.5.0",
+      "versionDate": "2026-11-23T23:38:23Z",
+      "versionDescription": "See https://github.com/darshg321/productium/releases/tag/v1.5.0",
       "downloadURL": "https://github.com/darshg321/productium/releases/latest/download/Productium-free.ipa",
-      "size": 5272984,
+      "size": 5478134,
       "appPermissions": {
         "entitlements": [],
         "privacy": {}
