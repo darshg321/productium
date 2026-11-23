@@ -112,7 +112,7 @@ extension CategoryGroup {
         case .productive: return "blue"
         case .essential: return "green"
         case .rest: return "yellow"
-        case .unproductive: return "teal"
+        case .unproductive: return "pink"
         }
     }
 }

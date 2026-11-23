@@ -57,24 +57,9 @@ extension AppModel {
                       tree: state.categories, limit: ringLimit, now: Date(), book: state.dayRules, calendar: cal)
     }
 
-    /// Your usual day of this kind (Review → Day shows today's rings beside it).
-    func usualRings(_ day: Date) -> DayRings? {
-        DayRings.usual(before: day, isSchoolDay: isSchoolDay, rings: rings, calendar: cal)
-    }
-
     /// The Work ring closing gets the goal celebration (once a day; the Tracked ring has the tracked-day one at bedtime).
     func checkRings() {
         if rings(Date()).workClosed { celebrate(.goalClosed(title: "Work", weekly: false, daysThisMonth: nil)) }
-    }
-
-    /// C2: "Studying +40 min, Scrolling −25 min" against the median of the last 4 days of the same kind.
-    func whatChanged(_ day: Date) -> String? {
-        let school = isSchoolDay(day)
-        let usual = (1...28).compactMap { cal.date(byAdding: .day, value: -$0, to: cal.startOfDay(for: day)) }
-            .filter { isSchoolDay($0) == school }.prefix(4)
-            .map { DayCompare.minutes($0, entries: state.entries, tree: state.categories, now: Date(), book: state.dayRules, calendar: cal) }
-        let today = DayCompare.minutes(day, entries: state.entries, tree: state.categories, now: Date(), book: state.dayRules, calendar: cal)
-        return DayCompare.line(DayCompare.changes(today: today, usual: Array(usual), tree: state.categories))
     }
 
     // MARK: A: the activity grid

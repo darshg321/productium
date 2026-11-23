@@ -192,6 +192,15 @@ public struct AppState: Codable, Sendable {
 
     public init() {}
 
+    /// When you started using Productium: the first thing you told it, planned, typed or opened. Days before it have
+    /// Health and Screen Time data (comparable) but no log, so nothing log-based (scores, work, tracked, categories)
+    /// counts them.
+    public var trackingSince: Date? {
+        let told = entries.lazy.filter { $0.source == .you || $0.source == .plan }.map(\.createdAt).min()
+        let said = (archive.conversations.flatMap(\.turns) + conversation.turns).map(\.at).min()
+        return [told, said, appOpens.min(), items.map(\.createdAt).min()].compactMap { $0 }.min()
+    }
+
     // Lenient so a build that adds a field never wipes stored data.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)

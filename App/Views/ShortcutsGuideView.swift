@@ -158,23 +158,31 @@ struct Recipe: Identifiable {
     static let blank = "Tap **Create New Shortcut** (some versions call it **New Blank Automation**), then **Add Action**."
 
     static let scrolling: [Recipe] = [
-        Recipe(id: "every", title: "Screen Time for Every App", trigger: "When any app is opened or closed",
+        Recipe(id: "every", title: "Screen Time for Every App", trigger: "One automation: when any app opens",
                symbol: "apps.iphone", color: .teal,
-               why: "Productium logs how long you spend in each app, all the time. Apps you scroll on go under Scrolling (each its own), messaging apps (Discord, Messages, WhatsApp) under Messaging. It's assumed time you can confirm with one tap, and anything you track yourself wins: a Discord call while you do homework is homework. Your log and Review update the moment you leave an app. It replaces “End Scrolling When You Open Another App”.",
+               why: "Each time you open an app, Shortcuts tells Productium which one. Productium then counts your time in every app and fills in your day: apps you scroll on as Scrolling, messaging apps as Messaging. Anything you track yourself always wins.",
                parts: [
-                Part(title: "When an app opens", steps: start("Tap **App**.") + [
-                    "Tap **Choose** and tick every app you use (the more, the better). Tap **Done**.",
-                    "Leave **Is Opened** ticked and untick **Is Closed**.",
-                    runNow, blank,
-                    "Search for **Opened an App** (Productium) and tap it.",
-                    "Tap **App** in the action and choose **Shortcut Input**. Tap **Done**.",
-                ], note: "If Shortcut Input isn't offered, make one automation per app and type its name in App instead."),
-                Part(title: "When an app closes", steps: [
-                    "Make the same automation again, but untick **Is Opened** and tick **Is Closed**.",
-                    "Use **Closed a Distracting App** (Productium) with **App** set to **Shortcut Input**.",
-                ], note: "Closing is optional (opening the next app ends the last one) but makes the minutes exact."),
+                Part(title: "Make the automation", steps: [
+                    "Open the **Shortcuts** app and tap **Automation** at the bottom.",
+                    "Tap **+** in the top right (or **New Automation** if it's empty).",
+                    "Scroll down to **App** and tap it.",
+                    "Tap **Choose**. Tick every app on your phone, one by one. Tap **Done**.",
+                    "Make sure **Is Opened** has a tick and **Is Closed** doesn't.",
+                    "Tap **Run Immediately**, then turn **Notify When Run** off. Tap **Next**.",
+                    "Tap **Create New Shortcut**.",
+                ]),
+                Part(title: "Add the Productium action", steps: [
+                    "In the search bar at the bottom, type **Opened an App** and tap it.",
+                    "The action reads **Opened an App App**. Tap the blue word **App**.",
+                    "Above the keyboard, tap **Shortcut Input**. The action now reads **Opened an App Shortcut Input**.",
+                    "Tap **Done** in the top right.",
+                ], note: "No Shortcut Input above the keyboard? Make one automation per app instead, and type the app's name where it says App."),
+                Part(title: "Check it works", steps: [
+                    "Open any other app for a few seconds, then come back to Productium.",
+                    "Go to **Settings → Screen Time**. Under **Working?** it shows the app you just opened.",
+                ]),
                ],
-               tip: "Then tick the apps you scroll on in Settings → Screen Time → Scrolling Apps. Every app you open shows up there."),
+               tip: "New apps you install need ticking in the automation too."),
         Recipe(id: "pause", title: "Pause Before Scrolling", trigger: "When Instagram, TikTok… is opened",
                symbol: "hand.raised.fill", color: .purple,
                why: "Opening one of those apps brings up a short pause in Productium with something better to do. Tap “Go back anyway” and there's no pause for 10 minutes. In a study, a pause like this cut how often people opened those apps by more than half.",

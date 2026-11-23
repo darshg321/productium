@@ -65,7 +65,6 @@ struct RingArc: View {
 /// The word and the number beside each ring, in its colour (Activity style).
 struct RingLegendRows: View {
     let rings: DayRings
-    var usual: DayRings?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -127,7 +126,7 @@ struct RingDaySheet: View {
             List {
                 Section {
                     ActivityRings(rings: model.rings(day), lineWidth: 18).frame(height: 170).frame(maxWidth: .infinity)
-                    RingLegendRows(rings: model.rings(day), usual: model.usualRings(day))
+                    RingLegendRows(rings: model.rings(day))
                 }
                 Section("Where the Time Went") {
                     ForEach(rows, id: \.id) { r in

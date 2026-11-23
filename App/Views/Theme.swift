@@ -123,6 +123,13 @@ enum Theme {
         id == CategoryTree.untracked ? "questionmark.circle" : (tree.node(id)?.symbol ?? "circle")
     }
 
+    /// "Data practice test · 2 of 3" → ("Data practice test", "Part 2 of 3").
+    static func session(_ title: String) -> (title: String, part: String?) {
+        guard let r = title.range(of: #"\s*·\s*(\d+) of (\d+)$"#, options: .regularExpression) else { return (title, nil) }
+        let part = title[r].replacingOccurrences(of: "·", with: "").trimmingCharacters(in: .whitespaces)
+        return (String(title[..<r.lowerBound]), "Part " + part)
+    }
+
     static func meter(_ fraction: Double) -> Color {
         fraction >= 1 ? .red : fraction >= 0.8 ? .orange : .green
     }
@@ -173,7 +180,6 @@ struct CardHeader: View {
     let symbol: String
     let color: Color
     var detail: String?
-    var chevron = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -183,9 +189,6 @@ struct CardHeader: View {
             Spacer(minLength: 8)
             if let detail {
                 Text(detail).font(.footnote).foregroundStyle(.secondary)
-            }
-            if chevron {
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
             }
         }
     }
@@ -260,7 +263,6 @@ struct StatTile: View {
     let color: Color
     let value: String
     var unit: String?
-    var caption: String?
     var progress: Double?
 
     var body: some View {
@@ -281,17 +283,6 @@ struct StatTile: View {
         .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
-    }
-}
-
-struct SectionTitle: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-    var body: some View {
-        Text(text).font(.title3.weight(.bold))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 8)
-            .accessibilityAddTraits(.isHeader)
     }
 }
 

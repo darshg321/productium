@@ -8,6 +8,8 @@ import ProductiumCore
 
 struct ReviewView: View {
     @Environment(AppModel.self) private var model
+    /// One period for everything below "Over Time" (Where Your Time Went and Life Metrics).
+    @State private var period: MetricPeriod = .week
 
     var body: some View {
         @Bindable var m = model
@@ -18,13 +20,23 @@ struct ReviewView: View {
                         RecapBanner().id("recap")
                         TodaySummaryCard().id("today")
                         GlanceGrid().id("stats")
-                        ScoreWeekCard().id("week")
-                        WhereTimeWentCard().id("time")
                         ScreenTimeCard().id("screen")
+                        ScoreWeekCard().id("week")
                         GoalsCard().id("goals")
-                        HowYouWorkCard().id("work")
+                        VStack(alignment: .leading, spacing: 12) {
+                            SectionHeader("Over Time")
+                            Picker("Period", selection: $period) {
+                                Text("Day").tag(MetricPeriod.day)
+                                Text("Week").tag(MetricPeriod.week)
+                                Text("Month").tag(MetricPeriod.month)
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                        .id("time")
+                        WhereTimeWentCard(period: period)
+                        MetricsSection(period: period).id("metrics")
                         MoodMapCard().id("mood")
-                        MetricsSection().id("metrics")
+                        HowYouWorkCard().id("work")
                         PinnedList().id("pinned")
                         LeaderboardCard().id("leaderboard")
                         WeeklyNoteCard().id("note")
@@ -35,7 +47,7 @@ struct ReviewView: View {
                 .onChange(of: model.scrollTarget) { _, t in if let t { proxy.scrollTo(t, anchor: .top) } }
             }
             .background(Theme.background)
-            .refreshable { await model.insightPass(force: true) }
+            .refreshable { Task { await model.insightPass(force: true) } }
             .navigationTitle("Review")
             .usageMeter()
             .fullScreenCover(isPresented: $m.showRecap) { RecapView() }
@@ -134,7 +146,7 @@ struct GlanceGrid: View {
         let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now)) ?? now
         let planned = model.plannedShare(tomorrow)
         let screen = model.appMinutesToday().reduce(0) { $0 + $1.minutes }
-        let week = (0..<7).compactMap { cal.date(byAdding: .day, value: -$0, to: cal.startOfDay(for: now)) }.map(model.dayScore)
+        let week = (0..<7).compactMap { cal.date(byAdding: .day, value: -$0, to: cal.startOfDay(for: now)) }.compactMap(model.trackedScore)
         let due = week.reduce(0) { $0 + $1.deadlinesDue }, met = week.reduce(0) { $0 + $1.deadlinesMet }
         let slept = model.state.health.first { cal.isDateInToday($0.day) }?.sleepMinutes
         VStack(alignment: .leading, spacing: 8) {
@@ -166,7 +178,7 @@ struct GlanceGrid: View {
 
 struct WhereTimeWentCard: View {
     @Environment(AppModel.self) private var model
-    @State private var period: MetricPeriod = .day
+    let period: MetricPeriod
     @State private var drill: String?
 
     var body: some View {
@@ -176,12 +188,6 @@ struct WhereTimeWentCard: View {
         let ring = RingModel.make(entries: model.state.entries, tree: model.state.categories, range: range, now: now, forecast: [:],
                                   book: model.state.dayRules, calendar: cal)
         TitledCard("Where Your Time Went") {
-            Picker("Period", selection: $period) {
-                Text("Day").tag(MetricPeriod.day)
-                Text("Week").tag(MetricPeriod.week)
-                Text("Month").tag(MetricPeriod.month)
-            }
-            .pickerStyle(.segmented)
             HStack(alignment: .top) {
                 LabeledNumber(label: "Tracked", value: minutesLabel(ring.trackedMinutes))
                 LabeledNumber(label: "Untracked", value: minutesLabel(ring.untrackedMinutes))
@@ -195,7 +201,10 @@ struct WhereTimeWentCard: View {
 
     private func range(_ now: Date, _ cal: Calendar) -> DateInterval {
         let unit: Calendar.Component = period == .day ? .day : period == .week ? .weekOfYear : .month
-        return cal.dateInterval(of: unit, for: now) ?? Days.dayInterval(now, cal)
+        let r = cal.dateInterval(of: unit, for: now) ?? Days.dayInterval(now, cal)
+        // Before you used Productium there's no log: those days aren't Untracked, they're not counted.
+        let start = max(r.start, model.trackingStart)
+        return DateInterval(start: min(start, r.end), end: r.end)
     }
 }
 
@@ -340,18 +349,18 @@ struct GoalsCard: View {
 
     var body: some View {
         let cal = Calendar.current
-        let week = (0..<7).compactMap { cal.date(byAdding: .day, value: -$0, to: cal.startOfDay(for: Date())) }
+        let week = (0..<7).compactMap { cal.date(byAdding: .day, value: -$0, to: cal.startOfDay(for: Date())) }.filter(model.isTracked)
         TitledCard("Goals") {
             ForEach(model.goalsAll) { g in
                 let p = model.progress(g)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(p.line).font(.subheadline)
+                        Text(p.line)
                         Spacer()
                         if g.period == .day {
                             let n = Goals.daysMet(g, days: week, entries: model.state.entries, tree: model.state.categories,
                                                   items: model.state.items, now: Date(), book: model.state.dayRules, calendar: cal)
-                            Text("\(n) of 7 days").font(.caption).foregroundStyle(.secondary)
+                            Text("\(n) of \(week.count) days").font(.subheadline).foregroundStyle(.secondary)
                         }
                     }
                     if g.measure != .trackingGaps {
@@ -385,7 +394,8 @@ struct ScoreWeekCard: View {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         let days = (0..<7).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
-        let scores = days.map { ($0, model.dayScore($0)) }
+        // Days before you used Productium have no bar: there's no log to score.
+        let scores = days.compactMap { d in model.trackedScore(d).map { (d, $0) } }
         let week = scores.map(\.1)
         TitledCard("This Week") {
             Text("Day Score").font(.subheadline).foregroundStyle(.secondary)
@@ -395,6 +405,7 @@ struct ScoreWeekCard: View {
                     .cornerRadius(3)
             }
             .chartYScale(domain: 0...100)
+            .chartXScale(domain: days[0]...(cal.date(byAdding: .day, value: 1, to: today) ?? today))
             .chartYAxis {
                 AxisMarks(position: .trailing, values: [0, 50, 100]) { _ in
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
@@ -496,61 +507,53 @@ struct HowYouWorkCard: View {
 struct LeaderboardCard: View {
     @Environment(AppModel.self) private var model
     @State private var groupId: String?
-    @State private var metric: Leaderboard.Metric = .score
     @State private var adding = false
     @State private var confirmLeave = false
 
     var body: some View {
         let lb = model.state.leaderboard
         let group = lb.groups.first { $0.id == groupId } ?? lb.groups.first
-        TitledCard("Leaderboard", detail: group.map { "\($0.name) · 7 days" }) {
-            if lb.groups.isEmpty || model.pendingInvite != nil {
-                Text(model.pendingInvite != nil ? "Pick the name your friends will see to join."
-                     : "Compare your days with friends. Only your day scores and a name are shared, never what you did.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                Button(model.pendingInvite != nil ? "Join" : "Start or Join a Group") { adding = true }
-                    .buttonStyle(.borderedProminent)
-            }
-            if let g = group {
-                if lb.groups.count > 1 {
-                    Picker("Group", selection: Binding(get: { g.id }, set: { groupId = $0 })) {
-                        ForEach(lb.groups) { Text($0.name).tag($0.id) }
-                    }
-                    .pickerStyle(.menu)
-                }
-                Picker("Measure", selection: $metric) {
-                    ForEach(Leaderboard.Metric.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                let rows = lb.boards[g.id].map { Leaderboard.rows($0, metric: metric, you: g.memberId, today: Date(), calendar: .current) } ?? []
+        // One measure (the week's average day score) and one menu for everything else.
+        TitledCard("Leaderboard", detail: group?.name) {
+            if let g = group, model.pendingInvite == nil {
+                let rows = lb.boards[g.id].map { Leaderboard.rows($0, metric: .score, you: g.memberId, today: Date(), calendar: .current) } ?? []
                 if rows.isEmpty {
-                    Text("Loading…").font(.subheadline).foregroundStyle(.secondary)
-                } else {
-                    ForEach(rows) { r in
-                        HStack {
-                            Text(r.rank > 0 ? "\(r.rank)" : "–").font(.subheadline.monospacedDigit()).frame(width: 22, alignment: .leading)
-                                .foregroundStyle(.secondary)
-                            Text(r.isYou ? "\(r.name) (you)" : r.name).font(r.isYou ? .subheadline.weight(.semibold) : .subheadline)
-                            Spacer()
-                            Text(r.label).font(.subheadline.monospacedDigit().weight(.semibold))
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
+                    ProgressView().frame(maxWidth: .infinity)
                 }
+                ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
+                    if i > 0 { Divider() }
+                    HStack(spacing: 12) {
+                        Text(r.rank > 0 ? "\(r.rank)" : "–").font(.headline.monospacedDigit()).frame(width: 22)
+                            .foregroundStyle(r.rank == 1 ? .orange : .secondary)
+                        Text(r.isYou ? "\(r.name) (you)" : r.name).fontWeight(r.isYou ? .semibold : .regular)
+                        Spacer()
+                        Text(r.label).font(.system(.title3, design: .rounded).weight(.semibold)).monospacedDigit()
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                Divider()
                 HStack {
                     if let url = Leaderboard.invite(g, scheme: AppInfo.scheme) {
                         ShareLink(item: url, message: Text("Join \(g.name) on Productium")) { Label("Invite", systemImage: "person.badge.plus") }
                     }
                     Spacer()
                     Menu {
-                        Button("Start or Join Another Group") { adding = true }
-                        Button("Leave \(g.name)", role: .destructive) { confirmLeave = true }
-                    } label: { Image(systemName: "ellipsis.circle") }
+                        if lb.groups.count > 1 {
+                            Picker("Group", selection: Binding(get: { g.id }, set: { groupId = $0 })) {
+                                ForEach(lb.groups) { Text($0.name).tag($0.id) }
+                            }
+                        }
+                        Button("Start or Join a Group", systemImage: "plus") { adding = true }
+                        Button("Leave \(g.name)", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { confirmLeave = true }
+                    } label: { Image(systemName: "ellipsis.circle").font(.title3) }
                 }
-                .font(.subheadline)
                 .confirmationDialog("Leave \(g.name)? Your row is removed for everyone.", isPresented: $confirmLeave, titleVisibility: .visible) {
                     Button("Leave", role: .destructive) { Task { await model.leaveLeaderboard(g.id) } }
                 }
+            } else {
+                Text(model.pendingInvite != nil ? "Pick the name your friends will see." : "Compare day scores with friends. Only your score and a name are shared.")
+                Button(model.pendingInvite != nil ? "Join" : "Start or Join a Group") { adding = true }
+                    .buttonStyle(.borderedProminent)
             }
         }
         .task { await model.refreshLeaderboards() }

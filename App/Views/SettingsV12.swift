@@ -145,13 +145,20 @@ struct PlacesSettings: View {
         List {
             Section { WhereCard().listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
             Section {
-                ForEach(model.state.placeBook.places.filter { $0.name != nil }) { p in
-                    Button { newName = p.title; renaming = p.id } label: { Text(p.title).foregroundStyle(.primary) }
+                ForEach(model.state.placeBook.places.sorted { $0.visits > $1.visits }) { p in
+                    Button { newName = p.name ?? ""; renaming = p.id } label: {
+                        LabeledContent {
+                            Image(systemName: "pencil").foregroundStyle(.tint)
+                        } label: {
+                            Text(p.title).foregroundStyle(.primary)
+                            Text(source(p)).foregroundStyle(.secondary)
+                        }
+                    }
                 }
-            } header: { Text("Named Places") }
+            } header: { Text("Your Places") } footer: { Text("Tap a place to rename it.") }
         }
         .listStyle(.insetGrouped)
-        .alert("Rename place", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+        .alert("Rename Place", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newName)
             Button("Save") {
                 let name = newName.trimmingCharacters(in: .whitespaces)
@@ -161,6 +168,16 @@ struct PlacesSettings: View {
             Button("Cancel", role: .cancel) { renaming = nil }
         }
         .navigationTitle("Places")
+    }
+
+    private func source(_ p: Place) -> String {
+        let visits = p.visits == 1 ? "1 visit" : "\(p.visits) visits"
+        switch p.named {
+        case .you: return "Named by you · \(visits)"
+        case .entries: return "From what you did there · \(visits)"
+        case .map: return "From the address · \(visits)"
+        case nil: return visits
+        }
     }
 }
 

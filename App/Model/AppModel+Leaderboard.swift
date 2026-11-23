@@ -40,7 +40,7 @@ enum LeaderboardClient {
 
 extension AppModel {
     var myBoardPost: BoardPost {
-        Leaderboard.post(name: state.leaderboard.displayName, today: Date(), calendar: cal) { dayScore($0) }
+        Leaderboard.post(name: state.leaderboard.displayName, today: Date(), calendar: cal) { trackedScore($0) }
     }
 
     /// A new group on the default server; you're its first member.

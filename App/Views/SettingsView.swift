@@ -364,6 +364,14 @@ struct ScreenTimeSettings: View {
                 Text("Opening one of those apps brings up a short pause with something better to do. “Go back anyway” skips it for 10 minutes. With the others, Productium counts your minutes and notices when you stop, even if iOS misses you going Home or locking the phone.")
             }
             let log = Friction.log
+            Section {
+                NavigationLink { RecipeView(recipe: Recipe.scrolling[0]) } label: { RecipeRow(recipe: Recipe.scrolling[0]) }
+                if let last = log.sessions.last {
+                    LabeledContent("Last App Heard", value: "\(last.app), \(last.openedAt.relativeDay) \(last.openedAt.hm)")
+                } else {
+                    LabeledContent("Last App Heard", value: "None yet")
+                }
+            } header: { Text("Working?") }
             if let d = log.today(Date(), calendar: .current) {
                 Section {
                     LabeledContent("Opened", value: "\(d.opens)×")

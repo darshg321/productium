@@ -113,14 +113,12 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    /// E2: the nearest point of interest (a café, a school, a gym) to name a new place.
-    func pointOfInterest(latitude: Double, longitude: Double) async -> String? {
-        let req = MKLocalPointsOfInterestRequest(center: CLLocationCoordinate2D(latitude: latitude, longitude: longitude), radius: 80)
-        guard let res = try? await MKLocalSearch(request: req).start() else { return nil }
-        let here = CLLocation(latitude: latitude, longitude: longitude)
-        return res.mapItems.min {
-            ($0.placemark.location?.distance(from: here) ?? .infinity) < ($1.placemark.location?.distance(from: here) ?? .infinity)
-        }?.name
+    /// E2: a name for a new place from its address: a landmark iOS knows there (a school, a park), else the street
+    /// address. Not the nearest business, which is often a neighbour's.
+    func placeName(latitude: Double, longitude: Double) async -> String? {
+        let marks = try? await CLGeocoder().reverseGeocodeLocation(CLLocation(latitude: latitude, longitude: longitude))
+        guard let m = marks?.first else { return nil }
+        return m.areasOfInterest?.first ?? m.name ?? m.thoroughfare ?? m.subLocality
     }
 
     func locationManager(_ m: CLLocationManager, didVisit visit: CLVisit) {
