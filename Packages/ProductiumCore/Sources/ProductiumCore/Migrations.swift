@@ -24,6 +24,12 @@ public enum Migrations {
         Step(from: 5) { s, _ in
             s.categories.refreshSeeds()
         },
+        // 6 → 7 (v1.5): entries can carry a focus rating (starts empty). Walking, Homework and Class buttons fold into
+        // Commute and Studying; each class subject gets a study button.
+        Step(from: 6) { s, now in
+            s.quickStarts.retireTemplates()
+            s.quickStarts.seedSubjects(tree: &s.categories, at: now)
+        },
     ]
 
     /// The schema stored data was written with (0: unreadable), read without decoding the rest.

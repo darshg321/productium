@@ -141,6 +141,15 @@ public struct BoxReceipt: Hashable, Sendable {
     /// Planned entries this turn made yours (Undo puts them back in the plan).
     public var plannedAdopted: [Entry] = []
     public init() {}
+
+    /// v1.5 C4: the reply follows what actually happened, not the model's text. When nothing it asked for worked, the
+    /// reply says so; when some of it failed, what failed is added.
+    public func honest(_ reply: String, asked ops: Int) -> String {
+        guard !problems.isEmpty else { return reply }
+        let failed = problems.joined(separator: " ")
+        if lines.isEmpty && held.isEmpty && ops > 0 { return "That didn't work: \(failed)" }
+        return (reply.isEmpty ? "" : reply + " ") + "But this didn't work: \(failed)"
+    }
 }
 
 /// The parts of `AppState` the box works on.
@@ -543,6 +552,13 @@ public enum BoxApplier {
             default: break
             }
             var t = s.items[i]
+            // v1.5: "it isn't actually done" puts a finished or cleared task back.
+            if ["reopen", "open", "not done"].contains(f.text?.lowercased() ?? ""), t.state != .open {
+                t.state = .open
+                t.doneAt = nil
+                s.items[i] = t
+                return r.lines.append("Reopened: \(t.title)")
+            }
             if let v = f.title { t.title = String(v.prefix(120)) }
             if let v = time(f.due, f) { t.due = v }
             if let v = f.minutes { t.estimateMinutes = max(5, v) }

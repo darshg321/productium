@@ -53,7 +53,10 @@ public enum TimeLog {
         return r
     }
 
-    /// Ends the running entry at `at`. One that would end before it began is removed.
+    /// Stopped this soon after starting, it was a mis-tap: the entry goes instead of leaving a 0-minute stretch.
+    public static let mistapSeconds: TimeInterval = 60
+
+    /// Ends the running entry at `at`. One that would end before it began, or under a minute after, is removed.
     @discardableResult
     public static func stop(at: Date, entries: inout [Entry], calendar cal: Calendar) -> LogReceipt {
         var r = LogReceipt()
@@ -61,6 +64,10 @@ public enum TimeLog {
             if at <= entries[i].start {
                 r.removed.append(entries[i])
                 r.lines.append("Removed \(entries[i].title) (it hadn't started yet)")
+                entries.remove(at: i)
+            } else if at.timeIntervalSince(entries[i].start) < mistapSeconds && entries[i].createdAt > at.addingTimeInterval(-mistapSeconds) {
+                r.removed.append(entries[i])
+                r.lines.append("Cancelled \(entries[i].title)")
                 entries.remove(at: i)
             } else {
                 entries[i].end = at
@@ -186,6 +193,60 @@ public enum TimeLog {
         if a.entry.createdAt != b.entry.createdAt { return a.entry.createdAt < b.entry.createdAt }
         if a.start != b.start { return a.start < b.start }
         return a.id < b.id
+    }
+
+    /// v1.5: the last stretch of work you finished (≥10 min, in the last 3 hours) that has no focus rating yet.
+    public static func unratedWork(_ entries: [Entry], tree: CategoryTree, now: Date) -> Entry? {
+        entries.filter { e in
+            guard e.source == .you, e.repeats == nil, e.focus == nil, let end = e.end, end <= now, end > now.addingTimeInterval(-3 * 3600),
+                  end.timeIntervalSince(e.start) >= 600 else { return false }
+            return e.taskId != nil || tree.isUnder(e.category, CategoryTree.work)
+        }.max { ($0.end ?? $0.start) < ($1.end ?? $1.start) }
+    }
+
+    /// Minutes of rated work per focus level (1 not very, 2 normal, 3 very) in `range`.
+    public static func focusMinutes(_ entries: [Entry], in range: DateInterval) -> [Int: Int] {
+        entries.reduce(into: [:]) { out, e in
+            guard let f = e.focus, (1...3).contains(f), let end = e.end, end > range.start, e.start < range.end else { return }
+            out[f, default: 0] += Int(min(end, range.end).timeIntervalSince(max(e.start, range.start)) / 60)
+        }
+    }
+
+    /// v1.5: rated work in `range` as (focused = normal or very, total) minutes, overall and by part of day.
+    public struct FocusStats: Sendable {
+        public var focused = 0, total = 0
+        public var parts: [(name: String, focused: Int, total: Int)] = []
+        public var share: Double { total == 0 ? 0 : Double(focused) / Double(total) }
+
+        /// The part of day with the highest share, when at least two parts have an hour of ratings.
+        public var best: String? {
+            let enough = parts.filter { $0.total >= 60 }
+            guard enough.count >= 2 else { return nil }
+            return enough.max { Double($0.focused) / Double($0.total) < Double($1.focused) / Double($1.total) }?.name
+        }
+
+        /// For the insight pass: "Focus ratings (14 days): 5h rated, 70% normal or very; morning 80% of 2h, …".
+        public func line(days: Int) -> String? {
+            guard total > 0 else { return nil }
+            let p = parts.filter { $0.total > 0 }.map { "\($0.name) \(Int((Double($0.focused) / Double($0.total) * 100).rounded()))% of \(minutesLabel($0.total))" }
+            return "Focus ratings (\(days) days): \(minutesLabel(total)) rated, \(Int((share * 100).rounded()))% normal or very"
+                + (p.isEmpty ? "" : "; " + p.joined(separator: ", "))
+        }
+    }
+
+    public static func focusStats(_ entries: [Entry], in range: DateInterval, calendar cal: Calendar) -> FocusStats {
+        let names = ["morning", "afternoon", "evening"]
+        var f = [0, 0, 0], t = [0, 0, 0]
+        for e in entries {
+            guard let r = e.focus, (1...3).contains(r), let end = e.end, end > range.start, e.start < range.end else { continue }
+            let start = max(e.start, range.start)
+            let m = Int(min(end, range.end).timeIntervalSince(start) / 60)
+            let h = cal.component(.hour, from: start)
+            let i = h < 12 ? 0 : h < 17 ? 1 : 2
+            t[i] += m
+            if r >= 2 { f[i] += m }
+        }
+        return FocusStats(focused: f.reduce(0, +), total: t.reduce(0, +), parts: (0..<3).map { (names[$0], f[$0], t[$0]) })
     }
 
     /// Minutes per category in the resolved slices (Untracked included).

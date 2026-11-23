@@ -29,13 +29,13 @@ struct RootView: View {
         }
         .overlay(alignment: .bottom) {
             if let t = model.toast {
-                Notice(text: t)
+                Notice(text: t, undo: model.toastUndo.map { id in { model.reopen(id); model.toast = nil; model.toastUndo = nil } })
                     .padding(.bottom, 64)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .onTapGesture { model.toast = nil }
+                    .onTapGesture { model.toast = nil; model.toastUndo = nil }
                     .task(id: t) {
-                        try? await Task.sleep(nanoseconds: 4_000_000_000)
-                        withAnimation { model.toast = nil }
+                        try? await Task.sleep(nanoseconds: model.toastUndo == nil ? 4_000_000_000 : 7_000_000_000)
+                        withAnimation { model.toast = nil; model.toastUndo = nil }
                     }
             }
         }

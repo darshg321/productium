@@ -45,6 +45,11 @@ public enum AppKinds {
                             "kakaotalk", "groupme", "viber", "facetime", "phone", "slack", "microsoft teams", "teams", "mail", "gmail",
                             "outlook"]
 
+    /// v1.5 E1: what "Opened an App" sends when its App field was left as the literal word, not Shortcut Input.
+    public static func isPlaceholder(_ app: String) -> Bool {
+        ["", "app", "scrolling app", "shortcut input", "apps"].contains(app.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
     public static func isMessaging(_ app: String) -> Bool {
         let k = app.plainKey
         return messaging.contains { k == $0.plainKey || k.hasPrefix($0.plainKey + " ") }

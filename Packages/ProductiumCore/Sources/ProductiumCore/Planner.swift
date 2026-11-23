@@ -55,6 +55,8 @@ public enum Planner {
     static let step: TimeInterval = 5 * 60
     static let morningRoutineMinutes = 40
     static let minChunk = 15
+    /// v1.5 C2: the shortest session a task is cut into (reading tolerates a bit less). Leftovers can be shorter.
+    static func minSession(_ kind: TaskKind) -> Int { kind == .reading ? 25 : 30 }
 
     public static func plan(_ input: PlannerInput) -> Plan {
         var ctx = Context(input: input)
@@ -445,7 +447,8 @@ public enum Planner {
 
         func pacedChunks(_ item: WorkItem, minutes: Int) -> [Demand] {
             let focus = Int(input.learned.focusMinutes.rounded())
-            let chunks = split(minutes, focus: max(20, min(60, input.policy.maxBlockMinutes, focus)))
+            let chunks = split(minutes, focus: max(Planner.minSession(item.kind), min(60, input.policy.maxBlockMinutes, focus)),
+                               least: Planner.minSession(item.kind))
             let bufferDays = minutes > 240 ? 2 : (minutes > 90 ? 1 : 0)
             var target = cal.date(byAdding: .day, value: -bufferDays, to: item.due) ?? item.due
             if target.timeIntervalSince(input.now) < Double(minutes) * 60 * 3 { target = item.due }
@@ -464,16 +467,17 @@ public enum Planner {
                 guard releaseDay < input.horizonDays else { return nil }
                 let earliest = releaseDay == 0 ? input.now
                     : (cal.date(byAdding: .day, value: releaseDay, to: cal.startOfDay(for: input.now)) ?? input.now)
-                let title = chunks.count > 1 ? "\(item.title) · \(i + 1)/\(chunks.count)" : item.title
+                let title = item.title
                 return Demand(item: item, minutes: len, earliest: earliest, latest: target,
                               preferredDay: nil, isReview: false, title: title, hint: hint)
             }
         }
 
-        func split(_ minutes: Int, focus: Int) -> [Int] {
+        func split(_ minutes: Int, focus: Int, least: Int = Planner.minChunk) -> [Int] {
             guard minutes > 0 else { return [] }
-            let longest = max(Planner.minChunk, min(focus + 15, input.policy.maxBlockMinutes))
-            let n = max(1, Int((Double(minutes) / Double(longest)).rounded(.up)))
+            let longest = max(least, min(focus + 15, input.policy.maxBlockMinutes))
+            var n = max(1, Int((Double(minutes) / Double(longest)).rounded(.up)))
+            while n > 1 && minutes / n < least { n -= 1 }
             let base = minutes / n
             return (0..<n).map { i in
                 let m = base + (i < minutes - base * n ? 1 : 0)
@@ -524,7 +528,7 @@ public enum Planner {
                 while demand.minutes > 0 {
                     if demand.minutes < Planner.minChunk { demand.minutes = Planner.minChunk }
                     if place(&demand, length: demand.minutes, mode: mode) { return nil }
-                    let half = max(Planner.minChunk, demand.minutes / 2)
+                    let half = max(Planner.minSession(demand.item.kind), demand.minutes / 2)
                     if half < demand.minutes, place(&demand, length: half, mode: mode) { continue }
                     break
                 }
@@ -584,7 +588,7 @@ public enum Planner {
             } else {
                 s -= Double(day.index - earliestDay) * 0.12
             }
-            s -= Double(day.itemCounts[demand.item.id] ?? 0) * 0.45
+            s -= Double(day.itemCounts[demand.item.id] ?? 0) * 1.2
             s -= Double(day.studyUsed) / Double(max(1, day.studyCap)) * 0.35
             if day.workEnd.timeIntervalSince(start.addingTimeInterval(Double(length) * 60)) < 45 * 60 { s -= 0.15 }
             if atIntervalStart { s += 0.05 }
@@ -711,8 +715,10 @@ public enum Planner {
                     }
                 }
             }
-            all = all.filter { $0.end > input.now }.sorted { $0.start < $1.start }
-            Planner.number(&all, items: input.items, entries: input.entries, now: input.now)
+            let dayCaps = days.map { ($0.start, $0.maxBlock) }
+            all = Planner.mergeAdjacent(all.filter { $0.end > input.now }.sorted { $0.start < $1.start }) { start in
+                min(75, dayCaps.last { $0.0 <= start }?.1 ?? Int.max)
+            }
 
             let itemsById = Dictionary(uniqueKeysWithValues: input.items.map { ($0.id, $0) })
             for (id, mins) in shortfalls.sorted(by: { $0.value > $1.value }) where mins > 0 {
@@ -722,7 +728,8 @@ public enum Planner {
                     : "Aim for a complete, solid version rather than a perfect one, or ask for an extension now, not the night before."
                 let mins = Planner.shownMinutes(mins, for: item, learned: input.learned)
                 warnings.append(PlanWarning(level: item.importance >= 4 ? .critical : .caution,
-                                            message: "≈\(mins) min of “\(item.title)” doesn't fit before it's due. \(advice)", itemId: id))
+                                            message: "≈\(mins) min of “\(item.title)” doesn't fit before it's due. \(advice)", itemId: id,
+                                            shortfall: mins))
             }
             let borrowed = days.reduce(0) { $0 + $1.borrowed }
             if borrowed > 0 {
@@ -749,24 +756,27 @@ public enum Planner {
         }
     }
 
-    /// v1.2 A2: "Reading · 2 of 5". Every session of a task, planned or pinned, numbered in time order after the
-    /// sessions already done (past entries with its `taskId`), so the earliest remaining one always has the lowest
-    /// remaining number and moving one never reorders the rest.
-    static func number(_ blocks: inout [PlannedBlock], items: [WorkItem], entries: [Entry], now: Date) {
-        let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let done = Dictionary(grouping: entries.filter { $0.taskId != nil && $0.source != .plan && $0.repeats == nil && ($0.end ?? now) <= now },
-                              by: { $0.taskId! }).mapValues(\.count)
-        let grouped = Dictionary(grouping: blocks.indices.filter { blocks[$0].isStudy && blocks[$0].itemId != nil },
-                                 by: { blocks[$0].itemId! })
-        for (id, idxs) in grouped {
-            guard let item = byId[id] else { continue }
-            let ordered = idxs.sorted { (blocks[$0].start, blocks[$0].id.uuidString) < (blocks[$1].start, blocks[$1].id.uuidString) }
-            let before = done[id] ?? 0
-            let total = before + ordered.count
-            for (k, i) in ordered.enumerated() {
-                blocks[i].title = total > 1 ? "\(item.title) · \(before + k + 1) of \(total)" : item.title
+    /// v1.5 C2: two sessions of the same task with only a break between them are one session (the break goes).
+    static func mergeAdjacent(_ sorted: [PlannedBlock], maxMinutes: (Date) -> Int = { _ in 75 }) -> [PlannedBlock] {
+        var out: [PlannedBlock] = []
+        var i = 0
+        while i < sorted.count {
+            var b = sorted[i]
+            var j = i + 1
+            while b.isStudy, let id = b.itemId {
+                var k = j
+                while k < sorted.count && sorted[k].kind == .breakTime && sorted[k].start.timeIntervalSince(b.end) < 60 { k += 1 }
+                guard k < sorted.count, sorted[k].itemId == id, sorted[k].kind == b.kind,
+                      !(b.sourceId?.hasPrefix("entry:") ?? false), !(sorted[k].sourceId?.hasPrefix("entry:") ?? false),
+                      sorted[k].start.timeIntervalSince(b.end) <= 20 * 60,
+                      sorted[k].end.timeIntervalSince(b.start) <= Double(maxMinutes(b.start)) * 60 else { break }
+                b.end = sorted[k].end
+                j = k + 1
             }
+            out.append(b)
+            i = j
         }
+        return out
     }
 
     /// The planner works in corrected, chunk-rounded minutes; the warning speaks in yours.

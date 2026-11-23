@@ -17,7 +17,11 @@ struct ProductiumApp: App {
         .onChange(of: phase) { _, p in
             if p == .active { model.foreground() }
             if p == .inactive { model.syncNowActivity() }
-            if p == .background { BackgroundRefresh.schedule(); Persistence.save(model.state) }
+            if p == .background {
+                BackgroundRefresh.schedule()
+                Persistence.save(model.state)
+                LocalStore.defaults.set(false, forKey: LocalStore.Key.runActive)
+            }
         }
     }
 }
@@ -67,9 +71,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             case "scroll.stop": Friction.answered(stillScrolling: false)
             case "item.done":
                 if let id = itemId { model.complete(id) }
+            case "end.15", "end.30":
+                if let id = itemId { model.extend(id, minutes: action == "end.15" ? 15 : 30) }
+            case "end.tomorrow":
+                if let id = itemId { model.finishTomorrow(id) }
             case "item.focus":
                 if let id = itemId, let item = model.state.items.first(where: { $0.id == id }) { model.focusNow(on: item) }
             case "run.stop": model.stopRunning(source: "notification")
+            case let a where a.hasPrefix("rate."):
+                if let id = (info["entryId"] as? String).flatMap(UUID.init(uuidString:)), let f = Int(a.dropFirst(5)) { model.rateFocus(id, f) }
             case "sleep.yes":
                 if let w = window { model.confirmSleep(w) }
             case let a where a.hasPrefix("mood"):

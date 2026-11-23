@@ -238,3 +238,15 @@ public enum Exporter {
         try ExportBundle.encoder().encode(value)
     }
 }
+
+/// v1.5 H3: which files an export carries and a restore writes back: relative paths under the container or Documents,
+/// never Library, the backups folder (so backups don't nest) or an absolute path.
+public enum ExportFiles {
+    public static func keep(_ key: String, backupsFolder: String = "Backups") -> Bool {
+        let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2, ["container", "documents"].contains(parts[0]) else { return false }
+        let rel = parts[1]
+        return !rel.hasPrefix("/") && !rel.contains("../") && !rel.hasPrefix("Library/") && rel != "Library"
+            && !rel.hasPrefix(backupsFolder + "/") && rel != backupsFolder && !rel.contains("/private/var")
+    }
+}

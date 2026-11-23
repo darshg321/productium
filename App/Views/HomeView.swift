@@ -17,11 +17,21 @@ struct TodayView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text(now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                                .padding(.horizontal, 4)
+                            HStack {
+                                Text(now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .textCase(.uppercase)
+                                Spacer(minLength: 8)
+                                if let w = model.aiWorking {
+                                    Label(w, systemImage: "sparkles")
+                                        .font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+                                        .symbolEffect(.pulse, options: .repeating)
+                                        .transition(.opacity)
+                                }
+                            }
+                            .padding(.horizontal, 4)
+                            .animation(.default, value: model.aiWorking)
                             if let r = model.running { RunningCard(entry: r, now: now) }
                             DumpBox()
                             AlertCard(now: now)
@@ -30,9 +40,11 @@ struct TodayView: View {
                             if model.screenshotOffer != nil { ScreenshotOfferCard() }
                         }
                         StartList(now: now).id("grid")
+                        FocusCard(now: now)
                         MoodButtons(now: now)
                         GapsCard(now: now).id("gaps")
                         AssumedCard(now: now).id("assumed")
+                        PlaceNameCard()
                         RingsCard(now: now).id("ring")
                         UpNextCard(now: now).id("upnext")
                     }
@@ -44,7 +56,7 @@ struct TodayView: View {
             }
             .background(Theme.background)
             .refreshable {
-                await model.refresh(full: false)
+                await model.refresh(full: false, force: true)
                 now = Date()
                 Task { await model.refreshRemote() }
             }
@@ -62,6 +74,7 @@ struct RunningCard: View {
     @Environment(AppModel.self) private var model
     let entry: Entry
     let now: Date
+    @State private var movingStart = false
 
     var body: some View {
         let tree = model.state.categories
@@ -76,14 +89,24 @@ struct RunningCard: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.title).font(.headline).lineLimit(1)
-                Text(model.goalLine(for: entry) ?? "Started \(entry.start.hm)")
-                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                Button { movingStart = true } label: {
+                    Text(model.goalLine(for: entry) ?? "Started \(entry.start.hm)")
+                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Change when it started")
             }
             Spacer(minLength: 6)
             Text(timerInterval: entry.start...Date.distantFuture, countsDown: false)
                 .font(.system(.title2, design: .rounded).monospacedDigit().weight(.semibold))
                 .frame(maxWidth: 104, alignment: .trailing)
             if let t = entry.taskId, model.state.items.contains(where: { $0.id == t && $0.isOpen }) {
+                Menu {
+                    Button("15 More Minutes", systemImage: "plus") { model.extend(t, minutes: 15) }
+                    Button("30 More Minutes", systemImage: "plus") { model.extend(t, minutes: 30) }
+                    Button("Finish Tomorrow", systemImage: "arrow.uturn.forward") { model.finishTomorrow(t) }
+                } label: { circle("plus", .blue) }
+                    .accessibilityLabel("Needs more time")
                 Button { model.complete(t) } label: { circle("checkmark", .green) }
                     .accessibilityLabel("Done")
             }
@@ -93,6 +116,9 @@ struct RunningCard: View {
         .buttonStyle(TilePress())
         .padding(14)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .sheet(isPresented: $movingStart) {
+            StartTimeSheet(title: "\(entry.title) Started", initial: entry.start) { model.moveRunningStart(to: $0) }
+        }
     }
 
     private func circle(_ symbol: String, _ color: Color) -> some View {
@@ -112,6 +138,7 @@ struct StartList: View {
     @State private var filter = Filter.suggested
     @State private var showMore = false
     @State private var editing: QuickStart?
+    @State private var picking: QuickStart?
 
     enum Filter: String, CaseIterable, Identifiable {
         case suggested = "Suggested", work = "Work", essentials = "Essentials", free = "Free"
@@ -150,6 +177,9 @@ struct StartList: View {
         }
         .sheet(isPresented: $showMore) { MoreButtonsSheet(buttons: ranked.row + ranked.more) }
         .sheet(item: $editing) { b in ButtonEditor(button: b) }
+        .sheet(item: $picking) { b in
+            StartTimeSheet(title: "Start \(b.title)", initial: Date().addingTimeInterval(-15 * 60)) { model.start(b, at: $0) }
+        }
     }
 
     private func rows(_ all: [QuickStart]) -> [QuickStart] {
@@ -179,6 +209,12 @@ struct StartList: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Start \(b.title)")
         .contextMenu {
+            Section("Started Earlier") {
+                ForEach([5, 10, 15, 30], id: \.self) { m in
+                    Button("\(m) min ago", systemImage: "clock.arrow.circlepath") { model.start(b, at: Date().addingTimeInterval(-Double(m) * 60)) }
+                }
+                Button("Pick a Time…", systemImage: "clock") { picking = b }
+            }
             Button("Rename or Change Category", systemImage: "pencil") { editing = b }
             Button("Hide", systemImage: "eye.slash", role: .destructive) { model.hideTile(b) }
         }
@@ -321,6 +357,33 @@ struct MoodButtons: View {
     }
 }
 
+/// v1.5: after a stretch of work, how focused it was (time alone doesn't say how much got done).
+struct FocusCard: View {
+    @Environment(AppModel.self) private var model
+    let now: Date
+    static let levels: [(Int, String)] = [(1, "Not Very"), (2, "Normal"), (3, "Very")]
+
+    var body: some View {
+        if let e = TimeLog.unratedWork(model.state.entries, tree: model.state.categories, now: now) {
+            Card {
+                HStack {
+                    Text("How focused were you on \(e.title)?").font(.subheadline.weight(.semibold)).lineLimit(2)
+                    Spacer(minLength: 4)
+                    Button { withAnimation { model.rateFocus(e.id, 0) } } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("Skip")
+                }
+                HStack(spacing: 8) {
+                    ForEach(Self.levels, id: \.0) { f, label in
+                        Button(label) { withAnimation { model.rateFocus(e.id, f) } }
+                            .buttonStyle(.bordered).buttonBorderShape(.capsule).frame(maxWidth: .infinity)
+                    }
+                }
+                .font(.subheadline.weight(.medium))
+            }
+        }
+    }
+}
+
 // MARK: - N7: one question at a time
 
 struct QuestionCard: View {
@@ -384,7 +447,7 @@ struct GapsCard: View {
     var body: some View {
         let cal = Calendar.current
         let today = Days.dayInterval(now, cal)
-        let slices = TimeLog.past(model.state.entries, in: today, now: now, book: model.state.dayRules, calendar: cal)
+        let slices = model.todaySlices(now)
         // Closed stretches only: the one running up to now is the Now card's question.
         let gaps = Goals.gaps(slices)
             .filter { $0.start >= today.start.addingTimeInterval(6 * 3600) && $0.end < now.addingTimeInterval(-60) }
@@ -424,47 +487,102 @@ struct AssumedCard: View {
     @Environment(AppModel.self) private var model
     let now: Date
     @State private var editing: DayEntry?
-    @State private var showAll = false
 
+    /// A queue, oldest first: answer the front one and the next slides up.
     var body: some View {
         let cal = Calendar.current
         let today = Days.dayInterval(now, cal)
-        let slices = TimeLog.past(model.state.entries, in: today, now: now, book: model.state.dayRules, calendar: cal)
+        let slices = model.todaySlices(now)
         let assumed = TimeLog.assumed(slices).filter { $0.end <= now && !model.state.categories.isUnder($0.category, CategoryTree.sleep) }
-        if !assumed.isEmpty {
+        if let d = assumed.first {
             let tree = model.state.categories
-            let shown = showAll ? assumed : Array(assumed.suffix(5))
+            let next = assumed.dropFirst().first
             VStack(alignment: .leading, spacing: 8) {
-                SectionHeader("Did These Happen?", action: "Yes to All") {
+                SectionHeader("Did These Happen?", action: assumed.count > 1 ? "Yes to All" : nil) {
                     model.confirmAll(in: DateInterval(start: today.start, end: now))
                 }
-                Card {
-                    if assumed.count > shown.count {
-                        Button("Show \(assumed.count - shown.count) Earlier") { withAnimation { showAll = true } }
-                            .font(.subheadline).buttonStyle(.borderless)
-                    }
-                    ForEach(Array(shown.enumerated()), id: \.element.id) { i, d in
-                        if i > 0 || assumed.count > shown.count { Divider() }
-                        HStack(spacing: 12) {
-                            IconTile(symbol: Theme.symbol(category: d.category, tree: tree), color: Theme.color(category: d.category, tree: tree))
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(d.title).font(.body).lineLimit(1)
-                                Text("\(d.start.hm) – \(d.end.hm)").font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture { editing = d }
-                            Spacer(minLength: 4)
-                            Button { model.confirm(d) } label: { Image(systemName: "checkmark.circle.fill") }.foregroundStyle(.green)
-                                .accessibilityLabel("Yes, \(d.title) happened")
-                            Button { model.reject(d) } label: { Image(systemName: "xmark.circle.fill") }.foregroundStyle(Color(.systemGray3))
-                                .accessibilityLabel("No, \(d.title) didn't happen")
+                PeekStack(remaining: assumed.count, next: next.map { "\($0.title) \($0.start.hm)" }) {
+                    HStack(spacing: 12) {
+                        IconTile(symbol: Theme.symbol(category: d.category, tree: tree), color: Theme.color(category: d.category, tree: tree))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(d.title).font(.body).lineLimit(1)
+                            Text("\(d.start.hm) – \(d.end.hm)").font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         }
-                        .font(.title2).buttonStyle(.borderless)
+                        .contentShape(Rectangle())
+                        .onTapGesture { editing = d }
+                        Spacer(minLength: 4)
+                        Button { model.confirm(d) } label: { Image(systemName: "checkmark.circle.fill") }.foregroundStyle(.green)
+                            .accessibilityLabel("Yes, \(d.title) happened")
+                        Button { model.reject(d) } label: { Image(systemName: "xmark.circle.fill") }.foregroundStyle(Color(.systemGray3))
+                            .accessibilityLabel("No, \(d.title) didn't happen")
                     }
+                    .font(.title2).buttonStyle(.borderless)
+                    .id(d.id)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
                 }
             }
             .sheet(item: $editing) { EntrySheet(day: $0) }
         }
+    }
+}
+
+/// v1.5: places you keep going to, named one at a time (like Did These Happen?).
+struct PlaceNameCard: View {
+    @Environment(AppModel.self) private var model
+    @State private var name = ""
+    @FocusState private var typing: Bool
+
+    var body: some View {
+        let queue = model.placesToName
+        if let p = queue.first {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader("What's This Place?")
+                PeekStack(remaining: queue.count, next: queue.dropFirst().first.map { $0.address ?? $0.title }) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top) {
+                            IconTile(symbol: "mappin.and.ellipse", color: .red)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(p.address ?? p.title).font(.body).lineLimit(2)
+                                Text("You've been here \(p.visits) times").font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 4)
+                            Button { withAnimation { model.skipNaming(p.id) } } label: { Image(systemName: "xmark") }
+                                .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("Don't ask about this place")
+                        }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(suggestions(p), id: \.self) { s in
+                                    Button(s) { save(p, s) }.buttonStyle(.bordered).buttonBorderShape(.capsule)
+                                }
+                            }
+                        }
+                        .font(.subheadline)
+                        HStack {
+                            TextField("Name", text: $name).focused($typing).submitLabel(.done)
+                                .onSubmit { save(p, name) }
+                            Button("Save") { save(p, name) }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                    .id(p.id)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+                }
+            }
+        }
+    }
+
+    private func suggestions(_ p: Place) -> [String] {
+        var out = ["Home", "School"]
+        if let poi = p.poi, poi != p.address { out.insert(poi, at: 0) }
+        let taken = Set(model.state.placeBook.places.filter(\.confirmed).compactMap { $0.name?.lowercased() })
+        return out.filter { !taken.contains($0.lowercased()) }
+    }
+
+    private func save(_ p: Place, _ text: String) {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return }
+        withAnimation { model.renamePlace(p.id, t) }
+        name = ""
+        typing = false
     }
 }
 
@@ -497,13 +615,12 @@ struct UpNextCard: View {
                     let item = b.itemId.flatMap { id in items.first { $0.id == id } }
                     // Each task keeps the colour and kind symbol it has in Tasks, so two sessions of different tasks never look alike.
                     let color = item.map { Theme.color(for: $0, in: model.state) } ?? Theme.focus
-                    let name = Theme.session(b.title)
                     if i > 0 { Divider().padding(.leading, 46) }
                     HStack(alignment: .center, spacing: 12) {
                         IconTile(symbol: item?.kind.symbol ?? "pencil.line", color: color, size: 34)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(name.title).font(i == 0 ? .headline : .body).lineLimit(1)
-                            Text("\(b.start.hm) – \(b.end.hm)" + (name.part.map { " · \($0)" } ?? ""))
+                            Text(b.title).font(i == 0 ? .headline : .body).lineLimit(1)
+                            Text("\(b.start.hm) – \(b.end.hm) · \(minutesLabel(b.minutes))")
                                 .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer(minLength: 4)
@@ -513,6 +630,8 @@ struct UpNextCard: View {
                                 .accessibilityLabel("Start \(item.title)")
                             Menu {
                                 Button("Done", systemImage: "checkmark") { model.complete(item.id) }
+                                Button("15 More Minutes", systemImage: "plus") { model.extend(item.id, minutes: 15) }
+                                Button("30 More Minutes", systemImage: "plus") { model.extend(item.id, minutes: 30) }
                                 Button("Not Today", systemImage: "arrow.uturn.forward") { model.notToday(blockId: b.id) }
                                 Button("Clear (not doing it)", systemImage: "xmark.circle") { clearing = item }
                                 Button("Delete (made by mistake)", systemImage: "trash", role: .destructive) { model.delete(item.id) }
@@ -527,6 +646,43 @@ struct UpNextCard: View {
         }
         .sheet(item: $clearing) { ClearSheet(item: $0) }
         .sheet(item: $showing) { i in NavigationStack { TaskDetailView(itemId: i.id) } }
+    }
+}
+
+/// B1 / B2: when something started, on a wheel (the last 12 hours), with one-tap offsets.
+struct StartTimeSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let onPick: (Date) -> Void
+    @State private var time: Date
+
+    init(title: String, initial: Date, onPick: @escaping (Date) -> Void) {
+        self.title = title
+        self.onPick = onPick
+        _time = State(initialValue: initial)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                HStack {
+                    ForEach([5, 10, 15, 30], id: \.self) { m in
+                        Button("\(m) min ago") { time = Date().addingTimeInterval(-Double(m) * 60) }
+                            .buttonStyle(.bordered).buttonBorderShape(.capsule).font(.subheadline)
+                    }
+                }
+                DatePicker("Started", selection: $time, in: Date().addingTimeInterval(-12 * 3600)...Date(), displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel).labelsHidden()
+            }
+            .padding()
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { onPick(time); dismiss() } }
+            }
+        }
+        .presentationDetents([.medium])
     }
 }
 
@@ -556,26 +712,37 @@ struct ClearSheet: View {
     }
 }
 
-/// At most one alert, most urgent first: the free build about to stop opening, then a plan warning.
+/// Alerts, most urgent first, as a queue: the free build about to stop opening, then plan warnings (Dismiss shows the next).
 struct AlertCard: View {
     @Environment(AppModel.self) private var model
     let now: Date
 
     var body: some View {
+        let warnings = model.activeWarnings.sorted { ($0.level == .info ? 1 : 0) < ($1.level == .info ? 1 : 0) }
         if let expiry = model.signatureExpiry, expiry.timeIntervalSince(now) < 2 * 86400 {
-            Card {
+            PeekStack(remaining: 1 + warnings.count, next: warnings.first.map { String($0.message.prefix(60)) }) {
                 CardHeader(title: "Refresh Needed", symbol: "exclamationmark.triangle.fill", color: Theme.alert)
-                Text("This build stops opening \(expiry.relativeDay) at \(expiry.hm). Refresh it in SideStore.")
+                Text("This build stops opening \(expiry.relativeDay) at \(expiry.hm). Refresh or reinstall it before then.")
                     .font(.subheadline)
             }
-        } else if let w = model.activeWarnings.first(where: { $0.level != .info }) ?? model.activeWarnings.first {
-            Card {
-                CardHeader(title: "Heads Up", symbol: w.level == .critical ? "exclamationmark.triangle.fill" : "info.circle.fill",
-                           color: w.level == .critical ? Theme.alert : .orange)
-                Text(w.message).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                Button("Dismiss") { model.state.dismissed.insert(w.message); model.save() }
+        } else if let w = warnings.first {
+            PeekStack(remaining: warnings.count, next: warnings.dropFirst().first.map { String($0.message.prefix(60)) }) {
+                VStack(alignment: .leading, spacing: 10) {
+                    CardHeader(title: "Heads Up", symbol: w.level == .critical ? "exclamationmark.triangle.fill" : "info.circle.fill",
+                               color: w.level == .critical ? Theme.alert : .orange)
+                    Text(w.message).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 16) {
+                        if w.shortfall != nil {
+                            Button("Shorten") { model.shorten(w) }
+                            Button("Move Due") { model.moveDue(w) }
+                        }
+                        Button(w.shortfall != nil ? "Keep" : "Dismiss") { withAnimation { model.state.dismissed.insert(w.dismissKey) }; model.save() }
+                    }
                     .font(.subheadline)
                     .buttonStyle(.borderless)
+                }
+                .id(w.message)
+                .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
             }
         }
     }

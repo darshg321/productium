@@ -23,7 +23,32 @@ public enum Days {
                 if overlaps(d, range) { out.append(d) }
             }
         }
-        return out.sorted { ($0.start, $0.end, $0.id) < ($1.start, $1.end, $1.id) }
+        return superseding(out).sorted { ($0.start, $0.end, $0.id) < ($1.start, $1.end, $1.id) }
+    }
+
+    /// How far apart a tracked trip or routine and the planned one can start and still be the same thing.
+    public static let supersedeMinutes = 45
+
+    /// v1.5: a planned trip or routine you tracked yourself is gone from the log, not left to delete: the planned
+    /// "Walk home" 15:00–15:20 and the Walking you tracked 15:36–16:17 are one walk. Same category (any Travel counts
+    /// as the same), overlapping or starting within `supersedeMinutes`.
+    static func superseding(_ occ: [DayEntry]) -> [DayEntry] {
+        let told = occ.filter { $0.source == .you && !$0.assumed && ($0.running || $0.end.timeIntervalSince($0.start) >= 180) }
+        guard !told.isEmpty else { return occ }
+        func root(_ c: CategoryID) -> Substring { c.split(separator: ".").first ?? Substring(c) }
+        func same(_ a: CategoryID, _ b: CategoryID) -> Bool {
+            a == b || (root(a) == root(CategoryTree.travel) && root(b) == root(CategoryTree.travel))
+        }
+        return occ.filter { a in
+            guard a.assumed, a.source == .plan || (a.source == .you && a.entry.repeats != nil),
+                  a.taskId == nil, ["travel", "essentials"].contains(root(a.category)),
+                  a.category != CategoryTree.transition else { return true }
+            let near = Double(supersedeMinutes) * 60
+            return !told.contains { t in
+                t.entry.id != a.entry.id && same(t.category, a.category)
+                    && ((t.start < a.end && t.end > a.start) || abs(t.start.timeIntervalSince(a.start)) <= near)
+            }
+        }
     }
 
     /// The occurrences overlapping one calendar day.

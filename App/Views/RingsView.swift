@@ -85,29 +85,55 @@ struct RingLegendRows: View {
     }
 }
 
-/// Home: today's rings. Tapping opens the day's categories as a plain sorted list.
+/// Home: the rings, swiped back through earlier days (F1). Tapping opens that day's categories as a sorted list.
 struct RingsCard: View {
     @Environment(AppModel.self) private var model
     let now: Date
+    @State private var day = Calendar.current.startOfDay(for: Date())
     @State private var showingDay = false
 
     var body: some View {
-        let r = model.rings(now)
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader("Rings")
+            SectionHeader(dayTitle(day, now: now))
             Card {
-                HStack(spacing: 18) {
-                    ActivityRings(rings: r, lineWidth: 17).frame(width: 130, height: 130)
-                    RingLegendRows(rings: r)
-                    Spacer(minLength: 0)
+                RingPager(day: $day) { d in
+                    let r = model.rings(d)
+                    HStack(spacing: 18) {
+                        ActivityRings(rings: r, lineWidth: 17).frame(width: 130, height: 130)
+                        RingLegendRows(rings: r)
+                        Spacer(minLength: 0)
+                    }
                 }
+                .frame(height: 140)
             }
             .contentShape(Rectangle())
             .onTapGesture { showingDay = true }
             .accessibilityAddTraits(.isButton)
         }
-        .sheet(isPresented: $showingDay) { RingDaySheet(day: now) }
+        .sheet(isPresented: $showingDay) { RingDaySheet(day: day) }
     }
+}
+
+/// F1: one page per day (from `ringDays`), today last; swipe right for earlier days.
+struct RingPager<Page: View>: View {
+    @Environment(AppModel.self) private var model
+    @Binding var day: Date
+    @ViewBuilder let page: (Date) -> Page
+
+    var body: some View {
+        TabView(selection: $day) {
+            ForEach(model.ringDays, id: \.self) { d in page(d).tag(d) }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+    }
+}
+
+/// "Rings" for today, else "Yesterday" / "Monday, Nov 16".
+func dayTitle(_ day: Date, now: Date, today: String = "Rings") -> String {
+    let cal = Calendar.current
+    if cal.isDate(day, inSameDayAs: now) { return today }
+    if let y = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now)), cal.isDate(day, inSameDayAs: y) { return "Yesterday" }
+    return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
 }
 
 /// A ring's day: where the time went, sorted, as bars (easier to read than a second donut).

@@ -115,6 +115,8 @@ public struct Entry: Codable, Hashable, Identifiable, Sendable {
     public var alert: Alert?
     public var source: EntrySource
     public var createdAt: Date
+    /// v1.5 (schema 7): how focused you were in this stretch of work (1 not very, 2 normal, 3 very), asked after it.
+    public var focus: Int?
 
     public init(id: UUID = UUID(), title: String, start: Date, end: Date?, category: CategoryID,
                 filedByYou: Bool = false, topics: [String] = [], placeId: UUID? = nil, note: String? = nil,

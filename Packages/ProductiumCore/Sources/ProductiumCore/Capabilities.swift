@@ -118,6 +118,9 @@ public enum Registry {
         KnobSpec("sleepFloorMinutes", .learned, "360-480", reflectionForbidden: true),
         KnobSpec("allowSleepTradeoffs", .learned, "true|false", reflectionForbidden: true),
         KnobSpec("schoolDayWake", .learned, "HH:mm"), KnobSpec("freeDayWake", .learned, "HH:mm"),
+        KnobSpec("wake", .learned, "HH:mm, + \"free days\" or \"every day\" (default school days)"),
+        KnobSpec("sleep", .learned, "hours of sleep needed, e.g. 9 h", reflectionForbidden: true),
+        KnobSpec("rotation", .data, "a date and its day of the timetable rotation: \"today 2\", \"2026-11-24 1\""),
         KnobSpec("study.schoolDayCapacity", .learned, "minutes", range: 30...480),
         KnobSpec("study.freeDayCapacity", .learned, "minutes", range: 30...600),
         KnobSpec("study.schoolDayFreeTime", .learned, "minutes", range: 0...360),
@@ -180,7 +183,61 @@ public enum Knobs {
         return v
     }
 
+    /// v1.5 C3: "wake" / "sleep" in your words. "wake" = school days unless the value says free days / weekends or
+    /// every day; a school-day wake you set is used as is (not worked back from the first class).
+    static func sleepAlias(_ rawKey: String, _ value: String, by writer: Writer, in s: inout DumpState) -> KnobResult? {
+        let k = rawKey.lowercased().filter(\.isLetter)
+        let v = value.lowercased()
+        let wakeKeys = ["wake", "wakeup", "waketime", "wakeuptime", "schoolwake", "weekdaywake", "freewake", "weekendwake", "schooldaywake"]
+        if wakeKeys.contains(k) {
+            guard let t = clock(in: v) else { return .refused("“\(value)” isn't a time for wake (like 7:30)") }
+            let free = k.hasPrefix("free") || k.hasPrefix("weekend") || v.contains("free") || v.contains("weekend")
+            let both = v.contains("every day") || v.contains("everyday") || v.contains("all days") || v.contains("both")
+            var lines: [String] = []
+            if !free || both {
+                s.prefs.schoolDayWake = t
+                s.prefs.autoWake = false
+                lines.append("School-day wake → \(t.label)")
+            }
+            if free || both {
+                s.prefs.freeDayWake = t
+                lines.append("Free-day wake → \(t.label)")
+            }
+            return .changed(lines.joined(separator: ", "))
+        }
+        if ["rotation", "rotationday", "dayrotation", "schoolday", "daynumber"].contains(k) {
+            // "today 2", "2026-11-24 day 1", "tomorrow is a day 2"
+            guard let n = v.split(whereSeparator: { !$0.isNumber }).compactMap({ Int($0) }).last(where: { (1...2).contains($0) }) else {
+                return .refused("Say which day of the rotation, like “today 2”")
+            }
+            let cal = Calendar.current
+            let today = cal.startOfDay(for: Date())
+            var date = today
+            if v.contains("tomorrow") { date = cal.date(byAdding: .day, value: 1, to: today) ?? today }
+            if let r = v.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression), let d = DayKeys.date(String(v[r]), cal) { date = d }
+            Rotation.set(date, to: n, book: &s.dayRules, calendar: cal)
+            return .changed("\(DateFormatter.local("EEE d MMM", cal).string(from: date)) is a Day \(n)")
+        }
+        if ["sleep", "sleepneed", "sleephours", "sleepminutes", "sleeplength", "sleepneeded"].contains(k) {
+            guard let n = Double(v.prefix { $0.isNumber || $0 == "." }), n > 0 else { return .refused("“\(value)” isn't an amount of sleep (like 9 h)") }
+            let minutes = Int((n <= 12 && !v.contains("min") ? n * 60 : n).rounded())
+            if writer == .reflection { return .refused("Sleep need is yours to change, never Productium's") }
+            s.prefs.sleepNeedMinutes = max(450, min(600, minutes))
+            return .changed("Sleep need → \(durationText(s.prefs.sleepNeedMinutes))")
+        }
+        return nil
+    }
+
+    /// The first clock time in free text: "7:30 on school days", "wake at 7", "6:45am".
+    static func clock(in v: String) -> TimeOfDay? {
+        guard let r = v.range(of: #"\d{1,2}(:\d{2})?\s*(am|pm)?"#, options: .regularExpression) else { return nil }
+        return ClockText.timeOfDay(String(v[r]).replacingOccurrences(of: " ", with: ""))
+    }
+
+    static func durationText(_ m: Int) -> String { m % 60 == 0 ? "\(m / 60) h" : "\(m / 60) h \(m % 60) min" }
+
     public static func set(_ rawKey: String, _ value: String, by writer: Writer, in s: inout DumpState) -> KnobResult {
+        if let r = sleepAlias(rawKey, value, by: writer, in: &s) { return r }
         guard let spec = Registry.knob(rawKey) else { return .refused("There's no setting called “\(rawKey)”") }
         guard writer.mayApply(spec.tier) else {
             return .refused("“\(spec.key)” changes how the app behaves, so Productium only adjusts it from how your weeks go (you can see and undo it in What Productium Thinks)")

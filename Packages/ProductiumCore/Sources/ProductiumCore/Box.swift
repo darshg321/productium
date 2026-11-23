@@ -174,7 +174,10 @@ public enum BoxContext {
         let cal = c.calendar, now = c.now, s = c.state
         func f(_ p: String) -> DateFormatter { DateFormatter.local(p, cal) }
         let hm = f("HH:mm"), dayF = f("EEE yyyy-MM-dd"), dt = f("EEE MM-dd HH:mm")
-        func parity(_ d: Date) -> String { cal.component(.day, from: d) % 2 == 1 ? "odd date" : "even date" }
+        func parity(_ d: Date) -> String {
+            let rotation = Rotation.day(d, entries: s.entries, tree: s.categories, book: s.dayRules, calendar: cal).map { ", Day \($0)" } ?? ""
+            return (cal.component(.day, from: d) % 2 == 1 ? "odd date" : "even date") + rotation
+        }
         func path(_ id: CategoryID) -> String { s.categories.pathText(id) }
         func task(_ id: UUID?) -> String { id.map { " task " + Ref.task($0) } ?? "" }
         var l: [String] = []
@@ -313,9 +316,9 @@ public enum BoxPrompt {
         didn't / won't happen; or fields category + day to skip everything in it that day). entry confirm (ref@date: \
         yes, it happened). entry start (title, category) / entry stop (end?).
         - task add: title, due, minutes, kind, difficulty 1-3, importance 1-5, category, maxMinutesPerDay, notBefore, \
-        firstStep, topics, note. task change (ref): any of those. task start / done / drop / remove (ref).
+        firstStep, topics, note. task change (ref): any of those; text "reopen" undoes done. task start / done / drop / remove (ref).
         - rule add: text, said, from, until, repeats (which days), limits. rule change / remove (ref).
-        - setting change: title = the setting (nudgeLevel, windDownMinutes, wakeAlarms, schoolDays…), text = value. \
+        - setting change: title = the setting (lasting wake "7:30"/"9:00 free days", sleep "9h", nudgeLevel…), text = value. \
         mood add: mood 1-5, energy, note. screen_time add: screen off a screenshot \
         (Week view: period week, minutes = average, totalMinutes = Total; Most Used apps only).
         - goal add: category (or "tasks"), target (min or count), period day|week, atMost; change/remove. place add: title \

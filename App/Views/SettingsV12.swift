@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import MapKit
 import ProductiumCore
 
 // MARK: - K4: Settings → Categories (the same edits the box can do)
@@ -140,10 +141,11 @@ struct PlacesSettings: View {
     @Environment(AppModel.self) private var model
     @State private var renaming: UUID?
     @State private var newName = ""
+    @State private var merging: Place?
 
     var body: some View {
         List {
-            Section { WhereCard().listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
+            WhereSection()
             Section {
                 ForEach(model.state.placeBook.places.sorted { $0.visits > $1.visits }) { p in
                     Button { newName = p.name ?? ""; renaming = p.id } label: {
@@ -151,11 +153,14 @@ struct PlacesSettings: View {
                             Image(systemName: "pencil").foregroundStyle(.tint)
                         } label: {
                             Text(p.title).foregroundStyle(.primary)
+                            if let a = p.address, a != p.title { Text(a).foregroundStyle(.secondary) }
                             Text(source(p)).foregroundStyle(.secondary)
                         }
                     }
+                    .swipeActions { Button("Merge") { merging = p }.tint(.orange) }
+                    .contextMenu { Button("Merge Into…", systemImage: "arrow.triangle.merge") { merging = p } }
                 }
-            } header: { Text("Your Places") } footer: { Text("Tap a place to rename it.") }
+            } header: { Text("Your Places") } footer: { Text("Tap a place to rename it. Swipe to merge two that are the same spot.") }
         }
         .listStyle(.insetGrouped)
         .alert("Rename Place", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
@@ -168,6 +173,14 @@ struct PlacesSettings: View {
             Button("Cancel", role: .cancel) { renaming = nil }
         }
         .navigationTitle("Places")
+        .confirmationDialog("Merge \(merging?.title ?? "") into…", isPresented: Binding(get: { merging != nil }, set: { if !$0 { merging = nil } }),
+                            titleVisibility: .visible) {
+            if let m = merging {
+                ForEach(model.state.placeBook.places.filter { $0.id != m.id }.sorted { $0.visits > $1.visits }.prefix(8)) { p in
+                    Button(p.title) { model.mergePlace(m.id, into: p.id); merging = nil }
+                }
+            }
+        }
     }
 
     private func source(_ p: Place) -> String {
@@ -181,35 +194,64 @@ struct PlacesSettings: View {
     }
 }
 
-// MARK: - E4: where
+// MARK: - E4 / v1.5: where the time went, ranked, with a map
 
-struct WhereCard: View {
+struct WhereSection: View {
     @Environment(AppModel.self) private var model
+    @State private var period: MetricPeriod = .week
 
     var body: some View {
         let cal = Calendar.current
-        let week = DateInterval(start: cal.date(byAdding: .day, value: -7, to: Date()) ?? Date(), end: Date())
-        let rows = Where.rows(visits: model.state.trace.visits, book: model.state.placeBook, entries: model.state.entries, range: week, now: Date())
-        if !rows.isEmpty {
-            Card {
-                CardHeader(title: "Where", symbol: "mappin.and.ellipse", color: .red, detail: "Last 7 days")
-                Chart(rows.prefix(6)) { r in
-                    SectorMark(angle: .value("Minutes", r.minutes), innerRadius: .ratio(0.6), angularInset: 1)
-                        .foregroundStyle(by: .value("Place", r.name))
-                }
-                .frame(height: 150)
-                ForEach(rows.prefix(8)) { r in
-                    VStack(alignment: .leading, spacing: 2) {
-                        LabeledContent(r.name, value: durationLabel(r.minutes))
-                        if !r.top.isEmpty {
-                            Text(r.top.map { "\(model.state.categories.node($0.0)?.name ?? $0.0) \(durationLabel($0.1))" }.joined(separator: " · "))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .font(.subheadline)
-                }
-                Text("Name a place by telling the box where you are: “this is the library”.").font(.caption2).foregroundStyle(.secondary)
+        let now = Date()
+        let range = range(now, cal)
+        let rows = Where.rows(visits: model.state.trace.visits, book: model.state.placeBook, entries: model.state.entries,
+                              range: range, now: now)
+        let places = model.state.placeBook.places
+        Section {
+            Picker("Period", selection: $period) {
+                Text("Day").tag(MetricPeriod.day)
+                Text("Week").tag(MetricPeriod.week)
+                Text("Month").tag(MetricPeriod.month)
             }
+            .pickerStyle(.segmented)
+            if !places.isEmpty {
+                Map(initialPosition: .automatic, interactionModes: [.pan, .zoom]) {
+                    ForEach(places) { p in
+                        Marker(p.title, systemImage: "mappin", coordinate: CLLocationCoordinate2D(latitude: p.latitude, longitude: p.longitude))
+                            .tint(rows.contains { $0.id == p.id } ? .red : .gray)
+                    }
+                }
+                .frame(height: 200)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+            }
+            if rows.isEmpty {
+                Text("No time at a place yet in this period.").foregroundStyle(.secondary)
+            }
+            ForEach(Array(rows.prefix(12).enumerated()), id: \.element.id) { i, r in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("\(i + 1)").font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).frame(width: 20, alignment: .leading)
+                        Text(r.name).lineLimit(1)
+                        Spacer()
+                        Text(durationLabel(r.minutes)).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    if !r.top.isEmpty {
+                        Text(r.top.map { "\(model.state.categories.node($0.0)?.name ?? $0.0) \(durationLabel($0.1))" }.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary).padding(.leading, 20)
+                    }
+                }
+            }
+        } header: { Text("Where Your Time Went") } footer: {
+            Text("Name a place by telling the box where you are (“this is the library”), or when Today asks.")
+        }
+    }
+
+    private func range(_ now: Date, _ cal: Calendar) -> DateInterval {
+        switch period {
+        case .day: return Days.dayInterval(now, cal)
+        case .week: return DateInterval(start: cal.date(byAdding: .day, value: -7, to: now) ?? now, end: now)
+        case .month: return DateInterval(start: cal.date(byAdding: .day, value: -30, to: now) ?? now, end: now)
         }
     }
 }

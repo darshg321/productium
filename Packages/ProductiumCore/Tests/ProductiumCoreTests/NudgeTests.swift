@@ -21,12 +21,12 @@ final class NudgeTests: XCTestCase {
     }
 
     func nudges(_ level: NudgeLevel, now: Date = Fx.mon(12), started: UUID? = nil, answered: Set<UUID> = [],
-                item: WorkItem? = nil) -> (Plan, [PlannedNudge]) {
+                item: WorkItem? = nil, liveActivity: Bool = false) -> (Plan, [PlannedNudge]) {
         let e = item ?? essay()
         let plan = samplePlan(essay: e.id)
         var s = NudgeSettings(); s.level = level
         let input = NudgeInput(now: now, calendar: cal, plan: plan, items: [e], settings: s,
-                               startedBlockId: started, answeredBlockIds: answered)
+                               startedBlockId: started, answeredBlockIds: answered, liveActivity: liveActivity)
         return (plan, NudgePlanner.plan(input))
     }
 
@@ -47,6 +47,25 @@ final class NudgeTests: XCTestCase {
         XCTAssertTrue(n.contains { $0.kind == .bedtime && $0.at == Fx.mon(22) })
         XCTAssertTrue(n.contains { $0.kind == .leaveSoon && $0.at == Fx.mon(7, 50, plusDays: 1) })
         XCTAssertFalse(n.contains { $0.kind == .stillUp })
+    }
+
+    func testLiveActivityMeansOneNotificationPerSession() {
+        let (plan, n) = nudges(.persistent, liveActivity: true)
+        XCTAssertTrue(n.filter { [.leadUp, .followUp].contains($0.kind) }.isEmpty)
+        XCTAssertEqual(n.filter { $0.kind == .start }.count, 2)
+        let (_, running) = nudges(.standard, now: Fx.mon(16, 5), started: plan.blocks[0].id, liveActivity: true)
+        let end = running.first { $0.kind == .sessionEnd }
+        XCTAssertEqual(end?.at, Fx.mon(16, 40))
+        XCTAssertEqual(end?.title, "Time's up: Essay · 1/2")
+    }
+
+    func testDailyCapDropsTheLeastImportant() {
+        let xs = (0..<10).map { PlannedNudge(id: "c\($0)", kind: .checkIn, at: Fx.mon(10 + $0), title: "", body: "") }
+            + [PlannedNudge(id: "start", kind: .start, at: Fx.mon(21), title: "", body: "")]
+        let (kept, dropped) = NudgePlanner.capped(xs, cap: 8, calendar: cal)
+        XCTAssertEqual(kept.count, 8)
+        XCTAssertTrue(kept.contains { $0.id == "start" })
+        XCTAssertEqual(dropped.count, 3)
     }
 
     func testPersistentAddsMore() {
@@ -284,20 +303,15 @@ final class TaskBoardTests: XCTestCase {
 final class SensorNudgeTests: XCTestCase {
     let cal = Fx.cal
 
-    func testMovementBreakAfterAboutNinetyMinutesOfStudy() {
-        let blocks = [PlannedBlock(kind: .work, start: Fx.mon(16), end: Fx.mon(16, 50), title: "Essay"),
-                      PlannedBlock(kind: .breakTime, start: Fx.mon(16, 50), end: Fx.mon(17), title: "Break"),
-                      PlannedBlock(kind: .work, start: Fx.mon(17), end: Fx.mon(17, 45), title: "Essay"),
-                      PlannedBlock(kind: .work, start: Fx.mon(20), end: Fx.mon(20, 40), title: "Math")]
+    func testStandUpRidesOnTheSessionEnd() {
+        let essay = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(9, plusDays: 2))
+        let a = PlannedBlock(kind: .work, start: Fx.mon(16), end: Fx.mon(16, 50), title: "Essay", itemId: essay.id)
+        let b = PlannedBlock(kind: .work, start: Fx.mon(17), end: Fx.mon(17, 45), title: "Essay", itemId: essay.id)
         var plan = Plan.empty
-        plan.blocks = blocks
-        let n = NudgePlanner.plan(NudgeInput(now: Fx.mon(15), calendar: cal, plan: plan, items: [], settings: NudgeSettings()))
-        let moves = n.filter { $0.kind == .movement }
-        XCTAssertEqual(moves.map(\.at), [Fx.mon(17, 45)], "95 minutes in; the lone 40 minute block later doesn't qualify")
-        var off = NudgeSettings(); off.movement = false
-        XCTAssertTrue(NudgePlanner.plan(NudgeInput(now: Fx.mon(15), calendar: cal, plan: plan, items: [], settings: off)).filter { $0.kind == .movement }.isEmpty)
-        XCTAssertTrue(NudgePlanner.plan(NudgeInput(now: Fx.mon(15), calendar: cal, plan: plan, items: [], settings: NudgeSettings(level: .gentle)))
-            .filter { $0.kind == .movement }.isEmpty)
+        plan.blocks = [a, PlannedBlock(kind: .breakTime, start: Fx.mon(16, 50), end: Fx.mon(17), title: "Break"), b]
+        let n = NudgePlanner.plan(NudgeInput(now: Fx.mon(17, 5), calendar: cal, plan: plan, items: [essay], settings: NudgeSettings(),
+                                             startedBlockId: b.id, answeredBlockIds: [b.id]))
+        XCTAssertTrue(n.first { $0.kind == .sessionEnd }?.body.contains("stand up") ?? false)
     }
 
     func testMorningLightOnlyOnDaysWithNothingFixed() {
@@ -341,7 +355,7 @@ extension NudgeTests {
     func testEveryTaskNotificationNamesAStepADurationAndWhatItLeadsTo() {
         var e = essay()
         e.firstStep = "Outline paragraph 2"
-        let w1 = PlannedBlock(id: Planner.stableUUID("a"), kind: .work, start: Fx.mon(16), end: Fx.mon(16, 40), title: "Essay · 2 of 3", itemId: e.id)
+        let w1 = PlannedBlock(id: Planner.stableUUID("a"), kind: .work, start: Fx.mon(16), end: Fx.mon(16, 40), title: "Essay", itemId: e.id)
         let w2 = PlannedBlock(id: Planner.stableUUID("b"), kind: .work, start: Fx.mon(19), end: Fx.mon(19, 30), title: "Bio quiz", itemId: nil,
                               hint: "Self-test from memory")
         let dinner = PlannedBlock(id: Planner.stableUUID("c"), kind: .meal, start: Fx.mon(18), end: Fx.mon(18, 30), title: "Dinner")
@@ -349,7 +363,7 @@ extension NudgeTests {
         let n = NudgePlanner.plan(NudgeInput(now: Fx.mon(12), calendar: cal, plan: plan, items: [e], settings: NudgeSettings()))
         let start1 = n.first { $0.kind == .start && $0.blockId == w1.id }!
         XCTAssertEqual(start1.title, "Essay")
-        XCTAssertEqual(start1.body, "Outline paragraph 2 · 40m. 1 of 3 sessions done. Then you're free until 6:00 PM.")
+        XCTAssertEqual(start1.body, "Outline paragraph 2 · 40m. Then you're free until 6:00 PM.")
         let start2 = n.first { $0.kind == .start && $0.blockId == w2.id }!
         XCTAssertEqual(start2.body, "Self-test from memory · 30m. Then you're done for today.")
         for x in n where [.start, .leadUp, .followUp].contains(x.kind) {

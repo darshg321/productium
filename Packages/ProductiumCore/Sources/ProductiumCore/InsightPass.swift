@@ -44,6 +44,8 @@ public struct InsightInput {
     public var answers: [String] = []
     /// v1.3 A4: the activity grid and what's typed with no tile (`GridTidy.summary`).
     public var grid: [String] = []
+    /// v1.5: how focused rated work was (`TimeLog.FocusStats.line`).
+    public var focus: String?
 
     public init(now: Date, calendar: Calendar, trigger: InsightTrigger, question: String? = nil, aboutMe: AboutMe = .empty,
                 beliefs: Beliefs = Beliefs(), routines: [Routine] = Routine.defaults, deferrals: [Deferral] = [], days: [DayRecord] = [],
@@ -107,7 +109,9 @@ public enum InsightPass {
 
         You read the student's week and do two things.
 
-        1. The Weekly Note they see: headline (under 10 words), wins (1-2 short sentences, specific), suggestions         (at most 2 small tweaks backed by research: sleep regularity, spacing, self-testing, shorter blocks, phone         out of the room). Kind about misses. If they asked a question, answer it in the suggestions.
+        1. The Weekly Note they see: headline (under 10 words), wins (1-2 short sentences, specific), suggestions         (at most 2 small tweaks backed by research: sleep regularity, spacing, self-testing, shorter blocks, phone         out of the room). Kind about misses. If they asked a question, answer it in the suggestions. "Focus ratings" \
+        are their own sense of how focused work was: weigh minutes by it, and the part of day they focus best is \
+        evidence for when to plan hard work.
 
         2. changes: up to 3 small changes to how the app behaves, applied at once without asking. Only make one         when the data shows a clear pattern; none is a fine answer. Never mention them in the note.
         - knob: one of the listed behaviour knobs, value = the new number (the app limits each step).
@@ -227,6 +231,7 @@ public enum InsightPass {
         if let m = x.metrics { l.append(m) }
         if !x.trackRecord.isEmpty { l.append("How tasks ended (track record): " + x.trackRecord.joined(separator: "; ")) }
         l += x.grid
+        if let f = x.focus { l.append(f) }
         if !x.answers.isEmpty { l.append("When plan and reality disagreed, they said: " + x.answers.joined(separator: "; ")) }
         if !x.patterns.isEmpty {
             l.append("Patterns found (id: text · evidence):")

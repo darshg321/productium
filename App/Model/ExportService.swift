@@ -93,7 +93,7 @@ enum ExportService {
                 if rel == "Library" || rel == BackupService.defaultFolderName { e.skipDescendants(); continue }
                 guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
                 let key = "\(prefix)/\(rel)"
-                guard !representedFiles.contains(key), !rel.hasPrefix("Library/"), !rel.hasPrefix(BackupService.defaultFolderName + "/"),
+                guard !representedFiles.contains(key), ExportFiles.keep(key, backupsFolder: BackupService.defaultFolderName),
                       let data = try? Data(contentsOf: url) else { continue }
                 out[key] = data.base64EncodedString()
             }
@@ -151,8 +151,7 @@ enum ExportService {
             guard let data = Data(base64Encoded: base64) else { continue }
             let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
             // Exports before 1.4.2 could hold absolute paths and old backups (the /private/var mismatch).
-            guard parts.count == 2, !parts[1].hasPrefix("/"), !parts[1].hasPrefix("Library/"),
-                  !parts[1].hasPrefix(BackupService.defaultFolderName + "/") else { continue }
+            guard parts.count == 2, ExportFiles.keep(key, backupsFolder: BackupService.defaultFolderName) else { continue }
             let root = parts[0] == "documents" ? documentsURL : LocalStore.containerURL
             let url = root.appendingPathComponent(parts[1])
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

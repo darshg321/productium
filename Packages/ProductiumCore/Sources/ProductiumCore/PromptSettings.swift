@@ -91,7 +91,7 @@ public enum PromptKind: String, Codable, CaseIterable, Sendable {
     /// Which prompt kind a notification belongs to (nil: always sent, e.g. the running entry when Live Activities are off).
     public init?(_ k: NudgeKind) {
         switch k {
-        case .leadUp, .start: self = .sessionStart
+        case .leadUp, .start, .sessionEnd: self = .sessionStart
         case .followUp: self = .missedStart
         case .windDown, .bedtime, .stillUp: self = .bedtime
         case .leaveSoon, .leaveNow: self = .leave
@@ -99,7 +99,6 @@ public enum PromptKind: String, Codable, CaseIterable, Sendable {
         case .checkIn: self = .checkIn
         case .morning: self = .wake
         case .intention: self = .reminders
-        case .movement: self = .movement
         case .daylight: self = .daylight
         case .untracked: self = .untracked
         case .sleepConfirm: self = .sleepCheck

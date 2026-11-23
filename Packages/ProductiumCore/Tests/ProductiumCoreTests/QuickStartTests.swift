@@ -105,12 +105,12 @@ final class QuickStartTests: XCTestCase {
 
     func testAFreshInstallHasAFullGridInTemplateOrder() {
         var q = QuickStarts()
-        q.seedTemplates(at: Fx.mon(8), skip: ["class", "nap"])
+        q.seedTemplates(at: Fx.mon(8), skip: ["gaming", "nap"])
         XCTAssertEqual(q.buttons.count, QuickStartTemplate.all.count)
         let r = q.ranked(entries: [], now: Fx.mon(9), calendar: cal)
         XCTAssertEqual(r.row.count, QuickStarts.gridSize)
-        XCTAssertEqual(r.row.prefix(3).map(\.title), ["Eating", "Walking", "Commute"])
-        XCTAssertFalse((r.row + r.more).contains { $0.title == "Class" || $0.title == "Nap" }, "unticked in onboarding")
+        XCTAssertEqual(r.row.prefix(3).map(\.title), ["Eating", "Commute", "Getting ready"])
+        XCTAssertFalse((r.row + r.more).contains { $0.title == "Gaming" || $0.title == "Nap" }, "unticked in onboarding")
         q.seedTemplates(at: Fx.mon(9))
         XCTAssertEqual(q.buttons.count, QuickStartTemplate.all.count, "seeding twice adds nothing; hidden stay hidden")
     }
@@ -132,7 +132,7 @@ final class QuickStartTests: XCTestCase {
             if d == -2 { log.append(told("Reading", CategoryTree.studying, day: d, 16, 40)) }
         }
         let monday = q.ranked(entries: log, now: Fx.mon(16, 25), calendar: cal)
-        XCTAssertEqual(monday.row.first?.title, "Homework")
+        XCTAssertEqual(monday.row.first?.title, "Studying", "Homework is Studying's alias")
         XCTAssertEqual(q.ranked(entries: log, now: Fx.mon(7, 40), calendar: cal).row.first?.title, "Commute")
         let saturday = Fx.mon(16, 25, plusDays: 5)
         XCTAssertEqual(q.ranked(entries: log, now: saturday, calendar: cal).row.first?.title, "Gaming", "the kind of day counts")
@@ -160,8 +160,8 @@ final class QuickStartTests: XCTestCase {
         for d in -10 ..< 0 { log.append(told("Homework", CategoryTree.studying, day: d, 16, 30)) }
         let r = q.ranked(entries: log, now: Fx.mon(16, 30), calendar: cal)
         XCTAssertEqual(r.row.first?.title, "Shower")
-        XCTAssertEqual(r.row[1].title, "Homework")
-        XCTAssertEqual(r.top.first?.title, "Homework", "the Lock Screen gets the likeliest, not the pinned")
+        XCTAssertEqual(r.row[1].title, "Studying")
+        XCTAssertEqual(r.top.first?.title, "Studying", "the Lock Screen gets the likeliest, not the pinned")
         XCTAssertTrue(q.button(for: "Shower")!.edited, "a pinned tile is yours")
     }
 
@@ -235,5 +235,21 @@ final class QuickStartTests: XCTestCase {
         let q = try d.decode(QuickStarts.self, from: Data(old.utf8))
         XCTAssertEqual(q.buttons.first?.origin, .you)
         XCTAssertFalse(q.buttons.first!.edited)
+    }
+
+    func testRetiredTemplatesFoldAndSubjectsGetStudyButtons() {
+        var q = QuickStarts()
+        q.buttons = [QuickStart(title: "Walking", category: CategoryTree.travel, createdAt: Fx.mon(0), origin: .template),
+                     QuickStart(title: "Commute", category: CategoryTree.travel, createdAt: Fx.mon(0), origin: .template),
+                     QuickStart(title: "Class", category: CategoryTree.school, createdAt: Fx.mon(0), origin: .template)]
+        q.retireTemplates()
+        XCTAssertEqual(q.live.map(\.title), ["Commute"])
+        XCTAssertTrue(q.button(for: "Commute")!.keys.contains("walking"))
+        var tree = CategoryTree()
+        _ = tree.add("Math", under: CategoryTree.school)
+        let added = q.seedSubjects(tree: &tree, at: Fx.mon(0))
+        XCTAssertEqual(added.map(\.title), ["Math study"])
+        XCTAssertEqual(tree.pathText(added[0].category), "Work › Studying › Math")
+        XCTAssertTrue(q.seedSubjects(tree: &tree, at: Fx.mon(0)).isEmpty, "once")
     }
 }

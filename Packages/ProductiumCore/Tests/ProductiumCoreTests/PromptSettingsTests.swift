@@ -58,4 +58,18 @@ final class PromptSettingsTests: XCTestCase {
         guard case .changed = Knobs.set("deadlineNudges", "on", by: .student, in: &s) else { return XCTFail() }
         XCTAssertEqual(s.prefs.prompts[.deadline], .notification, "the old toggles still work")
     }
+
+    func testWakeAndSleepAreSettings() {
+        var s = DumpState(items: [], moods: [], screen: [], prefs: Preferences())
+        guard case .changed = Knobs.set("wake", "7:30 on school days", by: .box, in: &s) else { return XCTFail() }
+        XCTAssertEqual(s.prefs.schoolDayWake, TimeOfDay(7, 30))
+        XCTAssertFalse(s.prefs.autoWake)
+        XCTAssertEqual(s.prefs.freeDayWake, TimeOfDay(8, 30))
+        guard case .changed = Knobs.set("wake", "9am weekends", by: .box, in: &s) else { return XCTFail() }
+        XCTAssertEqual(s.prefs.freeDayWake, TimeOfDay(9, 0))
+        XCTAssertEqual(s.prefs.schoolDayWake, TimeOfDay(7, 30))
+        guard case .changed = Knobs.set("sleep", "9.5h", by: .box, in: &s) else { return XCTFail() }
+        XCTAssertEqual(s.prefs.sleepNeedMinutes, 570)
+        guard case .refused = Knobs.set("wake", "soon", by: .box, in: &s) else { return XCTFail() }
+    }
 }

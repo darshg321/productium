@@ -10,7 +10,11 @@ final class AppModel {
     static let shared = AppModel()
 
     var state: AppState
-    var toast: String?
+    var toast: String? {
+        didSet { toastUndo = nil }
+    }
+    /// The toast's Undo (finishing a task can be taken back).
+    var toastUndo: UUID?
     /// A leaderboard invite opened before you picked a name (Review → Leaderboard asks for it).
     var pendingInvite: String?
     /// Dev test runner: the card id a screen should scroll to (`scroll <card>`).
@@ -33,6 +37,10 @@ final class AppModel {
     /// v1.3 E: prompts set to Alarm, from the last scheduling pass.
     @ObservationIgnored var promptAlarms: [PlannedAlarm] = []
     var busy: Set<String> = []
+    /// Claude working in the background ("Sorting categories"), shown on Today and the Live Activity.
+    var aiWorking: String? {
+        didSet { if aiWorking != oldValue { syncNowActivity() } }
+    }
     var serverOnline: Bool?
     var serverUsage: ServerUsage?
     var subscription: SubscriptionStatus?
@@ -45,6 +53,9 @@ final class AppModel {
     let cal = Calendar.current
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var lastRefresh: Date = .distantPast
+    @ObservationIgnored private var refreshing: Task<Void, Never>?
+    @ObservationIgnored var memos: [String: (key: MemoKey, value: Any)] = [:]
+    @ObservationIgnored var perfLogged: [String: Date] = [:]
 
     init() {
         var loaded = Persistence.load()
@@ -147,8 +158,11 @@ final class AppModel {
         NotificationCenter.default.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil,
                                                queue: .main) { [weak self] _ in
             Task { @MainActor in
-                self?.log(.health, "unlocked")
-                await self?.refresh(full: false)
+                guard let self else { return }
+                // A locked read comes back empty: read again on unlock, unless a refresh ran in the last 30 minutes.
+                guard UIApplication.shared.applicationState == .active || Date().timeIntervalSince(self.lastRefresh) > 30 * 60 else { return }
+                self.log(.health, "unlocked")
+                await self.refresh(full: false)
             }
         }
         LocationService.shared.onVisit = { [weak self] visit in
@@ -163,12 +177,15 @@ final class AppModel {
             LocationService.shared.visitsWanted = true
             LocationService.shared.monitorVisits(true)
         }
+        noteUncleanExit()
+        launchRepairs()
         log(.lifecycle, "launch", ["onboarded": "\(state.onboarded)", "entries": "\(state.entries.count)"])
         Task { await UpdateChecker.shared.checkIfDue() }
         if state.onboarded { Task { await refresh() } }
     }
 
     func foreground() {
+        LocalStore.defaults.set(true, forKey: LocalStore.Key.runActive)
         Friction.ended(by: .productium)
         rebuildAppEntries()
         state.appOpens.append(Date())
@@ -177,15 +194,54 @@ final class AppModel {
             deepLink = link
             LocalStore.defaults.removeObject(forKey: LocalStore.Key.pendingDeepLink)
         }
-        if Date().timeIntervalSince(lastRefresh) > 5 * 60 { Task { await refresh() } } else { replan() }
+        if Date().timeIntervalSince(lastRefresh) > 5 * 60 { Task { await refresh() } } else if refreshing == nil { replan() }
     }
 
-    func refresh(full: Bool = true) async {
+    /// One refresh at a time, at most every 15 s (`force`: pull-to-refresh, the test runner): foregrounding, unlocking
+    /// and Health's observer used to run it 3–4 times in the same second.
+    func refresh(full: Bool = true, force: Bool = false) async {
+        if let running = refreshing { await running.value; return }
+        guard force || Date().timeIntervalSince(lastRefresh) > 15 else { return }
         lastRefresh = Date()
+        let task = Task { await runRefresh(full: full) }
+        refreshing = task
+        await task.value
+        refreshing = nil
+    }
+
+    /// A3: the last run didn't reach the background (a crash or a freeze kill): log it with what led up to it.
+    private func noteUncleanExit() {
+        let d = LocalStore.defaults
+        guard d.bool(forKey: LocalStore.Key.runActive) else { return }
+        let last = state.telemetry.events.suffix(20).map { e in
+            let detail = e.detail.keys.sorted().map { k in "\(k)=\(e.detail[k]?.prefix(80) ?? "")" }.joined(separator: " ")
+            return "\(e.at.formatted(.iso8601)) \(e.area.rawValue).\(e.name) \(detail)"
+        }
+        log(.lifecycle, "unclean_exit", level: .error, ["last": last.joined(separator: "\n")])
+        d.set(false, forKey: LocalStore.Key.runActive)
+    }
+
+    /// Main-thread time of a Today computation, logged when slow (at most once per name per 10 minutes).
+    func notePerf(_ name: String, since started: ContinuousClock.Instant) {
+        let took = started.duration(to: .now)
+        let ms = Int(took.components.seconds * 1000 + took.components.attoseconds / 1_000_000_000_000_000)
+        guard ms >= 100, Date().timeIntervalSince(perfLogged[name] ?? .distantPast) > 600 else { return }
+        perfLogged[name] = Date()
+        let detail = ["what": name, "ms": "\(ms)", "entries": "\(state.entries.count)"]
+        Task { @MainActor in self.log(.lifecycle, "perf", level: .warn, detail) }
+    }
+
+    private func runRefresh(full: Bool) async {
         await syncHealth()
         await syncMotion()
         estimateSleep()
         syncCalendar()
+        var tree = state.categories, buttons = state.quickStarts
+        if !buttons.seedSubjects(tree: &tree, at: Date()).isEmpty {
+            state.categories = tree
+            state.quickStarts = buttons
+            log(.log, "subject_buttons")
+        }
         syncScreen()
         await refreshLog()
         learnCapacities()
@@ -198,7 +254,7 @@ final class AppModel {
         replan()
         await backupIfDue()
         if !state.outbox.items.isEmpty { await flushOutbox() }
-        if full { await refreshRemote() }
+        if full { await refreshRemote() } else { await taxonomyPass() }
     }
 
     /// The server half of a refresh (Claude passes, usage, leaderboards): slow, so pull-to-refresh doesn't wait for it.
@@ -266,6 +322,17 @@ final class AppModel {
         applyPlanEffects()
     }
 
+    /// A Today computation, kept until the log (or the minute) changes. Array equality is O(1) when unchanged.
+    func memo<T>(_ name: String, now: Date, extra: String = "", _ make: () -> T) -> T {
+        let key = MemoKey(state: state, minute: Int(now.timeIntervalSince1970 / 60), extra: extra)
+        if let m = memos[name], m.key == key, let v = m.value as? T { return v }
+        let started = ContinuousClock.now
+        let v = make()
+        notePerf(name, since: started)
+        memos[name] = (key: key, value: v as Any)
+        return v
+    }
+
     func plannerInput(now: Date, locked: [PlannedBlock] = []) -> PlannerInput {
         PlannerInput(now: now, calendar: cal, items: state.items,
                      preferences: state.prefs, learned: state.learned,
@@ -300,11 +367,17 @@ final class AppModel {
             }
             planned += questionNudges(now: now)
             planned = state.prefs.prompts.filter(planned, liveActivity: RunningActivity.showing)
+            // D2: at most 8 a day; alarms ring on their own and aren't counted.
+            let ringing = Set(state.prefs.prompts.alarms(from: planned, alarmsAllowed: state.integrations.alarms).compactMap { $0.key.split(separator: ".", maxSplits: 1).last.map(String.init) })
+            let (kept, dropped) = NudgePlanner.capped(planned.filter { !ringing.contains($0.id) }, cap: NudgePlanner.dailyCap, calendar: cal)
+            planned = kept + planned.filter { ringing.contains($0.id) }
             log(.notification, "scheduled", ["count": "\(planned.count)", "prompts": "\(prompts.count)",
-                                             "next": planned.filter { $0.kind != .running }.min { $0.at < $1.at }.map { "\($0.title) at \($0.at)" } ?? "none"])
+                                             "dropped": dropped.map { "\($0.kind.rawValue) \($0.title) at \($0.at.hm)" }.joined(separator: " | "),
+                                             "next": planned.filter { $0.kind != .running }.min { $0.at < $1.at }.map { "\($0.title) at \($0.at)" } ?? "none"]
+                .filter { !$0.value.isEmpty })
             NotificationService.schedule(planned)
             promptAlarms = state.prefs.prompts.alarms(from: planned, alarmsAllowed: state.integrations.alarms)
-            NotificationService.scheduleHousekeeping(expiry: signatureExpiry)
+            NotificationService.scheduleHousekeeping()
         }
         let n = state.prefs.nudges
         LocalStore.defaults.set(state.prefs.prompts.notifies(.scrollCheckIns) && state.integrations.notifications ? n.level.scrollCheckIns : [],
@@ -316,16 +389,29 @@ final class AppModel {
     // MARK: Start buttons (D2)
 
     func startButtons(now: Date = Date()) -> QuickStarts.Ranked {
+        memo("startButtons", now: now, extra: currentPlaceId?.uuidString ?? "") { rankButtons(now: now) }
+    }
+
+    private func rankButtons(now: Date) -> QuickStarts.Ranked {
         let covered = QuickStarts.covered(today: now, items: state.items, planned: state.entries.filter { $0.source == .plan }, calendar: cal)
         return state.quickStarts.ranked(entries: state.entries, now: now, place: currentPlaceId, covered: covered,
                                         book: state.dayRules, schoolDays: state.prefs.schoolDays, calendar: cal)
     }
 
-    /// One tap: starts it with no AI call (the same path as "starting X" typed).
-    func start(_ b: QuickStart) {
-        applyUI([BoxOp(.entry, .start, BoxFields(title: b.title, category: b.category, topics: b.topics.isEmpty ? nil : b.topics))],
-                what: "button \(b.title)", quiet: true)
+    /// One tap: starts it with no AI call (the same path as "starting X" typed). B1: a long press can start it earlier.
+    func start(_ b: QuickStart, at: Date? = nil) {
+        let f = BoxFields(title: b.title, start: at.map { QuickParse.stamp(min($0, Date()), cal) }, category: b.category,
+                          topics: b.topics.isEmpty ? nil : b.topics)
+        applyUI([BoxOp(.entry, .start, f)], what: "button \(b.title)" + (at == nil ? "" : " earlier"), quiet: true)
         Haptics.start()
+    }
+
+    /// B2: "Started 10:05" on the running row, corrected.
+    func moveRunningStart(to at: Date) {
+        guard let r = running else { return }
+        let f = BoxFields(start: QuickParse.stamp(min(at, Date()), cal))
+        applyUI([BoxOp(.entry, .change, ref: EntryRef.entry(r.id, occurrence: nil), f)], what: "running start", quiet: true)
+        Haptics.tap()
     }
 
     /// Starts something by name (a notification's start button, Siri, a Shortcut): the button's filing if there's one.
@@ -352,6 +438,7 @@ final class AppModel {
         log(.intent, "stop", ["source": source])
         applyUI([BoxOp(.entry, .stop)], what: "stop (\(source))", quiet: true)
         Haptics.stop()
+        askFocusIfAway()
         // I: a work session that just ended gets its moment (minutes, or a new focus-hour milestone).
         if r.taskId != nil {
             let before = state.entries.filter { $0.taskId != nil && $0.id != r.id }
@@ -415,7 +502,24 @@ final class AppModel {
     }
 
     var activeWarnings: [PlanWarning] {
-        state.plan.warnings.filter { !state.dismissed.contains($0.message) }
+        state.plan.warnings.filter { !state.dismissed.contains($0.dismissKey) }
+    }
+
+    /// C5: a task that doesn't fit: plan less of it, or give it another day.
+    func shorten(_ w: PlanWarning) {
+        guard let id = w.itemId, let mins = w.shortfall, let i = state.items.firstIndex(where: { $0.id == id }) else { return }
+        state.items[i].estimateMinutes = max(state.items[i].completedMinutes + 15, state.items[i].estimateMinutes - mins)
+        toast = "\(state.items[i].title): planned \(mins) min shorter"
+        replan()
+    }
+
+    func moveDue(_ w: PlanWarning, days: Int = 1) {
+        guard let id = w.itemId, let i = state.items.firstIndex(where: { $0.id == id }) else { return }
+        let old = state.items
+        state.items[i].due = cal.date(byAdding: .day, value: days, to: state.items[i].due) ?? state.items[i].due
+        Avoidance.recordDueMoves(before: old, after: &state.items, at: Date(), reason: "Doesn't fit")
+        toast = "\(state.items[i].title) is due \(state.items[i].due.relativeDay)"
+        replan()
     }
 
     // MARK: Running entry (D3: starting a task is starting an entry with its id)
@@ -497,10 +601,13 @@ final class AppModel {
         followUp(new: item)
     }
 
+    /// Undo Done or Clear: the task is open again and its ending is no longer in the track record.
     func reopen(_ id: UUID) {
-        guard let i = state.items.firstIndex(where: { $0.id == id }), state.items[i].isDone else { return }
-        state.items[i].isDone = false
+        guard let i = state.items.firstIndex(where: { $0.id == id }), state.items[i].state != .open else { return }
+        state.items[i].state = .open
         state.items[i].doneAt = nil
+        state.taskHistory.records.removeAll { $0.id == id }
+        log(.log, "task_reopened", ["title": state.items[i].title])
         if let p = state.items[i].parentId, let j = state.items.firstIndex(where: { $0.id == p }) {
             state.items[j].isDone = false
             state.items[j].doneAt = nil
@@ -516,6 +623,11 @@ final class AppModel {
 
     func complete(_ id: UUID) {
         guard let i = state.items.firstIndex(where: { $0.id == id }), !state.items[i].isDone else { return }
+        if running?.taskId == id {
+            applyUI([BoxOp(.entry, .stop)], what: "stop (done)", quiet: true)
+            askFocusIfAway()
+        }
+        clearPlannedSessions(of: id)
         state.items[i].isDone = true
         state.items[i].doneAt = Date()
         let it = state.items[i]
@@ -527,6 +639,38 @@ final class AppModel {
             state.learned.recordCompletion(kind: it.kind, estimated: it.estimateMinutes, actual: it.completedMinutes)
         }
         if let p = it.parentId, !state.items.contains(where: { $0.parentId == p && $0.isOpen }) { complete(p) }
+        toast = "Done: \(it.title)"
+        toastUndo = id
+        replan()
+    }
+
+    /// B5: a finished task's Schedule is what you did: every planned session of it (past ones too) goes, the
+    /// sessions you tracked stay.
+    func clearPlannedSessions(of id: UUID) {
+        state.entries.removeAll { $0.source == .plan && $0.taskId == id }
+        state.plan.blocks.removeAll { $0.itemId == id }
+    }
+
+    /// B4: it needs more time than planned (+15 / +30 min), or the rest waits until tomorrow.
+    func extend(_ id: UUID, minutes: Int) {
+        guard let i = state.items.firstIndex(where: { $0.id == id }) else { return }
+        state.items[i].estimateMinutes += minutes
+        log(.log, "task_extended", ["task": state.items[i].title, "minutes": "\(minutes)"])
+        toast = "\(state.items[i].title): \(minutes) more minutes planned"
+        replan()
+    }
+
+    func finishTomorrow(_ id: UUID) {
+        guard let i = state.items.firstIndex(where: { $0.id == id }) else { return }
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        if running?.taskId == id { stopRunning(source: "tomorrow") }
+        if state.items[i].due > tomorrow {
+            state.items[i].notBefore = tomorrow
+            toast = "\(state.items[i].title): the rest is planned from tomorrow"
+        } else {
+            toast = "\(state.items[i].title) is due today, so it stays on today's plan"
+        }
+        Avoidance.record(.cantToday, itemId: id, in: &state.items, at: Date(), reason: "Finish tomorrow", blockId: nil)
         replan()
     }
 
@@ -714,9 +858,10 @@ final class AppModel {
         guard state.integrations.calendarImport, CalendarService.shared.authorized else { return }
         let events = CalendarService.shared.events(days: 14)
         let start = cal.startOfDay(for: Date())
+        let rules = state.categoryRules, tree = state.categories, apps = state.scrollingApps
         CalendarEntries.merge(events, into: &state.entries,
                               window: DateInterval(start: start, end: start.addingTimeInterval(14 * 86400)),
-                              book: state.dayRules, now: Date(), calendar: cal)
+                              book: state.dayRules, now: Date(), calendar: cal) { rules.category(for: $0, tree: tree, scrollingApps: apps) }
         log(.sensor, "calendar_read", ["events": "\(events.count)"])
         for cand in CalendarService.shared.deadlineCandidates(days: 30) {
             if let i = state.items.firstIndex(where: { $0.externalId == cand.externalId }) {
@@ -758,7 +903,8 @@ final class AppModel {
                                                 weeklyDue: weeklyDue, asked: question != nil, budgetAllows: aiAllowed(.review),
                                                 calendar: cal) else { return }
         busy.insert("review")
-        defer { busy.remove("review") }
+        aiWorking = "Writing your weekly note"
+        defer { busy.remove("review"); aiWorking = nil }
         let convos = state.archive.conversations.suffix(5).compactMap(\.title) + state.conversation.turns.suffix(5).map { String($0.text.prefix(120)) }
         let input = InsightInput(now: now, calendar: cal, trigger: trigger, question: question, aboutMe: aboutMe,
                                  beliefs: state.beliefs, routines: routines, deferrals: deferrals, days: days,
@@ -775,6 +921,8 @@ final class AppModel {
         x.goals = goalsAll.map { progress($0).line }
         x.aiGoals = state.goals.filter { $0.origin == .ai }
         x.grid = GridTidy.summary(state.quickStarts, entries: state.entries, now: now)
+        x.focus = TimeLog.focusStats(state.entries, in: DateInterval(start: now.addingTimeInterval(-14 * 86400), end: now), calendar: cal)
+            .line(days: 14)
         x.answers = state.inference.answers.suffix(8).map { "\($0.answer) (\($0.kind.rawValue), \($0.at.formatted(.dateTime.weekday(.abbreviated))))" }
         guard let out = try? await ClaudeClient.shared.structured(
             feature: .review, system: InsightPass.system(), user: InsightPass.request(x), schema: InsightPass.schema,
@@ -972,7 +1120,8 @@ final class AppModel {
         let school = days.isEmpty ? "none" : contiguous ? "\(name(days.first!))–\(name(days.last!))" : days.map(name).joined(separator: ", ")
         func hours(_ m: Int) -> String { m % 60 == 0 ? "\(m / 60)h" : String(format: "%.1fh", Double(m) / 60) }
         return "school days \(school), sleep need \(hours(p.sleepNeedMinutes)), sleep floor \(hours(p.sleepFloorMinutes)), "
-            + "wake \(p.schoolDayWake.hour):\(String(format: "%02d", p.schoolDayWake.minute)) on school days, notifications \(p.nudges.level.rawValue)"
+            + "wake \(p.autoWake ? "worked back from the first class, else " : "")\(p.schoolDayWake.label) on school days, \(p.freeDayWake.label) on free days, "
+            + "notifications \(p.nudges.level.rawValue)"
     }
 
     func boxState(entries: [Entry]) -> BoxState {
@@ -988,6 +1137,8 @@ final class AppModel {
     /// Writes the box's changes back. Plan entries it didn't touch stay as they were (a replan renews them); one it
     /// edited is yours now.
     func absorb(_ b: BoxState, plan _: [Entry]) {
+        let reopened = Set(b.items.filter { $0.isOpen }.map(\.id)).subtracting(state.items.filter(\.isOpen).map(\.id))
+        state.taskHistory.records.removeAll { reopened.contains($0.id) }
         state.entries = b.entries + b.planned
         state.goals = b.goals
         state.placeBook = b.places
@@ -1052,6 +1203,7 @@ final class AppModel {
             if reply.isEmpty {
                 reply = receipt.lines.isEmpty && receipt.held.isEmpty ? "I couldn't find anything to change in that. Try saying it another way." : "Done."
             }
+            reply = receipt.honest(reply, asked: result.ops.count)
             if res.isTruncated { reply += " That was a lot at once, so I may have missed the end. Check the list and send the rest again." }
             askForAlarmsIfWanted()
             Avoidance.recordDueMoves(before: itemsBefore, after: &state.items, at: now, reason: text)
@@ -1392,5 +1544,26 @@ enum Signature {
               let open = text.range(of: "<date>", range: key.upperBound..<text.endIndex),
               let close = text.range(of: "</date>", range: open.upperBound..<text.endIndex) else { return nil }
         return ISO8601DateFormatter().date(from: String(text[open.upperBound..<close.lowerBound]))
+    }
+}
+
+/// What Today's computations read; compared before reusing a memo.
+struct MemoKey: Equatable {
+    let entries: [Entry]
+    let items: [WorkItem]
+    let categories: CategoryTree
+    let dayRules: DayRuleBook
+    let dayPlans: [DayKey: [UUID: Int]]
+    let quickStarts: QuickStarts
+    let goals: [Goal]
+    let taper: ScreenTaper
+    let prefs: Preferences
+    let minute: Int
+    let extra: String
+
+    init(state: AppState, minute: Int, extra: String) {
+        entries = state.entries; items = state.items; categories = state.categories; dayRules = state.dayRules
+        dayPlans = state.dayPlans; quickStarts = state.quickStarts; goals = state.goals; taper = state.taper
+        prefs = state.prefs; self.minute = minute; self.extra = extra
     }
 }

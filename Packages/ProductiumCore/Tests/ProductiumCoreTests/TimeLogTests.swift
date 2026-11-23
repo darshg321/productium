@@ -29,6 +29,42 @@ final class TimeLogTests: XCTestCase {
         XCTAssertTrue(r.lines.first?.hasPrefix("Trimmed Homework to 15:00–16:00 and 17:00–18:00") ?? false, r.lines.description)
     }
 
+    func testFocusIsAskedOnceForFinishedWork() {
+        var hw = told("Essay", Fx.mon(16), Fx.mon(16, 45), cat: CategoryTree.studying)
+        let walk = told("Walk", Fx.mon(16, 45), Fx.mon(17), cat: CategoryTree.travel)
+        XCTAssertEqual(TimeLog.unratedWork([hw, walk], tree: CategoryTree(), now: Fx.mon(17, 30))?.title, "Essay")
+        hw.focus = 3
+        XCTAssertNil(TimeLog.unratedWork([hw, walk], tree: CategoryTree(), now: Fx.mon(17, 30)))
+        XCTAssertEqual(TimeLog.focusMinutes([hw], in: Days.dayInterval(Fx.mon(12), cal)), [3: 45])
+    }
+
+    func testFocusStatsByPartOfDay() {
+        var morning = told("Math", Fx.mon(9), Fx.mon(10), cat: CategoryTree.studying)
+        var evening = told("Essay", Fx.mon(19), Fx.mon(20, 30), cat: CategoryTree.studying)
+        morning.focus = 3
+        evening.focus = 1
+        let f = TimeLog.focusStats([morning, evening], in: Days.dayInterval(Fx.mon(12), cal), calendar: cal)
+        XCTAssertEqual(f.total, 150)
+        XCTAssertEqual(f.focused, 60)
+        XCTAssertEqual(f.best, "morning")
+        XCTAssertEqual(f.line(days: 14), "Focus ratings (14 days): 2h 30m rated, 40% normal or very; morning 100% of 1h, evening 0% of 1h 30m")
+        XCTAssertNil(TimeLog.focusStats([], in: Days.dayInterval(Fx.mon(12), cal), calendar: cal).line(days: 14))
+    }
+
+    func testTrackedWalkReplacesThePlannedOne() {
+        let planned = Entry(title: "Walk home", start: Fx.mon(15), end: Fx.mon(15, 20), category: CategoryTree.travel, source: .plan)
+        let ready = Entry(title: "Get ready", start: Fx.mon(7), end: Fx.mon(7, 40), category: CategoryTree.gettingReady, source: .plan)
+        let walked = told("Walking", Fx.mon(15, 36), Fx.mon(16, 17), cat: "travel.walking")
+        let day = Days.on(Fx.mon(12), [planned, ready, walked], now: Fx.mon(23), calendar: cal)
+        XCTAssertEqual(day.map(\.title), ["Get ready", "Walking"])
+        let far = told("Walking", Fx.mon(18), Fx.mon(18, 30), cat: CategoryTree.travel)
+        XCTAssertEqual(Days.on(Fx.mon(12), [planned, far], now: Fx.mon(23), calendar: cal).count, 2, "a walk hours later is another walk")
+        let blip = told("Walking", Fx.mon(15, 5), Fx.mon(15, 6), cat: CategoryTree.travel)
+        XCTAssertEqual(Days.on(Fx.mon(12), [planned, blip], now: Fx.mon(23), calendar: cal).count, 2, "a mistaken tap doesn't count")
+        let lunch = told("Homework", Fx.mon(15), Fx.mon(15, 30), cat: CategoryTree.studying)
+        XCTAssertEqual(Days.on(Fx.mon(12), [planned, lunch], now: Fx.mon(23), calendar: cal).count, 2)
+    }
+
     func testPastResolvesByRankWithUntrackedGaps() {
         let math = Entry(title: "Math", start: Fx.mon(9), end: Fx.mon(10, 15), category: CategoryTree.school,
                          repeats: .weekly([2, 4, 6]), source: .you, createdAt: Fx.mon(7))

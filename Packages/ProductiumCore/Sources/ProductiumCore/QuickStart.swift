@@ -73,23 +73,26 @@ public struct QuickStartTemplate: Hashable, Sendable {
     public var symbol: String
     public var topics: [String]
 
-    public init(_ title: String, _ category: CategoryID, _ symbol: String, topics: [String] = []) {
+    public var aliases: [String]
+
+    public init(_ title: String, _ category: CategoryID, _ symbol: String, topics: [String] = [], aliases: [String] = []) {
         self.title = title
         self.category = category
         self.symbol = symbol
         self.topics = topics
+        self.aliases = aliases
     }
 
+    /// v1.5: one button per distinction worth comparing. Ways of getting somewhere are all Commute; study splits by
+    /// subject (`QuickStarts.seedSubjects`), with Studying for the rest.
     public static let all: [QuickStartTemplate] = [
         .init("Eating", CategoryTree.meals, "fork.knife", topics: ["Breakfast", "Lunch", "Dinner", "Snack"]),
-        .init("Walking", CategoryTree.travel, "figure.walk"),
-        .init("Commute", CategoryTree.travel, "bus", topics: ["To school", "Home"]),
+        .init("Commute", CategoryTree.travel, "figure.walk", topics: ["To school", "Home"],
+              aliases: ["Walking", "Walk", "Transport", "Bus", "Driving", "Biking"]),
         .init("Getting ready", CategoryTree.gettingReady, "tshirt"),
         .init("Shower", "essentials.shower", "shower"),
-        .init("Homework", CategoryTree.studying, "pencil.line"),
-        .init("Studying", CategoryTree.studying, "book"),
+        .init("Studying", CategoryTree.studying, "book", aliases: ["Homework", "Study"]),
         .init("Reading", CategoryTree.studying, "book.closed"),
-        .init("Class", CategoryTree.school, "building.2"),
         .init("Practice", CategoryTree.extracurricular, "music.note", topics: ["Instrument", "Sport"]),
         .init("Exercise", CategoryTree.extracurricular, "figure.run"),
         .init("Chores", CategoryTree.essentials, "house"),
@@ -104,6 +107,9 @@ public struct QuickStartTemplate: Hashable, Sendable {
     ]
 
     static let order: [String: Int] = Dictionary(all.enumerated().map { (CategoryRules.key($1.title), $0) }, uniquingKeysWith: min)
+
+    /// Templates 1.4 seeded that are now another button's alias (Walking → Commute) or not worth a button (Class).
+    static let retired: [String: String?] = ["walking": "Commute", "homework": "Studying", "class": nil]
 }
 
 public struct QuickStarts: Codable, Hashable, Sendable {
@@ -132,14 +138,47 @@ public struct QuickStarts: Codable, Hashable, Sendable {
     public mutating func seedTemplates(at: Date, skip: Set<String> = []) {
         for t in QuickStartTemplate.all where button(for: t.title) == nil {
             buttons.append(QuickStart(title: t.title, category: t.category, topics: t.topics, createdAt: at,
-                                      removed: skip.contains(CategoryRules.key(t.title)), origin: .template, symbol: t.symbol))
+                                      removed: skip.contains(CategoryRules.key(t.title)), origin: .template, symbol: t.symbol,
+                                      aliases: t.aliases))
         }
+    }
+
+    /// v1.5 (schema 7): retired templates you never changed fold into the button that replaces them.
+    public mutating func retireTemplates() {
+        for (key, into) in QuickStartTemplate.retired {
+            guard let i = buttons.firstIndex(where: { $0.key == key && $0.origin == .template && !$0.edited }) else { continue }
+            buttons[i].removed = true
+            buttons[i].pin = nil
+            if let into, let j = buttons.firstIndex(where: { $0.key == CategoryRules.key(into) }), !buttons[j].keys.contains(key) {
+                buttons[j].aliases.append(buttons[i].title)
+            }
+        }
+        if let t = QuickStartTemplate.all.first(where: { $0.title == "Commute" }), let j = buttons.firstIndex(where: { $0.key == "commute" }) {
+            for a in t.aliases where !buttons[j].keys.contains(CategoryRules.key(a)) { buttons[j].aliases.append(a) }
+        }
+    }
+
+    /// v1.5: study time per subject. Each class subject (School › Math) gets Work › Studying › Math and a "Math study"
+    /// button, once. Returns the buttons added.
+    @discardableResult
+    public mutating func seedSubjects(tree: inout CategoryTree, at: Date) -> [QuickStart] {
+        var added: [QuickStart] = []
+        for subject in tree.children(CategoryTree.school) {
+            let title = "\(subject.name) study"
+            guard button(for: title) == nil, let node = tree.find(subject.name, under: CategoryTree.studying)
+                    ?? tree.add(subject.name, under: CategoryTree.studying) else { continue }
+            let b = QuickStart(title: title, category: node.id, topics: [subject.name.lowercased()], createdAt: at, origin: .template,
+                               symbol: "book")
+            buttons.append(b)
+            added.append(b)
+        }
+        return added
     }
 
     /// Something was started (by text, a notification, Siri). Tasks don't get buttons: their row has Start.
     @discardableResult
     public mutating func noteStart(_ e: Entry, at: Date) -> QuickStart? {
-        guard e.taskId == nil, e.source == .you else { return nil }
+        guard e.taskId == nil, e.source == .you, !QuickParse.endsInTimeWord(e.title) else { return nil }
         let k = CategoryRules.key(e.title)
         guard !k.isEmpty else { return nil }
         if let i = index(for: e.title) {
@@ -153,6 +192,19 @@ public struct QuickStarts: Codable, Hashable, Sendable {
         let b = QuickStart(title: e.title, category: e.category, topics: e.topics, createdAt: at)
         buttons.append(b)
         return b
+    }
+
+    /// v1.5: buttons 1.4 made from a misread title ("Productium development since") are hidden.
+    @discardableResult
+    public mutating func hideTimeWordButtons() -> Int {
+        var n = 0
+        for i in buttons.indices where buttons[i].origin == .you && !buttons[i].removed && !buttons[i].edited
+            && QuickParse.endsInTimeWord(buttons[i].title) {
+            buttons[i].removed = true
+            buttons[i].pin = nil
+            n += 1
+        }
+        return n
     }
 
     public mutating func remove(_ id: UUID) {

@@ -225,4 +225,22 @@ final class BoxOpsTests: XCTestCase {
         // with stable numbering; nothing to fix by hand.
         _ = run(at(0, 1, day: 19), [BoxOp(.task, .change, ref: task("Brag"), BoxFields(minutes: 15))])
     }
+
+    func testReplyFollowsTheReceipt() {
+        var r = BoxReceipt()
+        XCTAssertEqual(r.honest("Done, wake is now 7:30.", asked: 1), "Done, wake is now 7:30.")
+        r.problems = ["No setting called \"wake\"."]
+        XCTAssertEqual(r.honest("Done, wake is now 7:30.", asked: 1), "That didn't work: No setting called \"wake\".")
+        r.lines = ["Added a rule"]
+        XCTAssertTrue(r.honest("Done.", asked: 2).hasPrefix("Done. But this didn't work: No setting"))
+    }
+
+    func testReopenUndoesDone() {
+        var item = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(9, plusDays: 2))
+        item.state = .done
+        var s = BoxState(items: [item])
+        let r = BoxApplier.apply([BoxOp(.task, .change, ref: Ref.task(item.id), BoxFields(text: "reopen"))], to: &s, now: Fx.mon(18), calendar: Fx.cal)
+        XCTAssertEqual(r.lines, ["Reopened: Essay"])
+        XCTAssertEqual(s.items[0].state, .open)
+    }
 }

@@ -216,14 +216,13 @@ enum RunningActivity {
     static let renewAfter: TimeInterval = 7 * 3600
 
     /// One activity for whatever's now: updated in place, started when there's none, ended when there's nothing to show.
-    static func sync(_ now: NowState?, rings: DayRings?, foreground: Bool) {
-        for a in Activity<RunningAttributes>.activities { Task { await a.end(nil, dismissalPolicy: .immediate) } }
+    static func sync(_ now: NowState?, rings: DayRings?, busy: String? = nil, foreground: Bool) {
         var current = Activity<NowAttributes>.activities
         guard enabled, let now else {
             for a in current { Task { await a.end(nil, dismissalPolicy: .immediate) } }
             return
         }
-        let state = NowAttributes.ContentState(card: card(now.card), then: now.then.map(card), rings: rings.map(mirror))
+        let state = NowAttributes.ContentState(card: card(now.card), then: now.then.map(card), rings: rings.map(mirror), busy: busy)
         let content = ActivityContent(state: state, staleDate: now.until)
         let started = LocalStore.defaults.double(forKey: startedKey)
         if foreground, !current.isEmpty, Date().timeIntervalSince1970 - started > renewAfter {
@@ -247,7 +246,7 @@ enum RunningActivity {
     static func card(_ c: NowCard) -> NowAttributes.Card {
         NowAttributes.Card(kind: c.kind.rawValue, title: c.title, subtitle: c.subtitle, since: c.since,
                            buttons: c.buttons.map { NowAttributes.Button(action: $0.action, label: $0.label, symbol: $0.symbol) },
-                           other: c.other)
+                           other: c.other, ends: c.ends)
     }
 
     static func mirror(_ r: DayRings) -> NowAttributes.Rings {

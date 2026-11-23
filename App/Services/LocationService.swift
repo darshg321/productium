@@ -113,12 +113,15 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    /// E2: a name for a new place from its address: a landmark iOS knows there (a school, a park), else the street
-    /// address. Not the nearest business, which is often a neighbour's.
-    func placeName(latitude: Double, longitude: Double) async -> String? {
+    /// E2: a place's street address ("12 Oak St, Toronto") and a name for it: a landmark iOS knows there (a school, a
+    /// park), else the street address. Not the nearest business, which is often a neighbour's.
+    func lookup(latitude: Double, longitude: Double) async -> (name: String, address: String?)? {
         let marks = try? await CLGeocoder().reverseGeocodeLocation(CLLocation(latitude: latitude, longitude: longitude))
         guard let m = marks?.first else { return nil }
-        return m.areasOfInterest?.first ?? m.name ?? m.thoroughfare ?? m.subLocality
+        let street = [m.subThoroughfare, m.thoroughfare].compactMap { $0 }.joined(separator: " ")
+        let address = [street.isEmpty ? nil : street, m.locality].compactMap { $0 }.joined(separator: ", ")
+        guard let name = m.areasOfInterest?.first ?? m.name ?? m.thoroughfare ?? m.subLocality else { return nil }
+        return (name, address.isEmpty ? nil : address)
     }
 
     func locationManager(_ m: CLLocationManager, didVisit visit: CLVisit) {

@@ -36,4 +36,16 @@ final class DuplicateTests: XCTestCase {
         CalendarEntries.merge([dentist], into: &entries, window: window, now: Fx.mon(8), calendar: cal)
         XCTAssertTrue(entries.contains { $0.title == "Old" })
     }
+
+    func testCalendarEventsAreFiledByTitle() {
+        var rules = CategoryRules()
+        let tree = CategoryTree()
+        rules.learn("Data 6.1-6.2", CategoryTree.studying, byYou: true, at: Fx.mon(7))
+        let ev = FixedEvent(id: "ev1", title: "Data 6.1-6.2", start: Fx.mon(19), end: Fx.mon(20), kind: .other)
+        var entries: [Entry] = []
+        CalendarEntries.merge([ev], into: &entries, window: Days.dayInterval(Fx.mon(0), Fx.cal), now: Fx.mon(7), calendar: Fx.cal) {
+            rules.category(for: $0, tree: tree)
+        }
+        XCTAssertEqual(entries.first?.category, CategoryTree.studying)
+    }
 }
