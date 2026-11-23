@@ -21,7 +21,7 @@ struct NowLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: NowAttributes.self) { context in
             // One look in light and dark mode, like the system's own timers: dark glass, white text.
-            NowLockScreen(card: shown(context), rings: context.state.rings)
+            NowLockScreen(card: shown(context), rings: context.state.rings, busy: context.state.busy)
                 .padding(16)
                 .environment(\.colorScheme, .dark)
                 .activityBackgroundTint(Color.black.opacity(0.55))
@@ -33,7 +33,7 @@ struct NowLiveActivity: Widget {
                     Label(card.title, systemImage: NowLook.symbol(card.kind)).font(.headline).lineLimit(2)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if let since = card.since {
+                    if let since = card.ends ?? card.since {
                         Text(since, style: .timer).monospacedDigit().font(.headline)
                             .multilineTextAlignment(.trailing).frame(maxWidth: 80)
                     } else if let r = context.state.rings {
@@ -43,13 +43,14 @@ struct NowLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 6) {
                         if let sub = card.subtitle { Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                        if let busy = context.state.busy { BusyLine(text: busy) }
                         NowButtons(card: card)
                     }
                 }
             } compactLeading: {
                 Image(systemName: NowLook.symbol(card.kind)).foregroundStyle(NowLook.tint(card.kind))
             } compactTrailing: {
-                if let since = card.since {
+                if let since = card.ends ?? card.since {
                     Text(since, style: .timer).monospacedDigit().frame(maxWidth: 48)
                 } else if let r = context.state.rings {
                     MiniRings(rings: r).frame(width: 18, height: 18)
@@ -91,9 +92,11 @@ enum NowLook {
 private struct NowLockScreen: View {
     let card: NowAttributes.Card
     let rings: NowAttributes.Rings?
+    let busy: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let busy { BusyLine(text: busy) }
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: NowLook.symbol(card.kind))
                     .font(.system(size: 18, weight: .semibold))
@@ -105,7 +108,7 @@ private struct NowLockScreen: View {
                     if let sub = card.subtitle { Text(sub).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1) }
                 }
                 Spacer(minLength: 4)
-                if card.kind == "running", let since = card.since {
+                if card.kind == "running", let since = card.ends ?? card.since {
                     Text(since, style: .timer).monospacedDigit().font(.system(.title, design: .rounded).weight(.semibold))
                         .foregroundStyle(NowLook.tint(card.kind))
                         .multilineTextAlignment(.trailing).frame(maxWidth: 110)
@@ -116,6 +119,15 @@ private struct NowLockScreen: View {
             }
             NowButtons(card: card)
         }
+    }
+}
+
+/// Claude is working in the background (sorting categories, the weekly note).
+private struct BusyLine: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "sparkles").font(.caption.weight(.medium)).foregroundStyle(.white.opacity(0.75)).lineLimit(1)
     }
 }
 

@@ -60,7 +60,7 @@ final class TaxonomyTests: XCTestCase {
     func testDueAtMostDailyAndWhenThinLeavesFill() {
         var (tree, es, _) = fixture()
         var log = TaxonomyLog()
-        XCTAssertFalse(TaxonomyPass.due(tree: tree, entries: es, log: log, now: Fx.mon(20)))
+        XCTAssertFalse(TaxonomyPass.due(tree: tree, entries: [], log: log, now: Fx.mon(20)))
         let leaf = tree.add("Chess", under: CategoryTree.free)!
         for i in 0..<10 {
             es.append(Entry(title: "Chess \(i)", start: Fx.mon(10), end: Fx.mon(10, 10), category: leaf.id,
@@ -68,9 +68,28 @@ final class TaxonomyTests: XCTestCase {
         }
         XCTAssertTrue(TaxonomyPass.due(tree: tree, entries: es, log: log, now: Fx.mon(20)))
         log.lastRun = Fx.mon(12)
-        XCTAssertFalse(TaxonomyPass.due(tree: tree, entries: es, log: log, now: Fx.mon(20)), "not twice a day")
+        XCTAssertFalse(TaxonomyPass.due(tree: tree, entries: es, log: log, now: Fx.mon(20)), "nothing new since the last run")
+        log.lastRun = Fx.mon(18)
+        for i in 0..<3 {
+            es.append(Entry(title: "Thing \(i)", start: Fx.mon(18, 30), end: Fx.mon(18, 40), category: CategoryTree.other,
+                            source: .you, createdAt: Fx.mon(18, 40)))
+        }
+        XCTAssertFalse(TaxonomyPass.due(tree: tree, entries: es, log: log, now: Fx.mon(20)), "at most every 4 hours")
+        XCTAssertTrue(TaxonomyPass.due(tree: tree, entries: es, log: log, now: Fx.mon(22, 30)))
         let text = TaxonomyPass.request(tree: tree, entries: es, rules: CategoryRules(), now: Fx.mon(20), calendar: Fx.cal)
         XCTAssertTrue(text.contains("free.makingapp Making App [yours]"))
         XCTAssertTrue(text.contains("unproductive.scrolling Scrolling [fixed]"))
+    }
+
+    func testFileMovesOtherTitlesAndLearns() {
+        var (tree, es, rules) = fixture()
+        es.append(Entry(title: "Data review", start: Fx.mon(15), end: Fx.mon(16), category: CategoryTree.other, source: .you))
+        let (run, refused) = TaxonomyPass.apply([TaxonomyOp(op: "file", into: CategoryTree.studying, name: "data review", reason: "study")],
+                                                tree: &tree, entries: &es, rules: &rules, now: Fx.mon(20))
+        XCTAssertTrue(refused.isEmpty, refused.description)
+        XCTAssertEqual(es.last?.category, CategoryTree.studying)
+        XCTAssertEqual(rules.category(for: "Data review", tree: tree), CategoryTree.studying)
+        TaxonomyPass.revert(run!, tree: &tree, entries: &es)
+        XCTAssertEqual(es.last?.category, CategoryTree.other)
     }
 }

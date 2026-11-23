@@ -32,8 +32,12 @@ public struct NowCard: Codable, Hashable, Sendable {
     public var buttons: [NowButton]
     /// "Other" opens the box (untracked) or the app.
     public var other: Bool
+    /// v1.5 D1: a task session's planned end; the timer counts down to it.
+    public var ends: Date?
 
-    public init(kind: NowKind, title: String, subtitle: String? = nil, since: Date? = nil, buttons: [NowButton] = [], other: Bool = false) {
+    public init(kind: NowKind, title: String, subtitle: String? = nil, since: Date? = nil, buttons: [NowButton] = [], other: Bool = false,
+                ends: Date? = nil) {
+        self.ends = ends
         self.kind = kind
         self.title = title
         self.subtitle = subtitle
@@ -90,6 +94,7 @@ public enum NowActivity {
         let hm = DateFormatter.local("H:mm", x.calendar)
         let on = { (k: PromptKind) in x.prompts[k] == .liveActivity }
         if let r = TimeLog.running(x.entries) {
+            if let task = r.taskId, x.items.contains(where: { $0.id == task && $0.isOpen }) { return session(r, task: task, x, hm) }
             var buttons = [NowButton("stop", "Stop", "stop.fill")]
             if let t = x.tiles.first(where: { $0.key != CategoryRules.key(r.title) }) {
                 buttons.append(NowButton("start:\(t.title)", t.title, t.symbol))
@@ -115,13 +120,26 @@ public enum NowActivity {
             return NowState(card: card, then: on(.untracked) && !quiet(a.end, x) ? untracked(a.end) : nil, until: a.end)
         }
         if let b = upNext(x) {
-            let title = b.itemId.flatMap { id in x.items.first { $0.id == id }?.title } ?? TaskCopy.plainTitle(b.title)
+            let title = b.itemId.flatMap { id in x.items.first { $0.id == id }?.title } ?? b.title
             let card = NowCard(kind: .upNext, title: "\(title) · \(minutesLabel(b.minutes)) at \(hm.string(from: b.start))",
                                subtitle: "Up next",
                                buttons: b.itemId.map { [NowButton("task:\($0.uuidString)", "Start", "play.fill")] } ?? [])
             return NowState(card: card, until: b.end)
         }
         return nil
+    }
+
+    /// v1.5 D1: a task session carries its countdown, what's next, and Done / +15 / Stop.
+    static func session(_ r: Entry, task: UUID, _ x: NowInput, _ hm: DateFormatter) -> NowState {
+        let block = x.plan.blocks.filter { $0.itemId == task && $0.isStudy && $0.end > x.now && $0.start <= x.now.addingTimeInterval(15 * 60) }
+            .min { $0.start < $1.start }
+        let next = x.plan.blocks.filter { $0.isStudy && $0.itemId != task && $0.start >= (block?.end ?? x.now) }.min { $0.start < $1.start }
+        let nextTitle = next.map { n in (n.itemId.flatMap { id in x.items.first { $0.id == id }?.title } ?? n.title) + " at " + hm.string(from: n.start) }
+        let subtitle = [block.map { "Until \(hm.string(from: $0.end))" }, nextTitle.map { "then \($0)" }].compactMap { $0 }.joined(separator: ", ")
+        let buttons = [NowButton("done:\(task.uuidString)", "Done", "checkmark"), NowButton("extend:\(task.uuidString):15", "+15", "plus"),
+                       NowButton("stop", "Stop", "stop.fill")]
+        return NowState(card: NowCard(kind: .running, title: r.title, subtitle: subtitle.isEmpty ? x.goalLine : subtitle,
+                                      since: r.start, buttons: buttons, ends: block?.end))
     }
 
     /// The start of the untracked stretch that runs up to now (≥ `untrackedAfter` minutes, awake, nothing planned to cover it).

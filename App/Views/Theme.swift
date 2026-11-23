@@ -123,13 +123,6 @@ enum Theme {
         id == CategoryTree.untracked ? "questionmark.circle" : (tree.node(id)?.symbol ?? "circle")
     }
 
-    /// "Data practice test · 2 of 3" → ("Data practice test", "Part 2 of 3").
-    static func session(_ title: String) -> (title: String, part: String?) {
-        guard let r = title.range(of: #"\s*·\s*(\d+) of (\d+)$"#, options: .regularExpression) else { return (title, nil) }
-        let part = title[r].replacingOccurrences(of: "·", with: "").trimmingCharacters(in: .whitespaces)
-        return (String(title[..<r.lowerBound]), "Part " + part)
-    }
-
     static func meter(_ fraction: Double) -> Color {
         fraction >= 1 ? .red : fraction >= 0.8 ? .orange : .green
     }
@@ -172,6 +165,42 @@ struct Card<Content: View>: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+    }
+}
+
+/// A queue of cards: the current one in front, the next peeking out below it (and a third edge when there are more).
+struct PeekStack<Content: View>: View {
+    let remaining: Int
+    var next: String?
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) { content }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+                .zIndex(2)
+            if remaining > 1 {
+                HStack {
+                    Text(next.map { "Next: \($0)" } ?? "\(remaining - 1) more").lineLimit(1)
+                    Spacer(minLength: 6)
+                    if remaining > 2 { Text("+\(remaining - 1)").monospacedDigit() }
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 6)
+                .frame(maxWidth: .infinity)
+                .background(Theme.card.opacity(0.6), in: UnevenRoundedRectangle(bottomLeadingRadius: Theme.cardRadius, bottomTrailingRadius: Theme.cardRadius, style: .continuous))
+                .padding(.horizontal, 10)
+                .padding(.top, -8)
+                .zIndex(1)
+                if remaining > 2 {
+                    UnevenRoundedRectangle(bottomLeadingRadius: Theme.cardRadius, bottomTrailingRadius: Theme.cardRadius, style: .continuous)
+                        .fill(Theme.card.opacity(0.35)).frame(height: 6).padding(.horizontal, 22)
+                }
+            }
+        }
+        .animation(.snappy, value: remaining)
     }
 }
 

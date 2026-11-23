@@ -297,7 +297,7 @@ struct EntryBlock: View {
         let colour = task.map { Theme.color(for: $0, in: model.state) } ?? Theme.color(category: entry.category, tree: tree)
         let planned = entry.isPlannedSession || (entry.source == .plan && entry.start > now)
         let pale = entry.assumed && entry.end <= now
-        let title = Theme.session(entry.title).title
+        let title = entry.title
         HStack(spacing: 0) {
             Rectangle().fill(colour).frame(width: 4)
             VStack(alignment: .leading, spacing: 1) {
@@ -343,9 +343,8 @@ struct EntryBlock: View {
 
     private var detail: String {
         var parts: [String] = []
-        if let part = Theme.session(entry.title).part { parts.append(part) }
         if entry.running { parts.append("Now") }
-        else if entry.isPlannedSession { parts.append(entry.end < now ? "Not started" : "Planned") }
+        else if entry.isPlannedSession { parts.append(entry.end < now ? "Not started" : "\(minutesLabel(entry.minutes)) planned") }
         else if entry.mark == .confirmed { parts.append(minutesLabel(entry.minutes)) }
         else if entry.assumed && entry.end <= now { parts.append("Assumed") }
         else if entry.source == .plan { parts.append("Planned") }

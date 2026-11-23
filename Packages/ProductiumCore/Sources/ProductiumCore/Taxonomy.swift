@@ -1,12 +1,12 @@
 import Foundation
 
-// v1.2 C5–C6: the background pass that keeps the category tree tidy. One Sonnet call, at most once a day, when ≥10
-// entries went into new or thin leaves since the last run, or weekly. It merges, renames, moves and creates nodes, at
+// v1.2 C5–C6: the background pass that keeps the category tree tidy. One Sonnet call, at most every 4 hours (v1.5), when
+// 3+ things you logged went into Other or new / thin leaves since the last run, or weekly. It merges, renames, moves and creates nodes, at
 // most 8 ops a run, and remaps entries so no time is lost. It never touches nodes you named (`yours`), entries you
 // filed, seed nodes code relies on, or anything a correction of yours points at. Every run can be reverted.
 
 public struct TaxonomyOp: Codable, Hashable, Sendable {
-    /// merge | rename | move | create
+    /// merge | rename | move | create | file (v1.5: entries titled `name` go `into` a category, and future ones too)
     public var op: String
     public var id: CategoryID?
     public var into: CategoryID?
@@ -53,16 +53,18 @@ public enum TaxonomyPass {
     public static let maxOps = 8
     static let seedIds = Set(CategoryTree.seedNodes.map(\.id))
 
-    /// Due: never twice a day; weekly at most; sooner when ≥10 entries went into leaves made since the last run or
-    /// leaves with under 3 entries.
+    public static let minHours = 4.0
+
+    /// Due: at most every `minHours`; weekly at least; sooner when 3+ entries you logged went into Other, leaves made
+    /// since the last run, or leaves with under 3 entries.
     public static func due(tree: CategoryTree, entries: [Entry], log: TaxonomyLog, now: Date) -> Bool {
-        if let l = log.lastRun, now.timeIntervalSince(l) < 20 * 3600 { return false }
+        if let l = log.lastRun, now.timeIntervalSince(l) < minHours * 3600 { return false }
         let since = log.lastRun ?? now.addingTimeInterval(-14 * 86400)
         // New or thin as of the last run: what had under 3 entries before it.
         let counts = Dictionary(grouping: entries.filter { $0.source != .plan && $0.createdAt <= since }, by: \.category).mapValues(\.count)
         let thin = Set(tree.nodes.filter { !seedIds.contains($0.id) && (counts[$0.id] ?? 0) < 3 }.map(\.id))
-        let recent = entries.filter { $0.createdAt > since && $0.source == .you && thin.contains($0.category) }
-        if recent.count >= 10 { return true }
+        let recent = entries.filter { $0.createdAt > since && $0.source == .you && (thin.contains($0.category) || $0.category == CategoryTree.other) }
+        if recent.count >= 3 { return true }
         return log.lastRun.map { now.timeIntervalSince($0) > 7 * 86400 } ?? false
     }
 
@@ -76,14 +78,17 @@ public enum TaxonomyPass {
         - rename {id, name}: a clearer name ("Vball" → "Volleyball").
         - move {id, under}: a leaf in the wrong branch (Gaming under Work → Free Time).
         - create {name, under}: a parent that groups 3+ existing leaves (then move them).
+        - file {name, into}: a title sitting in Other (or clearly misfiled) belongs in an existing node; its time moves.
         Each with a short reason. Never touch nodes marked [yours] or [fixed], and keep the student's corrections true: a \
         title they moved somewhere stays there. Prefer fewer, clearer leaves; don't invent detail.
+        Split only where the student would compare: study time per subject (Studying › Math, › English) matters; ways \
+        of getting somewhere don't (walking, the bus, a ride are all Travel), nor do kinds of meal or getting ready.
         """
     }
 
     public static let schema: JSONValue = {
         let s = Schemas.str
-        return Schemas.obj(["ops": Schemas.arr(Schemas.obj(["op": Schemas.strEnum(["merge", "rename", "move", "create"]), "id": s,
+        return Schemas.obj(["ops": Schemas.arr(Schemas.obj(["op": Schemas.strEnum(["merge", "rename", "move", "create", "file"]), "id": s,
                                                             "into": s, "name": s, "under": s, "reason": s], required: ["op", "reason"]))],
                            required: ["ops"])
     }()
@@ -115,6 +120,9 @@ public enum TaxonomyPass {
         let fresh = Set(mine.filter { $0.createdAt > now.addingTimeInterval(-7 * 86400) }.map(\.category))
             .filter { !seedIds.contains($0) }.map { tree.pathText($0) }.sorted()
         if !fresh.isEmpty { l.append("Used for the first time this week: " + fresh.joined(separator: "; ")) }
+        let other = Dictionary(grouping: mine.filter { $0.category == CategoryTree.other }, by: \.title).mapValues(\.count)
+            .sorted { $0.value > $1.value }.prefix(15).map { "\"\($0.key)\" ×\($0.value)" }
+        if !other.isEmpty { l.append("In Other (file them if they fit somewhere): " + other.joined(separator: ", ")) }
         if !rules.corrections.isEmpty {
             l.append("The student's corrections (keep them true): " + rules.corrections.suffix(30).map {
                 "\"\($0.title)\" → \(tree.pathText($0.to))"
@@ -177,6 +185,19 @@ public enum TaxonomyPass {
             case "create":
                 guard let name = op.name, let made = tree.add(name, under: op.under) else { refused.append("create: bad"); continue }
                 lines.append("Made \(tree.pathText(made.id))")
+            case "file":
+                guard let title = op.name, let into = op.into, tree.node(into) != nil else { refused.append("file: bad"); continue }
+                let key = CategoryRules.key(title)
+                if rules.learned[key]?.byYou == true { refused.append("file: you filed \(title)"); continue }
+                var moved = 0
+                for i in entries.indices where CategoryRules.key(entries[i].title) == key && !entries[i].filedByYou
+                    && entries[i].source != .plan && entries[i].category != into {
+                    if remapped[entries[i].id] == nil { remapped[entries[i].id] = entries[i].category }
+                    entries[i].category = into
+                    moved += 1
+                }
+                rules.learn(title, into, byYou: false, at: now)
+                lines.append("Filed \(title) under \(tree.pathText(into))" + (moved > 0 ? " (\(moved))" : ""))
             default:
                 refused.append("unknown op \(op.op)")
             }

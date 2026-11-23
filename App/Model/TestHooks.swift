@@ -147,7 +147,7 @@ final class TestHooks {
             await m.backupIfDue(force: true)
             return m.state.backup.failing ? "error: \(m.state.backup.lastError ?? "")" : "ok: \(m.state.backup.lastFile ?? "no folder")"
         case "refresh":
-            await m.refresh(full: false)
+            await m.refresh(full: false, force: true)
             return "ok"
         case "replan":
             m.replan()

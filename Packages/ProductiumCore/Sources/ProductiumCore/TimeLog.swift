@@ -53,7 +53,10 @@ public enum TimeLog {
         return r
     }
 
-    /// Ends the running entry at `at`. One that would end before it began is removed.
+    /// Stopped this soon after starting, it was a mis-tap: the entry goes instead of leaving a 0-minute stretch.
+    public static let mistapSeconds: TimeInterval = 60
+
+    /// Ends the running entry at `at`. One that would end before it began, or under a minute after, is removed.
     @discardableResult
     public static func stop(at: Date, entries: inout [Entry], calendar cal: Calendar) -> LogReceipt {
         var r = LogReceipt()
@@ -61,6 +64,10 @@ public enum TimeLog {
             if at <= entries[i].start {
                 r.removed.append(entries[i])
                 r.lines.append("Removed \(entries[i].title) (it hadn't started yet)")
+                entries.remove(at: i)
+            } else if at.timeIntervalSince(entries[i].start) < mistapSeconds && entries[i].createdAt > at.addingTimeInterval(-mistapSeconds) {
+                r.removed.append(entries[i])
+                r.lines.append("Cancelled \(entries[i].title)")
                 entries.remove(at: i)
             } else {
                 entries[i].end = at

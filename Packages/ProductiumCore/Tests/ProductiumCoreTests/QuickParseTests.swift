@@ -106,6 +106,42 @@ final class QuickParseTests: XCTestCase {
         XCTAssertEqual(p("gatsby essay 3 to 5")?.ops.first?.fields.task, Ref.task(essay.id), "time on a task is the task's")
     }
 
+    func testBackfill() {
+        let cases: [(String, String, String)] = [
+            ("productium development since 17:15", "Productium development", "2026-11-16 17:15"),
+            ("doing productium development since 10 mins ago", "Productium development", "2026-11-16 17:50"),
+            ("have been doing productium work since 5:50", "Productium work", "2026-11-16 17:50"),
+            ("productium development 5 minutes ago", "Productium development", "2026-11-16 17:55"),
+            ("i've been gaming since 4", "Gaming", "2026-11-16 16:00"),
+            ("start productium development 5 minutes ago", "Productium development", "2026-11-16 17:55"),
+        ]
+        for (s, title, at) in cases {
+            let r = p(s)
+            XCTAssertEqual(r?.kind, .start, s)
+            XCTAssertEqual(r?.ops.first?.fields.title, title, s)
+            XCTAssertEqual(r?.ops.first?.fields.start, at, s)
+        }
+        XCTAssertTrue(QuickParse.endsInTimeWord("Productium development since"))
+        XCTAssertFalse(QuickParse.endsInTimeWord("Productium development"))
+    }
+
+    func testWakeAndGettingReady() {
+        let night = Entry(title: "Sleep", start: Fx.mon(0, 30), end: Fx.mon(7, 30), category: CategoryTree.sleep, source: .sensor)
+        let ready = Entry(title: "Get ready", start: Fx.mon(7, 30), end: Fx.mon(8, 10), category: CategoryTree.gettingReady, source: .plan)
+        let at9 = QuickContext(now: Fx.mon(9), calendar: cal, entries: [night, ready], items: [])
+        let woke = QuickParse.parse("woke up at 8:15", at9)
+        XCTAssertEqual(woke?.ops.first?.verb, .change)
+        XCTAssertEqual(woke?.ops.first?.fields.end, "2026-11-16 08:15")
+        XCTAssertEqual(QuickParse.parse("out of bed", at9)?.ops.first?.fields.category, CategoryTree.gettingReady)
+        let done = QuickParse.parse("done getting ready", at9)
+        XCTAssertEqual(done?.ops.first?.ref, EntryRef.entry(ready.id, occurrence: nil))
+        XCTAssertEqual(done?.ops.first?.fields.end, "2026-11-16 09:00")
+        let tiles = [QuickStart(title: "Shower", category: "essentials.shower", createdAt: now)]
+        let c = QuickContext(now: now, calendar: cal, entries: [], items: [], tiles: tiles)
+        XCTAssertEqual(QuickParse.parse("shower", c)?.ops.first?.verb, .start)
+        XCTAssertEqual(QuickParse.parse("shower", c)?.ops.first?.fields.title, "Shower")
+    }
+
     func testMoods() {
         XCTAssertEqual(p("mood 4")?.ops.first?.fields.mood, 4)
         XCTAssertEqual(p("mood: 2/5")?.ops.first?.fields.mood, 2)

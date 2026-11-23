@@ -43,7 +43,7 @@ final class PlannerEntryTests: XCTestCase {
         let study = plan.study(for: reading.id).sorted { $0.start < $1.start }
         XCTAssertTrue(study.contains { $0.start == pin.start }, "the pinned session is in the plan")
         let titles = study.map(\.title)
-        XCTAssertEqual(titles, (1...study.count).map { "Reading · \($0) of \(study.count)" })
+        XCTAssertEqual(Set(titles), ["Reading"], "v1.5 C1: no part numbers")
         let without = Planner.plan(input(now: Fx.mon(7), items: [reading], entries: timetable))
         XCTAssertEqual(Double(plan.minutes(for: reading.id)), Double(without.minutes(for: reading.id)), accuracy: 15,
                        "the pin counts toward the task, it isn't scheduled on top")
@@ -60,7 +60,16 @@ final class PlannerEntryTests: XCTestCase {
         let study = plan.study(for: reading.id).sorted { $0.start < $1.start }
         XCTAssertFalse(study.isEmpty)
         XCTAssertTrue(study.allSatisfy { $0.start >= reading.notBefore! }, "nothing today")
-        XCTAssertEqual(study.first?.title, "Reading · 2 of \(study.count + 1)", "the session already done is 1")
+        XCTAssertEqual(study.first?.title, "Reading")
+    }
+
+    func testFewerLongerSessions() {
+        let bib = WorkItem(title: "Annotated bibliography", kind: .assignment, due: Fx.mon(9, plusDays: 2), estimateMinutes: 90)
+        let plan = Planner.plan(input(now: Fx.mon(7), items: [bib], entries: timetable))
+        let study = plan.study(for: bib.id)
+        XCTAssertLessThanOrEqual(study.count, 3, study.map { "\($0.start) \($0.minutes)" }.description)
+        XCTAssertTrue(study.allSatisfy { $0.minutes >= 30 }, study.map(\.minutes).description)
+        XCTAssertTrue(study.allSatisfy { $0.title == "Annotated bibliography" })
     }
 
     func testRuleLimitsShapeTheDay() {

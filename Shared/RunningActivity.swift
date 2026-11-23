@@ -2,26 +2,12 @@ import Foundation
 import ActivityKit
 import AppIntents
 
-/// D5: what the Lock Screen and Dynamic Island show while something is tracked. Compiled into the app and the widget
-/// extension; the extension only ever reads it (no App Group, so it gets everything through the activity's state).
-struct RunningAttributes: ActivityAttributes {
-    struct ContentState: Codable, Hashable {
-        var title: String
-        /// "Health › Exercise"
-        var path: String
-        var start: Date
-        /// "Study 1h 10 of 2h" when a goal covers it.
-        var goalLine: String?
-    }
-    /// The running entry, so a new start replaces the activity instead of updating it.
-    var entryId: UUID
-}
-
 /// v1.3 B: the one "Now" activity, always there: running, a question, untracked time, assumed time, or up next.
 /// A mirror of ProductiumCore's `NowCard` (the extension doesn't link the core).
 struct NowAttributes: ActivityAttributes {
     struct Button: Codable, Hashable {
-        /// Run by `NowActionIntent` in the app: stop, start:<title>, answer:<id>:<answer>, yes:<ref>, no:<ref>, task:<id>.
+        /// Run by `NowActionIntent` in the app: stop, start:<title>, answer:<id>:<answer>, yes:<ref>, no:<ref>, task:<id>,
+        /// done:<task id>, extend:<task id>:<minutes>.
         var action: String
         var label: String
         var symbol: String?
@@ -35,6 +21,8 @@ struct NowAttributes: ActivityAttributes {
         var since: Date?
         var buttons: [Button]
         var other: Bool
+        /// A task session's planned end: the timer counts down to it.
+        var ends: Date?
     }
 
     /// D2: today's three rings, small, in the expanded view.
@@ -52,6 +40,8 @@ struct NowAttributes: ActivityAttributes {
         /// Shown once the content is stale (`ActivityContent.staleDate` = when `card` stops being true).
         var then: Card?
         var rings: Rings?
+        /// "Sorting categories": Claude is working in the background.
+        var busy: String?
     }
 }
 

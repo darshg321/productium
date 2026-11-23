@@ -20,6 +20,11 @@ final class ScreenTimeTests: XCTestCase {
 
 
 
+    func testAppLiteralIsIgnored() {
+        for name in ["App", " app ", "", "Scrolling app", "Shortcut Input"] { XCTAssertTrue(AppKinds.isPlaceholder(name), name) }
+        for name in ["Instagram", "App Store", "Apple TV"] { XCTAssertFalse(AppKinds.isPlaceholder(name), name) }
+    }
+
     func testClockParsing() {
         XCTAssertEqual(ScreenReceipt.parseClock("6:42 AM"), 402)
         XCTAssertEqual(ScreenReceipt.parseClock("12:05 am"), 5)

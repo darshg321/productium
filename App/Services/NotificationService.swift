@@ -42,8 +42,10 @@ enum NotificationService {
             text("q.reply", "Something Else", "What happened?"),
         ], intentIdentifiers: [], options: [])
         let running = cat(.running, [a("run.stop", "Done", "stop.fill"), text("run.switch", "Switch", "What are you doing now?")])
+        let end = cat(.sessionEnd, [a("end.15", "+15 Min", "plus"), a("end.30", "+30 Min", "plus"),
+                                    a("end.tomorrow", "Finish Tomorrow", "arrow.uturn.forward"), a("item.done", "It's Done", "checkmark")])
         UNUserNotificationCenter.current().setNotificationCategories([start, lead, checkIn, scroll, deadline, untracked, sleep,
-                                                                      question, planQ, running])
+                                                                      question, planQ, running, end])
     }
 
     static func requestAuthorization() async -> Bool {
@@ -146,7 +148,7 @@ enum NotificationService {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: (0..<4).map { "scroll.\($0)" })
     }
 
-    static func scheduleHousekeeping(expiry: Date?) {
+    static func scheduleHousekeeping() {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: ["house.screenshot", "house.expiry"])
         do {
@@ -156,12 +158,6 @@ enum NotificationService {
             c.userInfo = ["deeplink": "productium://today"]
             center.add(UNNotificationRequest(identifier: "house.screenshot", content: c,
                                              trigger: UNCalendarNotificationTrigger(dateMatching: DateComponents(hour: 19, weekday: 1), repeats: true)))
-        }
-        if let expiry, expiry.addingTimeInterval(-86400) > Date() {
-            let c = UNMutableNotificationContent()
-            c.title = "Productium expires tomorrow"
-            c.body = "Open SideStore and tap Refresh All (LocalDevVPN on) so it keeps working."
-            add(center, "house.expiry", c, at: expiry.addingTimeInterval(-86400))
         }
     }
 

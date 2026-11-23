@@ -10,6 +10,8 @@ struct ReviewView: View {
     @Environment(AppModel.self) private var model
     /// One period for everything below "Over Time" (Where Your Time Went and Life Metrics).
     @State private var period: MetricPeriod = .week
+    /// F2: the day the rings show; Today and At a Glance follow it.
+    @State private var day = Calendar.current.startOfDay(for: Date())
 
     var body: some View {
         @Bindable var m = model
@@ -18,8 +20,8 @@ struct ReviewView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         RecapBanner().id("recap")
-                        TodaySummaryCard().id("today")
-                        GlanceGrid().id("stats")
+                        TodaySummaryCard(day: $day).id("today")
+                        GlanceGrid(day: day).id("stats")
                         ScreenTimeCard().id("screen")
                         ScoreWeekCard().id("week")
                         GoalsCard().id("goals")
@@ -109,19 +111,22 @@ struct LabeledNumber: View {
 
 struct TodaySummaryCard: View {
     @Environment(AppModel.self) private var model
+    @Binding var day: Date
     @State private var showingDay = false
 
     var body: some View {
-        let now = Date()
-        let today = model.rings(now)
-        let score = model.dayScore(now)
-        let vs = model.scoreVsUsual(now)
-        TitledCard("Today") {
-            HStack(spacing: 20) {
-                ActivityRings(rings: today, lineWidth: 17).frame(width: 130, height: 130)
-                RingLegendRows(rings: today)
-                Spacer(minLength: 0)
+        let score = model.dayScore(day)
+        let vs = model.scoreVsUsual(day)
+        TitledCard(dayTitle(day, now: Date(), today: "Today")) {
+            RingPager(day: $day) { d in
+                let r = model.rings(d)
+                HStack(spacing: 20) {
+                    ActivityRings(rings: r, lineWidth: 17).frame(width: 130, height: 130)
+                    RingLegendRows(rings: r)
+                    Spacer(minLength: 0)
+                }
             }
+            .frame(height: 140)
             .contentShape(Rectangle())
             .onTapGesture { showingDay = true }
             Divider()
@@ -130,7 +135,7 @@ struct TodaySummaryCard: View {
                 if let vs { LabeledNumber(label: vs.2.capitalizedFirst, value: "\(vs.1)") }
             }
         }
-        .sheet(isPresented: $showingDay) { RingDaySheet(day: now) }
+        .sheet(isPresented: $showingDay) { RingDaySheet(day: day) }
     }
 }
 
@@ -138,34 +143,39 @@ struct TodaySummaryCard: View {
 
 struct GlanceGrid: View {
     @Environment(AppModel.self) private var model
+    let day: Date
 
     var body: some View {
         let cal = Calendar.current
         let now = Date()
-        let rings = model.rings(now)
+        let isToday = cal.isDate(day, inSameDayAs: now)
+        let suffix = isToday ? " Today" : ""
+        let rings = model.rings(day)
         let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now)) ?? now
         let planned = model.plannedShare(tomorrow)
-        let screen = model.appMinutesToday().reduce(0) { $0 + $1.minutes }
+        let screen = isToday ? model.appMinutesToday().reduce(0) { $0 + $1.minutes }
+            : Friction.log.minutes(on: day, calendar: cal).values.reduce(0, +)
         let week = (0..<7).compactMap { cal.date(byAdding: .day, value: -$0, to: cal.startOfDay(for: now)) }.compactMap(model.trackedScore)
         let due = week.reduce(0) { $0 + $1.deadlinesDue }, met = week.reduce(0) { $0 + $1.deadlinesMet }
-        let slept = model.state.health.first { cal.isDateInToday($0.day) }?.sleepMinutes
+        let slept = model.state.health.first { cal.isDate($0.day, inSameDayAs: day) }?.sleepMinutes
+        let mood = model.state.moods.filter { cal.isDate($0.at, inSameDayAs: day) }.max { $0.at < $1.at }
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader("At a Glance")
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                 StatTile(title: "Tomorrow Planned", symbol: "calendar", color: .indigo, value: "\(planned.percent)", unit: "%",
                          progress: planned.fraction)
-                StatTile(title: "Work Today", symbol: "pencil.line", color: RingStyle.work, value: minutesLabel(rings.workMinutes),
+                StatTile(title: "Work" + suffix, symbol: "pencil.line", color: RingStyle.work, value: minutesLabel(rings.workMinutes),
                          unit: rings.workGoal == 0 ? nil : "/ \(minutesLabel(rings.workGoal))",
                          progress: rings.workGoal == 0 ? nil : rings.work)
-                StatTile(title: "Scrolling Today", symbol: "hourglass", color: .pink, value: "\(model.dayScore(now).scrollingMinutes)",
+                StatTile(title: "Scrolling" + suffix, symbol: "hourglass", color: .pink, value: "\(model.dayScore(day).scrollingMinutes)",
                          unit: "min")
-                StatTile(title: "Screen Time Today", symbol: "iphone", color: .teal, value: screen > 0 ? minutesLabel(screen) : "–")
+                StatTile(title: "Screen Time" + suffix, symbol: "iphone", color: .teal, value: screen > 0 ? minutesLabel(screen) : "–")
                 StatTile(title: "Deadlines Met", symbol: "flag.fill", color: .orange, value: due == 0 ? "–" : "\(met)",
                          unit: due == 0 ? nil : "/ \(due)")
                 if let slept {
                     StatTile(title: "Sleep", symbol: "bed.double.fill", color: Theme.sleep, value: minutesLabel(slept))
                 }
-                if let m = model.todayMood {
+                if let m = mood {
                     StatTile(title: "Mood", symbol: "face.smiling", color: .yellow,
                              value: MoodButtons.faces.first { $0.0 == m.mood }?.1 ?? "🙂")
                 }

@@ -29,6 +29,20 @@ final class TimeLogTests: XCTestCase {
         XCTAssertTrue(r.lines.first?.hasPrefix("Trimmed Homework to 15:00–16:00 and 17:00–18:00") ?? false, r.lines.description)
     }
 
+    func testTrackedWalkReplacesThePlannedOne() {
+        let planned = Entry(title: "Walk home", start: Fx.mon(15), end: Fx.mon(15, 20), category: CategoryTree.travel, source: .plan)
+        let ready = Entry(title: "Get ready", start: Fx.mon(7), end: Fx.mon(7, 40), category: CategoryTree.gettingReady, source: .plan)
+        let walked = told("Walking", Fx.mon(15, 36), Fx.mon(16, 17), cat: "travel.walking")
+        let day = Days.on(Fx.mon(12), [planned, ready, walked], now: Fx.mon(23), calendar: cal)
+        XCTAssertEqual(day.map(\.title), ["Get ready", "Walking"])
+        let far = told("Walking", Fx.mon(18), Fx.mon(18, 30), cat: CategoryTree.travel)
+        XCTAssertEqual(Days.on(Fx.mon(12), [planned, far], now: Fx.mon(23), calendar: cal).count, 2, "a walk hours later is another walk")
+        let blip = told("Walking", Fx.mon(15, 5), Fx.mon(15, 6), cat: CategoryTree.travel)
+        XCTAssertEqual(Days.on(Fx.mon(12), [planned, blip], now: Fx.mon(23), calendar: cal).count, 2, "a mistaken tap doesn't count")
+        let lunch = told("Homework", Fx.mon(15), Fx.mon(15, 30), cat: CategoryTree.studying)
+        XCTAssertEqual(Days.on(Fx.mon(12), [planned, lunch], now: Fx.mon(23), calendar: cal).count, 2)
+    }
+
     func testPastResolvesByRankWithUntrackedGaps() {
         let math = Entry(title: "Math", start: Fx.mon(9), end: Fx.mon(10, 15), category: CategoryTree.school,
                          repeats: .weekly([2, 4, 6]), source: .you, createdAt: Fx.mon(7))

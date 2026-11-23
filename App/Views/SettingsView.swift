@@ -307,13 +307,19 @@ struct SleepSettings: View {
                 Toggle("Work Back from First Class", isOn: $m.state.prefs.autoWake)
                 if !model.state.prefs.autoWake {
                     TimePicker(label: "School-Day Wake", time: $m.state.prefs.schoolDayWake)
-                    TimePicker(label: "Free-Day Wake", time: $m.state.prefs.freeDayWake)
                 }
+                TimePicker(label: "Free-Day Wake", time: $m.state.prefs.freeDayWake)
             } header: { Text("Wake Up") } footer: {
-                Text("Keeping free-day wake within about an hour of school days avoids “social jet lag”.")
+                Text("Keeping free-day wake within about an hour of school days avoids “social jet lag”. You can also say “wake up at 7:30 on school days” in the box.")
             }
             Section {
                 let r = model.state.healthReads
+                if model.state.integrations.health, r.lastSuccess != nil, (r.lastSleepSamples ?? 0) == 0 {
+                    Label("Health has no sleep", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text("Nights are estimated from your phone until Health has some. In Health, tap Browse → Sleep → Set Up Sleep Schedule (or turn on the Sleep Focus), and your iPhone records time in bed.")
+                        .font(.subheadline)
+                    Button("Open Health") { if let u = URL(string: "x-apple-health://") { UIApplication.shared.open(u) } }
+                }
                 LabeledContent("Source", value: r.lastSleepSource ?? "Nothing measured yet")
                 LabeledContent("Last read", value: r.lastSuccess.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never")
                 if let n = r.lastSleepSamples { LabeledContent("Sleep samples", value: "\(n)") }
@@ -356,8 +362,30 @@ struct StudySettings: View {
 
 struct ScreenTimeSettings: View {
     @Environment(AppModel.self) private var model
+    @State private var testFrom: Date?
+
     var body: some View {
         List {
+            if let seen = model.appLiteralSeen {
+                Section {
+                    Label("“Opened an App” sends the word “App”", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.alert).font(.subheadline.weight(.semibold))
+                    Text("Productium can't tell which app you opened (last \(seen.relativeDay) at \(seen.hm)). In Shortcuts → Automation, open the “App is opened” automation, tap the blue **App** in the Opened an App action, then pick **Shortcut Input** above the keyboard.")
+                        .font(.subheadline)
+                }
+            }
+            Section {
+                Button(testFrom == nil ? "Test It" : "Testing… open any app, then come back") { testFrom = Date() }
+                if let t = testFrom {
+                    if let s = Friction.log.sessions.last(where: { $0.openedAt > t }) {
+                        Label("Heard \(s.app)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else if let seen = model.appLiteralSeen, seen > t {
+                        Label("Heard “App”: the App field isn't Shortcut Input yet", systemImage: "xmark.circle.fill").foregroundStyle(Theme.alert)
+                    } else {
+                        Text("Nothing heard yet").foregroundStyle(.secondary)
+                    }
+                }
+            } footer: { Text("Checks that the “Opened an App” automation tells Productium the app's name.") }
             Section {
                 ForEach(Recipe.scrolling) { r in NavigationLink { RecipeView(recipe: r) } label: { RecipeRow(recipe: r) } }
             } header: { Text("Add a Pause Instead") } footer: {
@@ -555,11 +583,11 @@ struct ConnectionSettings: View {
                     var answered = !on
                     if on { do { try await HealthService.shared.requestAuthorization(); answered = true } catch {} }
                     m.state.integrations.health = on && answered
-                    await model.refresh(full: false)
+                    await model.refresh(full: false, force: true)
                 }
                 toggle("Read Calendar", "calendar", .red, model.state.integrations.calendarImport) { on in
                     m.state.integrations.calendarImport = on ? await CalendarService.shared.requestAccess() : false
-                    await model.refresh(full: false)
+                    await model.refresh(full: false, force: true)
                 }
                 toggle("Write Plan to Calendar", "calendar.badge.plus", .red, model.state.integrations.calendarExport) { on in
                     m.state.integrations.calendarExport = on ? await CalendarService.shared.requestAccess() : false
@@ -567,7 +595,7 @@ struct ConnectionSettings: View {
                 }
                 toggle("Motion", "figure.walk.motion", .green, model.state.integrations.motion) { on in
                     m.state.integrations.motion = on ? await MotionService.shared.requestAccess() : false
-                    await model.refresh(full: false)
+                    await model.refresh(full: false, force: true)
                 }
                 toggle("Location", "location.fill", .blue, model.state.integrations.location) { on in
                     m.state.integrations.location = on

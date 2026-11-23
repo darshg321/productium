@@ -6,14 +6,15 @@ import Foundation
 public enum CalendarEntries {
     /// Imports `events` seen in `window`. An event that is one of your own entries (CS club in Calendar and in your
     /// timetable) is marked skipped for that day, so it counts once, as yours.
+    /// v1.5 G1: `classify` files an event by its title (your corrections and learned rules), instead of Other.
     public static func merge(_ events: [FixedEvent], into entries: inout [Entry], window: DateInterval, book: DayRuleBook = DayRuleBook(),
-                             now: Date, calendar cal: Calendar) {
+                             now: Date, calendar cal: Calendar, classify: (String) -> CategoryID = { _ in CategoryTree.other }) {
         let yours = entries.filter { $0.source == .you && $0.repeats != nil || $0.source == .you && $0.taskId == nil }
         var seen = Set<UUID>()
         for ev in events {
             let id = Entry.calendarId(ev.id)
             seen.insert(id)
-            var e = Entry(id: id, title: ev.title, start: ev.start, end: ev.end, category: CategoryTree.other, source: .calendar, createdAt: now)
+            var e = Entry(id: id, title: ev.title, start: ev.start, end: ev.end, category: classify(ev.title), source: .calendar, createdAt: now)
             var idx = entries.firstIndex { $0.id == id }
             if let i = idx {
                 e.marks = entries[i].marks

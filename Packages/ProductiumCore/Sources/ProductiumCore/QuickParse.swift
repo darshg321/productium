@@ -42,7 +42,11 @@ public enum QuickParse {
     public static func parse(_ raw: String, _ c: QuickContext) -> QuickParsed? {
         let t = normalise(raw)
         guard !t.isEmpty, t.count <= 80, !t.contains("?"), !t.contains("\n") else { return nil }
-        return mood(t) ?? confirm(t, c) ?? stop(t, c) ?? start(t, c) ?? doing(t, c) ?? log(t, c)
+        let parsers: [(String, QuickContext) -> QuickParsed?] = [
+            { t, _ in mood(t) }, confirm, woke, stop, since, start, doing, log, tileOnly,
+        ]
+        for parse in parsers { if let r = parse(t, c) { return r } }
+        return nil
     }
 
     // MARK: Text
@@ -69,7 +73,14 @@ public enum QuickParse {
         "yesterday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "week", "today", "on",
         "by", "for", "with", "about", "again", "also", "instead", "actually", "wrong", "change", "minutes", "min", "hours",
         "is", "are", "was", "were", "be", "timetable", "always", "usually", "around", "thing", "stuff", "it", "kinda",
+        "since", "from", "ago", "till", "til",
     ]
+
+    /// A title that ends in a time word ("Productium development since"): never made into a start button.
+    public static func endsInTimeWord(_ title: String) -> Bool {
+        guard let last = title.lowercased().split(separator: " ").last else { return false }
+        return ["since", "from", "ago", "at", "until", "till", "now"].contains(String(last)) || last.contains(":")
+    }
 
     /// A short plain name: 1–4 words, letters (and a digit in a name like "p2"), nothing that makes it a plan.
     static func plainTitle(_ s: String?) -> String? {
@@ -145,6 +156,117 @@ public enum QuickParse {
         return QuickParsed(kind: .start, ops: [BoxOp(.entry, .start, f)])
     }
 
+    // MARK: v1.5 B3: backfill ("X since 11:15", "X since 10 mins ago", "X 5 minutes ago")
+
+    static let lead = #"(?:i'?ve been |i have been |have been |been |i'?m |i am |i was |was |i )?(?:starting |started |start |doing |working on |on )?"#
+    static let agoOnly = #"(?:like )?(\d{1,3}|a|an|half an) ?(min|mins|minute|minutes|m|hour|hours|hr|hrs|h) ago"#
+
+    static func since(_ t: String, _ c: QuickContext) -> QuickParsed? {
+        var title: String?, at: Date?
+        if let m = match(t, lead + #"(.+?),? (?:since|from|starting at|started at|beginning at) (?:like |about |around )?"# + time) {
+            title = m[1]; at = clock(m[2], c)
+        } else if let m = match(t, lead + #"(.+?),? (?:since |from |starting |started )?"# + agoOnly) {
+            title = m[1]; at = ago(m[2], m[3], now: c.now)
+        } else { return nil }
+        guard let at, let name = plainTitle(title), !["it", "now"].contains(name.lowercased()) else { return nil }
+        return started(tile(for: name.lowercased(), c.tiles)?.title ?? name, at: at, c, tile: tile(for: name.lowercased(), c.tiles))
+    }
+
+    /// One clock time, placed at its latest reading in the last 8 hours ("since 11:15" at 11:30 is 11:15 today).
+    static func clock(_ s: String?, _ c: QuickContext) -> Date? {
+        guard var v = s?.replacingOccurrences(of: ".", with: "") else { return nil }
+        if v == "noon" { v = "12pm" }
+        if v == "midnight" { v = "12am" }
+        var mer: String?
+        if v.hasSuffix("am") || v.hasSuffix("pm") { mer = String(v.suffix(2)); v = String(v.dropLast(2)).trimmingCharacters(in: .whitespaces) }
+        let p = v.split(separator: ":").compactMap { Int($0) }
+        guard let h = p.first, (0...23).contains(h) else { return nil }
+        let m = p.count > 1 ? p[1] : 0
+        guard (0...59).contains(m) else { return nil }
+        var hours: [Int]
+        if h > 12 || h == 0 { hours = [h] } else if mer == "am" { hours = [h == 12 ? 0 : h] } else if mer == "pm" { hours = [h == 12 ? 12 : h + 12] }
+        else { hours = [h, h == 12 ? 0 : h + 12] }
+        let today = c.calendar.startOfDay(for: c.now)
+        let days = [today, c.calendar.date(byAdding: .day, value: -1, to: today)!]
+        let candidates = days.flatMap { d in hours.compactMap { c.calendar.date(bySettingHour: $0, minute: m, second: 0, of: d) } }
+            .filter { $0 <= c.now.addingTimeInterval(120) && c.now.timeIntervalSince($0) <= 8 * 3600 }
+        return candidates.max().map { min($0, c.now) }
+    }
+
+    /// "at 7:30", "10 min ago", or nothing (now).
+    static let whenPattern = #"(?: (?:at |around |like )?"# + time + #"| "# + agoOnly + #")?"#
+
+    static func when(_ m: [String?], from i: Int, _ c: QuickContext) -> Date? {
+        if let a = m[i] { return clock(a, c) }
+        if m[i + 1] != nil { return ago(m[i + 1], m[i + 2], now: c.now) }
+        return c.now
+    }
+
+    // MARK: v1.5 B3: "woke up", "out of bed"
+
+    static func woke(_ t: String, _ c: QuickContext) -> QuickParsed? {
+        if let m = match(t, #"(?:i )?(?:just )?(?:woke up|woken up|woke|awake|i'?m up|i'?m awake)"# + whenPattern) {
+            guard let at = when(m, from: 1, c) else { return nil }
+            // The night that covers it (or ends nearest it): it ends then, and you said so.
+            let range = DateInterval(start: at.addingTimeInterval(-20 * 3600), end: max(at, c.now).addingTimeInterval(4 * 3600))
+            let nights = Days.expand(c.entries, in: range, now: c.now, book: c.book, calendar: c.calendar)
+                .filter { c.tree.isUnder($0.category, CategoryTree.sleep) || $0.category == CategoryTree.sleep }
+                .filter { $0.start < at && $0.end > at.addingTimeInterval(-3 * 3600) && $0.end < at.addingTimeInterval(5 * 3600) }
+            guard let night = nights.max(by: { ($0.rank, $0.start) < ($1.rank, $1.start) }) else { return nil }
+            var f = BoxFields()
+            f.end = stamp(at, c.calendar)
+            f.start = stamp(night.start, c.calendar)
+            return QuickParsed(kind: .log, ops: [BoxOp(.entry, .change, ref: night.ref, f)] + confirmSensor(night))
+        }
+        if let m = match(t, #"(?:i )?(?:just )?(?:out of bed|got out of bed|got up|getting up|i'?m out of bed)"# + whenPattern) {
+            guard let at = when(m, from: 1, c) else { return nil }
+            let ready = c.tiles.first { $0.category == CategoryTree.gettingReady }
+            var f = BoxFields(title: ready?.title ?? "Getting ready", category: ready?.category ?? CategoryTree.gettingReady)
+            if at < c.now.addingTimeInterval(-60) { f.start = stamp(at, c.calendar) }
+            return QuickParsed(kind: .start, ops: [BoxOp(.entry, .start, f)])
+        }
+        return nil
+    }
+
+    // MARK: v1.5 B3: a tile's name alone ("shower") starts it now
+
+    static func tileOnly(_ t: String, _ c: QuickContext) -> QuickParsed? {
+        guard t.split(separator: " ").count <= 3, plainTitle(t) != nil,
+              let tile = c.tiles.first(where: { $0.keys.contains(CategoryRules.key(t)) }) else { return nil }
+        return started(tile.title, at: nil, c, tile: tile)
+    }
+
+    /// "done getting ready" with nothing running: today's assumed occurrence of it ends now (or then), and you said so.
+    static func doneOccurrence(_ title: String, at: Date?, _ c: QuickContext) -> QuickParsed? {
+        let end = at ?? c.now
+        let phrase = title.lowercased()
+        let keys = Set([CategoryRules.key(title), stemmed(phrase)])
+        let tileCat = tile(for: phrase, c.tiles)?.category
+        let today = DateInterval(start: c.calendar.startOfDay(for: c.now), end: c.now)
+        let hits = Days.expand(c.entries, in: today, now: c.now, book: c.book, calendar: c.calendar)
+            .filter { $0.assumed && $0.start < end && $0.taskId == nil }
+            .filter { keys.contains(CategoryRules.key($0.title)) || (tileCat != nil && $0.category == tileCat) }
+        guard let d = hits.max(by: { $0.start < $1.start }) else { return nil }
+        var f = BoxFields()
+        f.start = stamp(d.start, c.calendar)
+        f.end = stamp(end, c.calendar)
+        return QuickParsed(kind: .log, ops: [BoxOp(.entry, .change, ref: d.ref, f)] + confirmSensor(d))
+    }
+
+    /// A sensor's guess you corrected is yours to keep (plan entries and series become your own entries by the change).
+    static func confirmSensor(_ d: DayEntry) -> [BoxOp] {
+        d.source == .sensor && d.entry.repeats == nil ? [BoxOp(.entry, .confirm, ref: d.ref)] : []
+    }
+
+    /// "getting ready" → "get ready", "showering" → "shower".
+    static func stemmed(_ phrase: String) -> String {
+        let p = CategoryRules.key(phrase)
+        guard let first = p.split(separator: " ").first.map(String.init), first.hasSuffix("ing"), first.count >= 5 else { return p }
+        var stem = String(first.dropLast(3))
+        if stem.count >= 3, let l = stem.last, stem.dropLast().last == l, !"aeiouls".contains(l) { stem = String(stem.dropLast()) }
+        return ([stem] + p.split(separator: " ").dropFirst().map(String.init)).joined(separator: " ")
+    }
+
     // MARK: "I'm showering (now)"
 
     /// -ing words that say how you are, not what you're doing.
@@ -202,6 +324,7 @@ public enum QuickParse {
             }
             return QuickParsed(kind: .stop, ops: [BoxOp(.entry, .stop, f)])
         }
+        if tasksNamed(title, c) == 0, let d = doneOccurrence(title, at: at, c) { return d }
         guard at == nil, let task = task(named: title, c) else { return nil }
         return QuickParsed(kind: .taskDone, ops: [BoxOp(.task, .done, ref: Ref.task(task.id))])
     }

@@ -139,7 +139,7 @@ public struct QuickStarts: Codable, Hashable, Sendable {
     /// Something was started (by text, a notification, Siri). Tasks don't get buttons: their row has Start.
     @discardableResult
     public mutating func noteStart(_ e: Entry, at: Date) -> QuickStart? {
-        guard e.taskId == nil, e.source == .you else { return nil }
+        guard e.taskId == nil, e.source == .you, !QuickParse.endsInTimeWord(e.title) else { return nil }
         let k = CategoryRules.key(e.title)
         guard !k.isEmpty else { return nil }
         if let i = index(for: e.title) {
@@ -153,6 +153,19 @@ public struct QuickStarts: Codable, Hashable, Sendable {
         let b = QuickStart(title: e.title, category: e.category, topics: e.topics, createdAt: at)
         buttons.append(b)
         return b
+    }
+
+    /// v1.5: buttons 1.4 made from a misread title ("Productium development since") are hidden.
+    @discardableResult
+    public mutating func hideTimeWordButtons() -> Int {
+        var n = 0
+        for i in buttons.indices where buttons[i].origin == .you && !buttons[i].removed && !buttons[i].edited
+            && QuickParse.endsInTimeWord(buttons[i].title) {
+            buttons[i].removed = true
+            buttons[i].pin = nil
+            n += 1
+        }
+        return n
     }
 
     public mutating func remove(_ id: UUID) {

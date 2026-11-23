@@ -20,6 +20,10 @@ enum LocalStore {
         static let scrollCheckInIndex = "friction.checkInIndex"
         /// When the charger was connected (from the "Probably Stopped Scrolling" automation), newest last; a sleep-start signal.
         static let chargingTimes = "sleep.chargingTimes"
+        /// Set while the app is in front; still set at launch means the last run crashed or was killed frozen.
+        static let runActive = "app.runActive"
+        /// When "Opened an App" last sent the literal "App" (its App field isn't Shortcut Input).
+        static let appLiteralAt = "apps.literalAt"
     }
 
     static func dayKey(_ date: Date = Date()) -> String {

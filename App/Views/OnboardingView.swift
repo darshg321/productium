@@ -102,7 +102,7 @@ struct OnboardingView: View {
             model.state.onboarded = true
             model.finishSetup()
             model.save()
-            Task { await model.refresh() }
+            Task { await model.refresh(force: true) }
         } else {
             move(1)
         }

@@ -141,6 +141,15 @@ public struct BoxReceipt: Hashable, Sendable {
     /// Planned entries this turn made yours (Undo puts them back in the plan).
     public var plannedAdopted: [Entry] = []
     public init() {}
+
+    /// v1.5 C4: the reply follows what actually happened, not the model's text. When nothing it asked for worked, the
+    /// reply says so; when some of it failed, what failed is added.
+    public func honest(_ reply: String, asked ops: Int) -> String {
+        guard !problems.isEmpty else { return reply }
+        let failed = problems.joined(separator: " ")
+        if lines.isEmpty && held.isEmpty && ops > 0 { return "That didn't work: \(failed)" }
+        return (reply.isEmpty ? "" : reply + " ") + "But this didn't work: \(failed)"
+    }
 }
 
 /// The parts of `AppState` the box works on.

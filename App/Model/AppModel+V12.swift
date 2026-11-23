@@ -112,6 +112,7 @@ extension AppModel {
         guard let i = state.items.firstIndex(where: { $0.id == id }) else { return }
         state.items[i].state = .dropped
         state.items[i].doneAt = Date()
+        clearPlannedSessions(of: id)
         state.taskHistory.add(TaskHistory.record(state.items[i], cleared: true, why: why, entries: state.entries, now: Date(), calendar: cal))
         if running?.taskId == id { stopRunning(source: "clear") }
         log(.log, "task_cleared", ["title": state.items[i].title, "why": why ?? ""])
@@ -272,6 +273,8 @@ extension AppModel {
         let now = Date()
         guard TaxonomyPass.due(tree: state.categories, entries: state.entries, log: state.taxonomy, now: now), aiAllowed(.taxonomy) else { return }
         state.taxonomy.lastRun = now
+        aiWorking = "Sorting categories"
+        defer { aiWorking = nil }
         guard let out = try? await ClaudeClient.shared.structured(
             feature: .taxonomy, system: TaxonomyPass.system(),
             user: TaxonomyPass.request(tree: state.categories, entries: state.entries, rules: state.categoryRules, now: now, calendar: cal),
@@ -285,6 +288,7 @@ extension AppModel {
         state.categoryRules = rules
         state.taxonomy.runs.append(run)
         state.taxonomy.runs = Array(state.taxonomy.runs.suffix(30))
+        toast = run.lines.count == 1 ? run.lines[0] : "Tidied categories: \(run.lines.prefix(2).joined(separator: ", "))…"
         save()
     }
 
@@ -481,11 +485,50 @@ extension AppModel {
     /// An app opened (any app, from the automation): its session starts, the log updates now, not at the next refresh.
     func appOpened(_ app: String) {
         let name = app.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !name.lowercased().hasPrefix("productium") else { return }
+        // E1: the automation's App field left as the word "App": Settings → Screen Time says how to fix it.
+        if AppKinds.isPlaceholder(name) {
+            LocalStore.defaults.set(Date().timeIntervalSince1970, forKey: LocalStore.Key.appLiteralAt)
+            return
+        }
+        LocalStore.defaults.removeObject(forKey: LocalStore.Key.appLiteralAt)
+        guard !name.lowercased().hasPrefix("productium") else { return }
         ScrollingApps.register([(name, nil)], into: &state.scrollingApps)
         let scrolling = ScrollingApps.isScrolling(name, state.scrollingApps)
         Friction.update { $0.seen(name, at: Date(), scrolling: scrolling) }
         rebuildAppEntries()
+    }
+
+    /// When the "Opened an App" automation last sent the word "App" instead of the app's name (nil once fixed).
+    var appLiteralSeen: Date? {
+        let t = LocalStore.defaults.double(forKey: LocalStore.Key.appLiteralAt)
+        return t > 0 ? Date(timeIntervalSince1970: t) : nil
+    }
+
+    /// v1.5 repairs at launch: start buttons made from misread titles; sessions, entries and the list entry 1.4 made
+    /// from the word "App" (E1).
+    func launchRepairs() {
+        let removed = Friction.update { log -> Int in
+            let before = log.sessions.count
+            log.sessions.removeAll { AppKinds.isPlaceholder($0.app) && $0.scrolling != nil }
+            return before - log.sessions.count
+        }
+        if state.quickStarts.hideTimeWordButtons() > 0 { save() }
+        // C1: sessions planned before 1.5 were titled "Reading · 2 of 5".
+        for i in state.entries.indices where state.entries[i].source == .plan {
+            if let r = state.entries[i].title.range(of: #"\s*·\s*\d+\s*(of|/)\s*\d+$"#, options: .regularExpression) {
+                state.entries[i].title = String(state.entries[i].title[..<r.lowerBound])
+            }
+        }
+        let stale = state.scrollingApps.keys.filter { AppKinds.isPlaceholder($0) && $0.lowercased() != "scrolling app" }
+        guard removed > 0 || !stale.isEmpty else { return }
+        for k in stale { state.scrollingApps[k] = nil }
+        state.entries.removeAll { $0.source == .sensor && AppKinds.isPlaceholder($0.title) && $0.title.lowercased() != "scrolling app" }
+        if let id = state.categories.children(CategoryTree.scrolling).first(where: { $0.name == "App" })?.id,
+           !state.entries.contains(where: { $0.category == id }) {
+            state.categories.nodes.removeAll { $0.id == id }
+        }
+        log(.sensor, "app_literal_dropped", ["sessions": "\(removed)", "apps": stale.joined(separator: ",")])
+        save()
     }
 
     /// App sessions as sensor entries: Scrolling › the app, Messaging, or nothing (it still counts as screen time).
