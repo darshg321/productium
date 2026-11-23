@@ -552,6 +552,13 @@ public enum BoxApplier {
             default: break
             }
             var t = s.items[i]
+            // v1.5: "it isn't actually done" puts a finished or cleared task back.
+            if ["reopen", "open", "not done"].contains(f.text?.lowercased() ?? ""), t.state != .open {
+                t.state = .open
+                t.doneAt = nil
+                s.items[i] = t
+                return r.lines.append("Reopened: \(t.title)")
+            }
             if let v = f.title { t.title = String(v.prefix(120)) }
             if let v = time(f.due, f) { t.due = v }
             if let v = f.minutes { t.estimateMinutes = max(5, v) }

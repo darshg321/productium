@@ -10,7 +10,11 @@ final class AppModel {
     static let shared = AppModel()
 
     var state: AppState
-    var toast: String?
+    var toast: String? {
+        didSet { toastUndo = nil }
+    }
+    /// The toast's Undo (finishing a task can be taken back).
+    var toastUndo: UUID?
     /// A leaderboard invite opened before you picked a name (Review → Leaderboard asks for it).
     var pendingInvite: String?
     /// Dev test runner: the card id a screen should scroll to (`scroll <card>`).
@@ -596,10 +600,13 @@ final class AppModel {
         followUp(new: item)
     }
 
+    /// Undo Done or Clear: the task is open again and its ending is no longer in the track record.
     func reopen(_ id: UUID) {
-        guard let i = state.items.firstIndex(where: { $0.id == id }), state.items[i].isDone else { return }
-        state.items[i].isDone = false
+        guard let i = state.items.firstIndex(where: { $0.id == id }), state.items[i].state != .open else { return }
+        state.items[i].state = .open
         state.items[i].doneAt = nil
+        state.taskHistory.records.removeAll { $0.id == id }
+        log(.log, "task_reopened", ["title": state.items[i].title])
         if let p = state.items[i].parentId, let j = state.items.firstIndex(where: { $0.id == p }) {
             state.items[j].isDone = false
             state.items[j].doneAt = nil
@@ -628,6 +635,8 @@ final class AppModel {
             state.learned.recordCompletion(kind: it.kind, estimated: it.estimateMinutes, actual: it.completedMinutes)
         }
         if let p = it.parentId, !state.items.contains(where: { $0.parentId == p && $0.isOpen }) { complete(p) }
+        toast = "Done: \(it.title)"
+        toastUndo = id
         replan()
     }
 
@@ -1122,6 +1131,8 @@ final class AppModel {
     /// Writes the box's changes back. Plan entries it didn't touch stay as they were (a replan renews them); one it
     /// edited is yours now.
     func absorb(_ b: BoxState, plan _: [Entry]) {
+        let reopened = Set(b.items.filter { $0.isOpen }.map(\.id)).subtracting(state.items.filter(\.isOpen).map(\.id))
+        state.taskHistory.records.removeAll { reopened.contains($0.id) }
         state.entries = b.entries + b.planned
         state.goals = b.goals
         state.placeBook = b.places

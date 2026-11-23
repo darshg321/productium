@@ -316,9 +316,9 @@ public enum BoxPrompt {
         didn't / won't happen; or fields category + day to skip everything in it that day). entry confirm (ref@date: \
         yes, it happened). entry start (title, category) / entry stop (end?).
         - task add: title, due, minutes, kind, difficulty 1-3, importance 1-5, category, maxMinutesPerDay, notBefore, \
-        firstStep, topics, note. task change (ref): any of those. task start / done / drop / remove (ref).
+        firstStep, topics, note. task change (ref): any of those; text "reopen" undoes done. task start / done / drop / remove (ref).
         - rule add: text, said, from, until, repeats (which days), limits. rule change / remove (ref).
-        - setting change: title = the setting (wake "7:30"/"9:00 free days", sleep "9h", nudgeLevel, schoolDays…), text = value. Wake is never a rule. \
+        - setting change: title = the setting (lasting wake "7:30"/"9:00 free days", sleep "9h", nudgeLevel…), text = value. \
         mood add: mood 1-5, energy, note. screen_time add: screen off a screenshot \
         (Week view: period week, minutes = average, totalMinutes = Total; Most Used apps only).
         - goal add: category (or "tasks"), target (min or count), period day|week, atMost; change/remove. place add: title \

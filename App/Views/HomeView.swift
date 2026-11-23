@@ -44,6 +44,7 @@ struct TodayView: View {
                         MoodButtons(now: now)
                         GapsCard(now: now).id("gaps")
                         AssumedCard(now: now).id("assumed")
+                        PlaceNameCard()
                         RingsCard(now: now).id("ring")
                         UpNextCard(now: now).id("upnext")
                     }
@@ -522,6 +523,66 @@ struct AssumedCard: View {
             }
             .sheet(item: $editing) { EntrySheet(day: $0) }
         }
+    }
+}
+
+/// v1.5: places you keep going to, named one at a time (like Did These Happen?).
+struct PlaceNameCard: View {
+    @Environment(AppModel.self) private var model
+    @State private var name = ""
+    @FocusState private var typing: Bool
+
+    var body: some View {
+        let queue = model.placesToName
+        if let p = queue.first {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader("What's This Place?")
+                PeekStack(remaining: queue.count, next: queue.dropFirst().first.map { $0.address ?? $0.title }) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top) {
+                            IconTile(symbol: "mappin.and.ellipse", color: .red)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(p.address ?? p.title).font(.body).lineLimit(2)
+                                Text("You've been here \(p.visits) times").font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 4)
+                            Button { withAnimation { model.skipNaming(p.id) } } label: { Image(systemName: "xmark") }
+                                .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("Don't ask about this place")
+                        }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(suggestions(p), id: \.self) { s in
+                                    Button(s) { save(p, s) }.buttonStyle(.bordered).buttonBorderShape(.capsule)
+                                }
+                            }
+                        }
+                        .font(.subheadline)
+                        HStack {
+                            TextField("Name", text: $name).focused($typing).submitLabel(.done)
+                                .onSubmit { save(p, name) }
+                            Button("Save") { save(p, name) }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                    .id(p.id)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+                }
+            }
+        }
+    }
+
+    private func suggestions(_ p: Place) -> [String] {
+        var out = ["Home", "School"]
+        if let poi = p.poi, poi != p.address { out.insert(poi, at: 0) }
+        let taken = Set(model.state.placeBook.places.filter(\.confirmed).compactMap { $0.name?.lowercased() })
+        return out.filter { !taken.contains($0.lowercased()) }
+    }
+
+    private func save(_ p: Place, _ text: String) {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return }
+        withAnimation { model.renamePlace(p.id, t) }
+        name = ""
+        typing = false
     }
 }
 

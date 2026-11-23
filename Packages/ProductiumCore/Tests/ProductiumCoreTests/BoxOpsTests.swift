@@ -234,4 +234,13 @@ final class BoxOpsTests: XCTestCase {
         r.lines = ["Added a rule"]
         XCTAssertTrue(r.honest("Done.", asked: 2).hasPrefix("Done. But this didn't work: No setting"))
     }
+
+    func testReopenUndoesDone() {
+        var item = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(9, plusDays: 2))
+        item.state = .done
+        var s = BoxState(items: [item])
+        let r = BoxApplier.apply([BoxOp(.task, .change, ref: Ref.task(item.id), BoxFields(text: "reopen"))], to: &s, now: Fx.mon(18), calendar: Fx.cal)
+        XCTAssertEqual(r.lines, ["Reopened: Essay"])
+        XCTAssertEqual(s.items[0].state, .open)
+    }
 }

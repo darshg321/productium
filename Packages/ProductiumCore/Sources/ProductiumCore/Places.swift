@@ -107,6 +107,8 @@ public struct Place: Codable, Hashable, Identifiable, Sendable {
     public var named: Naming?
     /// Apple's point of interest nearby, if one was found ("Starbucks", "Lord Byng Secondary").
     public var poi: String?
+    /// v1.5: the street address ("12 Oak St, Toronto"), shown under the name.
+    public var address: String?
     public var createdAt: Date
     /// Visits that made it (its centre is their running mean).
     public var visits: Int = 1
@@ -124,6 +126,8 @@ public struct Place: Codable, Hashable, Identifiable, Sendable {
     }
 
     public var ref: String { "p" + Ref.short(id.uuidString) }
+    /// Named by you: never asked about again.
+    public var confirmed: Bool { named == .you }
     public var title: String { name ?? poi ?? "Unnamed place" }
 }
 

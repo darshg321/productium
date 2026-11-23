@@ -117,6 +117,7 @@ extension AppModel {
         if running?.taskId == id { stopRunning(source: "clear") }
         log(.log, "task_cleared", ["title": state.items[i].title, "why": why ?? ""])
         toast = "Cleared. It's counted, so Productium learns from it."
+        toastUndo = id
         replan()
     }
 
@@ -225,27 +226,33 @@ extension AppModel {
 
     /// E2: the address names a new place when nothing better does (a school, "12 Oak St").
     func nameFromMap(_ p: Place) async {
-        guard let name = await LocationService.shared.placeName(latitude: p.latitude, longitude: p.longitude) else { return }
-        state.placeBook.setPOI(p.id, name)
+        guard let found = await LocationService.shared.lookup(latitude: p.latitude, longitude: p.longitude),
+              let i = state.placeBook.places.firstIndex(where: { $0.id == p.id }) else { return }
+        state.placeBook.setPOI(p.id, found.name)
+        state.placeBook.places[i].address = found.address
         save()
     }
 
-    private static var renaming = false
-    /// Places named before 1.4.2 took the nearest business ("Jolhar"); they're renamed from their address once.
-    func renameMapPlaces() async {
-        let key = "places.addressNames"
-        guard !UserDefaults.standard.bool(forKey: key), !Self.renaming else { return }
-        Self.renaming = true
-        defer { Self.renaming = false }
-        var all = true
-        for p in state.placeBook.places where p.named == .map || p.named == nil {
-            guard let name = await LocationService.shared.placeName(latitude: p.latitude, longitude: p.longitude) else { all = false; continue }
-            guard let i = state.placeBook.places.firstIndex(where: { $0.id == p.id }) else { continue }
-            state.placeBook.places[i].poi = name
-            state.placeBook.places[i].name = name
-            state.placeBook.places[i].named = .map
+    private static var lookingUp = false
+    /// Every place gets its street address (a few per refresh: the geocoder is rate-limited).
+    func fillAddresses() async {
+        guard !Self.lookingUp else { return }
+        Self.lookingUp = true
+        defer { Self.lookingUp = false }
+        for p in state.placeBook.places.filter({ $0.address == nil }).sorted(by: { $0.visits > $1.visits }).prefix(8) {
+            await nameFromMap(p)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
         }
-        UserDefaults.standard.set(all, forKey: key)
+    }
+
+    /// Places you go to that you haven't named yet, most visited first (Today asks one at a time).
+    var placesToName: [Place] {
+        state.placeBook.places.filter { !$0.confirmed && $0.visits >= 2 && !state.dismissed.contains("place:\($0.id)") }
+            .sorted { $0.visits > $1.visits }
+    }
+
+    func skipNaming(_ id: UUID) {
+        state.dismissed.insert("place:\(id)")
         save()
     }
 
@@ -605,7 +612,7 @@ extension AppModel {
         let scrolled = rebuildAppEntries(save: false)
         let placed = EntryBuilder.places(&state.entries, visits: state.trace.visits, book: state.placeBook,
                                          since: now.addingTimeInterval(-3 * 86400), now: now)
-        Task { await renameMapPlaces() }
+        Task { await fillAddresses() }
         let named = state.placeBook.nameFromEntries(state.entries, tree: state.categories)
         let expired = state.taskHistory.expire(state.items, entries: state.entries, now: now, calendar: cal)
         log(.log, "rebuild", level: .debug,

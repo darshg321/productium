@@ -317,10 +317,14 @@ struct StatTile: View {
 
 struct Notice: View {
     let text: String
+    var undo: (() -> Void)?
     var body: some View {
-        Label(text, systemImage: "checkmark.circle.fill")
+        HStack {
+            Label(text, systemImage: "checkmark.circle.fill").symbolRenderingMode(.multicolor).lineLimit(2)
+            Spacer(minLength: 8)
+            if let undo { Button("Undo", action: undo).fontWeight(.semibold).buttonStyle(.borderless) }
+        }
             .font(.subheadline.weight(.medium))
-            .symbolRenderingMode(.multicolor)
             .padding(.horizontal, 16).padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
