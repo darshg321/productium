@@ -61,6 +61,7 @@ struct WeekStrip: View {
                 let on = cal.isDate(d, inSameDayAs: selected)
                 let today = cal.isDateInToday(d)
                 let due = model.state.items.contains { $0.isOpen && $0.parentId == nil && cal.isDate($0.due, inSameDayAs: d) }
+                let turn = rotation(d)
                 Button { withAnimation(.snappy) { selected = d } } label: {
                     VStack(spacing: 4) {
                         Text(d.formatted(.dateTime.weekday(.narrow))).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
@@ -69,7 +70,7 @@ struct WeekStrip: View {
                             .frame(width: 36, height: 36)
                             .background(Circle().fill(on ? (today ? Color.red : Color.primary) : Color.clear))
                         HStack(spacing: 2) {
-                            if let r = rotation(d) { Text("D\(r)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) }
+                            if let r = turn { Text("D\(r)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) }
                             Circle().fill(Color.orange).frame(width: 5, height: 5).opacity(due ? 1 : 0)
                         }
                         .frame(height: 10)
@@ -77,8 +78,7 @@ struct WeekStrip: View {
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).month().day()) + (today ? ", today" : "")
-                                    + (rotation(d).map { ", Day \($0)" } ?? "") + (due ? ", something due" : ""))
+                .accessibilityLabel(label(d, today: today, turn: turn, due: due))
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
             Button { shift(1) } label: { Image(systemName: "chevron.right") }
@@ -90,6 +90,14 @@ struct WeekStrip: View {
         .gesture(DragGesture(minimumDistance: 30).onEnded { v in
             if v.translation.width < -40 { shift(1) } else if v.translation.width > 40 { shift(-1) }
         })
+    }
+
+    private func label(_ d: Date, today: Bool, turn: Int?, due: Bool) -> String {
+        var parts = [d.formatted(.dateTime.weekday(.wide).month().day())]
+        if today { parts.append("today") }
+        if let turn { parts.append("Day \(turn)") }
+        if due { parts.append("something due") }
+        return parts.joined(separator: ", ")
     }
 
     /// G2: Day 1 / Day 2 of a rotating timetable.
