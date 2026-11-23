@@ -20,6 +20,10 @@ it features:
 
 # Install
 
+on my own iPhone: open **[productium.duckdns.org](https://productium.duckdns.org)** in Safari and tap **Install**. a
+Raspberry Pi re-signs the latest release with my Apple ID every few days, so reinstall from there within 7 days to keep
+it opening. this only works on phones registered to that Apple ID; everyone else, use one of the ways below.
+
 it's free, but it isn't on the App Store, so you install it with a free Apple ID through
 [SideStore](https://sidestore.io):
 
