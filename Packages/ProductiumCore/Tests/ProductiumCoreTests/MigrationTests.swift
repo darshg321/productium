@@ -20,6 +20,21 @@ final class MigrationTests: XCTestCase {
         try encoder().encode(s).write(to: URL(fileURLWithPath: path))
     }
 
+    /// `READ_EXPORT=<path> swift test --filter MigrationTests/testReadsAnExport` checks a real export decodes and plans.
+    func testReadsAnExport() throws {
+        guard let path = ProcessInfo.processInfo.environment["READ_EXPORT"] else { return }
+        let b = try ExportBundle.read(try Data(contentsOf: URL(fileURLWithPath: path)))
+        let s = b.state
+        print("READ_EXPORT", b.summary, "schema", s.schema, "open tasks", s.items.filter(\.isOpen).map(\.title))
+        let again = try ExportBundle.decoder().decode(ExportBundle.self, from: try ExportBundle.encoder().encode(b))
+        XCTAssertEqual(again.state.entries.count, s.entries.count)
+        var input = PlannerInput(now: b.exportedAt, calendar: .current, items: s.items, preferences: s.prefs, learned: s.learned,
+                                 health: s.health, moods: s.moods, routines: [], horizonDays: 14, entries: s.entries, rules: s.rules)
+        input.categories = s.categories
+        let plan = Planner.plan(input)
+        print("READ_EXPORT plan", plan.blocks.filter(\.isStudy).count, "study blocks;", plan.warnings.map(\.message))
+    }
+
     func testFixtureIsTheBaseline() throws {
         XCTAssertEqual(Migrations.storedSchema(try Self.fixture()), Migrations.oldest)
     }
