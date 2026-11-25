@@ -246,6 +246,15 @@ final class AppModel {
         estimateSleep()
         syncCalendar()
         var tree = state.categories, buttons = state.quickStarts
+        var es = state.entries, items = state.items
+        let refiled = tree.refileStudy(entries: &es, items: &items)
+        if refiled > 0 {
+            state.categories = tree
+            state.entries = es
+            state.items = items
+            log(.log, "study_refiled", ["count": "\(refiled)"])
+        }
+        if buttons.hideFinishedTaskButtons(items: state.items) > 0 { state.quickStarts = buttons; log(.log, "task_buttons_hidden") }
         if !buttons.seedSubjects(tree: &tree, at: Date()).isEmpty {
             state.categories = tree
             state.quickStarts = buttons

@@ -354,3 +354,38 @@ final class V16BackupSizeTests: XCTestCase {
         XCTAssertEqual(s.forExport(now: Fx.mon(10)).telemetry.events.map(\.name), ["new"])
     }
 }
+
+final class V16LeftoverPlanTests: XCTestCase {
+    func testTaskWorkUnderAClassIsRefiled() {
+        var tree = CategoryTree()
+        let english = tree.add("English", under: CategoryTree.school)!.id
+        var items = [WorkItem(title: "Hamlet", kind: .essay, due: Fx.mon(12, plusDays: 3))]
+        items[0].category = english
+        var es = [Entry(title: "Hamlet", start: Fx.mon(16), end: Fx.mon(17), category: english, taskId: items[0].id, source: .you),
+                  Entry(title: "P3 English", start: Fx.mon(10), end: Fx.mon(11), category: english, repeats: .weekly([2]), source: .you)]
+        XCTAssertEqual(tree.refileStudy(entries: &es, items: &items), 2)
+        XCTAssertEqual(tree.pathText(es[0].category), "Work › Studying › English")
+        XCTAssertEqual(es[1].category, english, "the class stays")
+    }
+
+    func testTheSessionCardNamesTheFirstStepAndDue() {
+        var item = WorkItem(title: "Essay", kind: .essay, due: Fx.mon(12, plusDays: 3))
+        item.firstStep = "outline"
+        let r = Entry(title: "Essay", start: Fx.mon(16), end: nil, category: CategoryTree.studying, taskId: item.id, source: .you)
+        let s = NowActivity.make(NowInput(now: Fx.mon(16, 10), calendar: Fx.cal, entries: [r], plan: .empty, items: [item], tree: CategoryTree()))
+        XCTAssertEqual(s?.card.detail, "First: outline · due Thu Nov 19")
+    }
+}
+
+final class V16ButtonTests: XCTestCase {
+    func testAButtonNamedForAFinishedTaskIsHidden() {
+        var q = QuickStarts()
+        q.buttons = [QuickStart(title: "Reading frankenstein", category: CategoryTree.studying, createdAt: Fx.mon(0)),
+                     QuickStart(title: "Gaming", category: CategoryTree.free, createdAt: Fx.mon(0))]
+        var t = WorkItem(title: "Read Frankenstein", kind: .reading, due: Fx.mon(23))
+        XCTAssertEqual(q.hideFinishedTaskButtons(items: [t]), 0, "still open")
+        t.state = .done
+        XCTAssertEqual(q.hideFinishedTaskButtons(items: [t]), 1)
+        XCTAssertEqual(q.live.map(\.title), ["Gaming"])
+    }
+}

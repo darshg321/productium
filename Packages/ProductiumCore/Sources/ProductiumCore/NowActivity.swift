@@ -34,6 +34,8 @@ public struct NowCard: Codable, Hashable, Sendable {
     public var other: Bool
     /// v1.5 D1: a task session's planned end; the timer counts down to it.
     public var ends: Date?
+    /// v1.6 C2: a task's first step and due day ("First: outline · due Thu Nov 26").
+    public var detail: String?
 
     public init(kind: NowKind, title: String, subtitle: String? = nil, since: Date? = nil, buttons: [NowButton] = [], other: Bool = false,
                 ends: Date? = nil) {
@@ -188,8 +190,13 @@ public enum NowActivity {
             .joined(separator: " · ")
         let buttons = [NowButton("pause", "Pause", "pause.fill"), NowButton("extend:\(task.uuidString):15", "+15", "plus"),
                        NowButton("done:\(task.uuidString)", "Done", "checkmark"), NowButton("stop", "Stop", "stop.fill")]
-        return NowState(card: NowCard(kind: .running, title: r.title, subtitle: subtitle.isEmpty ? x.goalLine : subtitle,
-                                      since: r.start, buttons: buttons, ends: block?.end))
+        var card = NowCard(kind: .running, title: r.title, subtitle: subtitle.isEmpty ? x.goalLine : subtitle,
+                           since: r.start, buttons: buttons, ends: block?.end)
+        if let item = x.items.first(where: { $0.id == task }) {
+            let due = DateFormatter.local("EEE MMM d", x.calendar).string(from: item.due)
+            card.detail = [item.firstStep.map { "First: \($0)" }, "due \(due)"].compactMap { $0 }.joined(separator: " · ")
+        }
+        return NowState(card: card)
     }
 
     /// The start of the untracked stretch that runs up to now (≥ `untrackedAfter` minutes, awake, nothing planned to cover it).

@@ -560,7 +560,10 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
   Back Up Now waits for one write and says its size, archived screenshots kept once and a week of telemetry in exports
   (`forExport`), dates on tasks, Review's pull-to-refresh refreshes the data, unnamed pause sessions count as
   scrolling and the pause sheet doesn't end them, days over 24 h aren't a Screen Time number, "X for the past N min",
-  and outbox replies older than 6 h wait for Send / Discard in the box. Device script: `scripts/test/v16.txt`.
+  and outbox replies older than 6 h wait for Send / Discard in the box. Task work under a class is refiled to Work ›
+  Studying › subject at refresh (`refileStudy`), buttons named for a finished task are hidden, the session card has the
+  first step and due day (`NowCard.detail`), no session under 30 min goes before school, and Scrolling's detail lists
+  each day's source. Device script: `scripts/test/v16.txt`.
 
 - v1.5 (on `dev`): see the sections above. Also: `AppModel.refresh` runs one at a time and at most every 15 s
   (`force` for pull-to-refresh, the test runner and Settings), unlocking only refreshes when the app is in front or the

@@ -176,6 +176,21 @@ public struct QuickStarts: Codable, Hashable, Sendable {
         return b
     }
 
+    /// v1.6 A4: a button you made from a task's name ("Reading frankenstein") goes once that task is closed and no
+    /// open task has the name. Ones you edited stay. Returns how many were hidden.
+    @discardableResult
+    public mutating func hideFinishedTaskButtons(items: [WorkItem]) -> Int {
+        let closed = items.filter { !$0.isOpen }.map { var t = $0; t.state = .open; return t }
+        var n = 0
+        for i in buttons.indices where buttons[i].origin == .you && !buttons[i].removed && !buttons[i].edited
+            && TaskMatch.task(for: buttons[i].title, in: closed) != nil && TaskMatch.task(for: buttons[i].title, in: items) == nil {
+            buttons[i].removed = true
+            buttons[i].pin = nil
+            n += 1
+        }
+        return n
+    }
+
     public mutating func remove(_ id: UUID) {
         if let i = buttons.firstIndex(where: { $0.id == id }) { buttons[i].removed = true; buttons[i].pin = nil }
     }

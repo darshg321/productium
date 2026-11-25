@@ -292,7 +292,11 @@ public enum Planner {
                 let studyTo = min(workEnd, lim.noStudyAfter.map { at(day, $0) } ?? workEnd)
                 let window = studyFrom < studyTo ? [Interval(start: studyFrom, end: studyTo)] : []
                 let opens = openEntries(on: day).map { Interval(start: $0.start, end: $0.end) }
-                let free = Planner.markLight(Planner.subtract(window, busy), opens).filter { $0.minutes >= 5 }
+                // v1.6 C3: no rushed session squeezed in between getting ready and leaving for school.
+                let firstClass = todays.filter { $0.kind == .school }.map(\.start).min()
+                let free = Planner.markLight(Planner.subtract(window, busy), opens).filter { iv in
+                    iv.minutes >= 5 && !(firstClass.map { iv.end <= $0 && iv.minutes < 30 } ?? false)
+                }
                 let freeTotal = free.reduce(0) { $0 + $1.minutes }
 
                 var cap = Double(capacity(school)) * loadFactor

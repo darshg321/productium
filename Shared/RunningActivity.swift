@@ -23,6 +23,8 @@ struct NowAttributes: ActivityAttributes {
         var other: Bool
         /// A task session's planned end: the timer counts down to it.
         var ends: Date?
+        /// v1.6 C2: a task's first step and due day, under the subtitle.
+        var detail: String?
     }
 
     /// D2: today's three rings, small, in the expanded view.
