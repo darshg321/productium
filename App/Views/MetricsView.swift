@@ -230,9 +230,17 @@ struct MetricDetailView: View {
             let cal = Calendar.current
             let today = cal.startOfDay(for: Date())
             let week = (0..<7).reversed().compactMap { cal.date(byAdding: .day, value: -$0, to: today) }
-            if let sum = ScreenSeries.summary(ScreenSeries.daily(screen: model.state.screen, averages: model.state.screenAverages,
-                                                                 days: week, calendar: cal)) {
+            let points = ScreenSeries.daily(screen: model.state.screen, averages: model.state.screenAverages, days: week, calendar: cal)
+            if let sum = ScreenSeries.summary(points) {
                 Text(sum.line).font(.subheadline)
+            }
+            // v1.6 G7: where each day's number came from, and which days have none.
+            Card {
+                ForEach(Array(zip(week, points)), id: \.0) { day, p in
+                    LabeledContent(day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()),
+                                   value: p.map { "\(minutesLabel($0.scrolling)) · \($0.source.label)" } ?? "No number")
+                        .font(.subheadline)
+                }
             }
         }
         let sources = Set(s.points.values.map(\.source))

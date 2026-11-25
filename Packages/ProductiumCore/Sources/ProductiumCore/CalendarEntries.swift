@@ -33,11 +33,40 @@ public enum CalendarEntries {
         entries.removeAll { $0.source == .calendar && !seen.contains($0.id) && $0.start >= window.start && $0.start < window.end }
     }
 
+    /// Words that make an event something happening in the class, not the class itself ("Data Test" in Data Management).
+    static let assessment: Set<String> = ["test", "quiz", "exam", "midterm", "final", "presentation", "presentations", "due",
+                                          "write", "analysis", "lab", "assessment", "evaluation", "deadline"]
+
     static func isTwin(_ ev: FixedEvent, of yours: [Entry], book: DayRuleBook, now: Date, calendar cal: Calendar) -> Bool {
+        if TaskMatch.words(ev.title).contains(where: assessment.contains) { return false }
         let day = cal.startOfDay(for: ev.start)
         return Days.on(day, yours, now: now, book: book, calendar: cal).contains { o in
             cal.isDate(o.start, inSameDayAs: ev.start) && o.end > o.start
                 && EventMatch.overlap((ev.start, ev.end), (o.start, o.end)) >= 0.8 && EventMatch.similarTitles(ev.title, o.title)
+        }
+    }
+
+    /// v1.6 B4: an event Productium can't file by its title goes with the class or task it names ("Data" → the
+    /// Data Management class, "Hamlet" → the task's subject), else Other.
+    public static func classifier(rules: CategoryRules, tree: CategoryTree, entries: [Entry], items: [WorkItem],
+                                  scrollingApps: [String: Bool] = [:]) -> (String) -> CategoryID {
+        let classes = entries.filter { $0.repeats != nil && tree.isUnder($0.category, CategoryTree.school) && $0.category != CategoryTree.school }
+        let tasks = items.filter { $0.isOpen && $0.category != nil }
+        func school(_ id: CategoryID) -> CategoryID {
+            guard let name = tree.path(id).last?.name, !tree.isUnder(id, CategoryTree.school) else { return id }
+            return tree.find(name, under: CategoryTree.school)?.id ?? id
+        }
+        return { title in
+            let filed = rules.category(for: title, tree: tree, scrollingApps: scrollingApps)
+            guard filed == CategoryTree.other else { return filed }
+            let w = TaskMatch.words(title).filter { $0.count >= 4 && !assessment.contains($0) }
+            guard !w.isEmpty else { return filed }
+            func hits(_ s: String) -> Bool { TaskMatch.words(s).contains { t in w.contains { TaskMatch.same($0, t) } } }
+            let byClass = Set(classes.filter { hits($0.title) || hits(tree.node($0.category)?.name ?? "") }.map(\.category))
+            if byClass.count == 1, let c = byClass.first { return c }
+            let byTask = Set(tasks.filter { hits($0.title) }.compactMap(\.category).map(school))
+            if byTask.count == 1, let c = byTask.first { return c }
+            return filed
         }
     }
 }

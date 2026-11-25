@@ -155,7 +155,7 @@ struct TaskRow: View {
                     .font(.caption)
                     if item.isOpen {
                         if let n = next {
-                            Label("\(n.start.relativeDay.capitalized), \(n.start.hm)", systemImage: "calendar.badge.clock")
+                            Label("\(n.start.dayAndDate), \(n.start.hm)", systemImage: "calendar.badge.clock")
                                 .font(.caption).foregroundStyle(Theme.focus)
                         } else if left > 0 && item.due > now {
                             Label("Not planned yet", systemImage: "calendar.badge.exclamationmark")
@@ -208,7 +208,7 @@ struct TaskRow: View {
     private func subtitle(steps: [WorkItem]) -> String {
         var parts: [String] = []
         if item.isDone, let d = item.doneAt { parts.append("Done \(d.relativeDay)") }
-        else { parts.append("Due \(item.due.relativeDay) \(item.due.hm)") }
+        else { parts.append("Due \(item.due.dayAndDate), \(item.due.hm)") }
         if let s = item.subject, !s.isEmpty { parts.append(s.capitalized) }
         if !steps.isEmpty { parts.append("\(steps.filter(\.isDone).count)/\(steps.count) steps") }
         if item.isOpen, let p = item.putOffLabel { parts.append(p) }

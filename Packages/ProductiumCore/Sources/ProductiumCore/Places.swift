@@ -90,6 +90,28 @@ public struct LocationTrace: Codable, Hashable, Sendable {
         return true
     }
 
+    /// v1.6 F4: without Always there are no visits, only the fixes taken when the app comes to the front. Fixes
+    /// within 150 m spanning 20 min or more are a stay, returned as a visit (arrival = the first, departure = the last).
+    public func stays(since: Date, radius: Double = 150, minutes: Double = 20) -> [PlaceVisit] {
+        var out: [PlaceVisit] = []
+        var run: [TracePoint] = []
+        func flush() {
+            guard let a = run.first, let b = run.last, b.at.timeIntervalSince(a.at) >= minutes * 60 else { return }
+            out.append(PlaceVisit(latitude: run.map(\.latitude).reduce(0, +) / Double(run.count),
+                                  longitude: run.map(\.longitude).reduce(0, +) / Double(run.count), arrival: a.at, departure: b.at))
+        }
+        for p in points where p.at >= since && p.accuracy <= 200 {
+            if let a = run.first, PlaceSuggester.meters(a.latitude, a.longitude, p.latitude, p.longitude) > radius
+                || p.at.timeIntervalSince(run.last?.at ?? p.at) > 3 * 3600 {
+                flush()
+                run = []
+            }
+            run.append(p)
+        }
+        flush()
+        return out
+    }
+
     public mutating func prune(now: Date) {
         let cutoff = now.addingTimeInterval(-Self.keepDays * 86400)
         visits.removeAll { ($0.departure ?? now) < cutoff }

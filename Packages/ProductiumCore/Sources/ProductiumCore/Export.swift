@@ -2,7 +2,7 @@ import Foundation
 
 public struct ExportBundle: Codable, Sendable {
     public static let formatID = "productium-export"
-    public static let currentVersion = 4
+    public static let currentVersion = 5
 
     public struct Device: Codable, Hashable, Sendable {
         public var appVersion: String?
@@ -121,7 +121,7 @@ public struct ExportBundle: Codable, Sendable {
             switch self {
             case .notAnExport: return "That file isn't a Productium export."
             case .unreadable(let why): return "Couldn't read that backup: \(why)"
-            case .oldFormat(let v): return "That export is format \(v), from an older Productium. v1.2 starts fresh and only imports format 4 (v1.2) exports."
+            case .oldFormat: return BeforeBaseline(schema: 0).description
             }
         }
     }
@@ -133,6 +133,8 @@ public struct ExportBundle: Codable, Sendable {
         guard (head.version ?? 0) >= currentVersion else { throw ReadError.oldFormat(head.version ?? 0) }
         do {
             return try decoder().decode(ExportBundle.self, from: data)
+        } catch is BeforeBaseline {
+            throw ReadError.oldFormat(head.version ?? 0)
         } catch let DecodingError.dataCorrupted(ctx), let DecodingError.keyNotFound(_, ctx),
                   let DecodingError.typeMismatch(_, ctx), let DecodingError.valueNotFound(_, ctx) {
             let path = ctx.codingPath.map(\.stringValue).joined(separator: ".")
@@ -248,5 +250,14 @@ public enum ExportFiles {
         let rel = parts[1]
         return !rel.hasPrefix("/") && !rel.contains("../") && !rel.hasPrefix("Library/") && rel != "Library"
             && !rel.hasPrefix(backupsFolder + "/") && rel != backupsFolder && !rel.contains("/private/var")
+            && !(rel.hasPrefix("state-") && rel.hasSuffix(".json"))
     }
+}
+
+/// v1.6 F2: defaults that describe this install, not your data ("already asked for Always", the alarms iOS holds,
+/// a run in progress). A restore never copies them, so a reinstall asks again.
+public enum RestoreDefaults {
+    public static let skipped: Set<String> = ["location.askedAlways", "app.runActive", "now.activityStartedAt",
+                                              "alarms.ledger", "update.latestRelease"]
+    public static func keep(_ key: String) -> Bool { !skipped.contains(key) }
 }

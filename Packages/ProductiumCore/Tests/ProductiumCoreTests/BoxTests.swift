@@ -78,7 +78,7 @@ final class BoxTests: XCTestCase {
 
 final class BoxSideOpsTests: XCTestCase {
     func testPromptStaysUnderBudget() {
-        XCTAssertLessThan(BoxPrompt.system().count, 6500)
+        XCTAssertLessThan(BoxPrompt.system().count, 6900)
     }
 
     func testMoodSettingAndScreenTimeApplyOutsideTheBox() throws {

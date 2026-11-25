@@ -145,6 +145,10 @@ struct OnboardingView: View {
             Text("You type what's due, what happened, and what changed, in any order and as messily as you like. Productium works out when to do things, protects your sleep and free time, and learns your routine so you don't have to log it.")
                 .font(.body).lineSpacing(3)
             Text("Setup takes about two minutes.").foregroundStyle(.secondary)
+            if Persistence.setAside {
+                Text("Your data from before 1.6 was kept aside. Restore a backup made with 1.6, or start fresh.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             if let o = offer {
                 Button { model.applyRestore(o) } label: { Label(o.summary, systemImage: "clock.arrow.circlepath") }
                     .buttonStyle(.borderedProminent)

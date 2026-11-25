@@ -1,0 +1,30 @@
+# v1.6: pause / resume / stop while paused, start a task by phrase, None of These, dinner setting, dates on tasks.
+scenario today
+start-next
+wait 1
+now pause
+wait 1
+shot 01-paused
+dump 02-paused
+now resume
+wait 1
+shot 03-resumed
+now pause
+stop
+dump 04-stopped-while-paused
+say reading frankenstein for the past 8 mins
+wait 1
+shot 05-task-by-phrase
+stop
+scroll assumed
+shot 06-did-these-happen
+say all dinners at 7:30 from now on
+wait 3
+tab schedule
+shot 07-schedule
+tab tasks
+shot 08-tasks-dates
+tab review
+shot 09-review
+backup
+dump 10-end

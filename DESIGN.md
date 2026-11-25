@@ -10,10 +10,10 @@ changes; **all scheduling is deterministic code on the phone**.
 - **Branches:** make every change on `dev` first and commit as you go (small commits, pushed to `dev` so CI compiles
   it and builds the `dev-build` pre-release; no version change). Merge `dev` into `main` (which releases
   `v<VERSION>.n`) only once the `dev` build is green and the change has been checked with `scripts/test`.
-- **User data must migrate.** v1.2.2 (`AppState.schema = 4`) is the first version with real data. Any change to
-  stored data after it (AppState fields, Codable types, backups) bumps `schema`, adds a migration step from the
-  previous schema, and a test that decodes a saved 1.2.2 `state.json` fixture without losing anything. Never fall back
-  to a fresh state for an older schema. Restores from backup files go through the same migrations.
+- **User data must migrate.** v1.6 (`AppState.schema = 8`) is the first version of the new line: older data is refused,
+  not converted. Any change to stored data after it (AppState fields, Codable types, backups) bumps `schema`, adds a
+  step to `Migrations.steps`, and extends `MigrationTests`, which decode the `state-1.6.json` fixture and check every
+  field survives. Never fall back to a fresh state for a readable schema. Restores go through the same steps.
 - **Docs:** only `README.md` (for people installing the app) and this file are in the repo. Plans (`*plan.md`) stay
   local and untracked.
 - Core tests: `export PATH=$HOME/.local/swift/swift-6.2.1-RELEASE-ubuntu24.04/usr/bin:$PATH; cd Packages/ProductiumCore
@@ -95,13 +95,12 @@ every exhaustive `switch` in `App/Views/Theme.swift` and core.
 
 ## 2. Data model (`AppState`, one Codable struct, persisted as `state.json` in Application Support)
 
-`AppState.schema = 7` (v1.3: 5 = grid templates and prompt severities, 6 = seed category colours, Transition and
-Messaging, `feedback`; v1.5: 7 = `Entry.focus`, Walking / Homework / Class buttons folded into Commute and Studying,
-a "<subject> study" button per class subject). Schema 4 (v1.2.2) and later migrate: `AppState.init(from:)` decodes leniently, then
-`Migrations.upgrade` runs one step per bump (state.json, restores and backups all go through it; the app keeps the old
-file as `state-schema-<n>.json`). Below 4 decodes as fresh; a format-3 export is refused. `MigrationTests` decode the
-1.2.2 fixture (`Tests/…/Fixtures/state-1.2.2.json`, the `history` scenario saved by the phone) and check every field
-survives. Main parts:
+`AppState.schema = 8` (v1.6, the baseline). `AppState.init(from:)` decodes leniently, then `Migrations.upgrade` runs
+one step per later bump (none yet; state.json, restores and backups all go through it). Below 8 throws `BeforeBaseline`:
+a restore says "This backup is from before 1.6", and a 1.5 state.json is moved to `state-pre-1.6.json` at launch
+(onboarding says so). `MigrationTests` decode `Tests/…/Fixtures/state-1.6.json` (the `history` scenario; rewrite it
+with `WRITE_FIXTURE=<path> swift test --filter MigrationTests/testWriteFixture` only at a schema bump) and check every
+field survives. Main parts:
 
 - **Time (Part 0 / B):** `entries: [Entry]` is everything timed: classes (repeating, `School › class`, spares and lunch
   `open`), calendar events (`source calendar`, id from the EventKit id), the planner's future blocks (`source plan`,
@@ -169,7 +168,11 @@ work) → `finish` (adds wind-down, sleep, free/gap blocks, warnings, shortfalls
   lower; `mergeAdjacent` joins two sessions of a task with only a break between (up to 75 min or the day's rule cap).
 - C5: a task that doesn't fit gets one warning (`PlanWarning.shortfall`, dismissed per task, not per wording) with
   Shorten (estimate − shortfall) · Move Due (+1 day) · Keep.
-- B5: Done or Clear removes every planned session of the task (past ones too), so Schedule keeps only what you tracked.
+- B5 / v1.6 A6: Done or Clear (app or box) removes every untracked session of the task, planned or placed at a time
+  (`Sessions.clearPlanned`, `isUnworkedPlan`), so Schedule keeps only what you tracked.
+- v1.6 A1: `PlanEntries.replace` drops a past or running session nobody worked on when the plan moved it (its task is
+  planned again, or it's gone from the plan); one whose task isn't planned again stays as planned, not done.
+- v1.6 B5: `WorkItem.sessionMinutes` makes every session of a task that long (no halving, no merging).
 - At-school errands (`WorkItem.isAtSchoolErrand`: `atSchool` flag, or chore starting ask/email/tell… with a
   teacher word) are not study: `placeErrands` puts one `.event` block (with `itemId`) inside school hours (a
   Lunch/break period if the timetable has one, else 10 min after school starts), before the due time, and
@@ -208,12 +211,18 @@ Sleep's start. At 10:00, if nothing measured the night: "Slept about 23:20–7:0
 
 ### 3.4 The log, the ring, the forecast
 
+v1.6: `Days.superseding` also drops a past planned task session with tracked time over it, and a finished planned
+Sleep under a measured night (one sleep a night). An estimated night starts after the last tracked entry in its first
+half and phone use up to 30 min after it (`SleepEstimator`, `awake`). Phone use after bedtime is merged (15 min) and
+kept from 2 min; a trim never leaves a sliver under a minute. Classes and calendar events are fixed (`TimeLog.isFixed`):
+not in Did These Happen? and not asked on the Live Activity.
 v1.5: `Days.expand` drops a planned trip or routine (a `plan` entry or unconfirmed series under Travel / Essentials)
 when you tracked the same thing yourself (same category, any Travel counts as the same; overlapping or starting within
 45 min; ≥3 min or running): the planned "Walk home" and the Walking you tracked are one walk (`Days.superseding`).
 A stop under a minute after a start removes the entry ("Cancelled", a mis-tap). Work you finish (≥10 min, a task or
-under Work) asks how focused you were (Not Very · Normal · Very → `Entry.focus` 1–3, 0 = skipped; `TimeLog.unratedWork`,
-`focusMinutes`; Review → Focused Work). Stopped from outside the app (Live Activity, a notification) it asks by
+under Work, that happened: not skipped or a session placed ahead) asks how focused you were (v1.6: Unfocused · Focused →
+`Entry.focus` 1–2, 0 = skipped; `TimeLog.unratedWork`, `focusMinutes`; Review → Focused Work). Unfocused minutes count
+half in the Work ring and `DayScore` (`TimeLog.focusWeight`, in `Accountability.account`); Tracked time is unchanged. Stopped from outside the app (Live Activity, a notification) it asks by
 notification instead (`FOCUS_RATING`, `askFocusIfAway`). `TimeLog.focusStats` (focused share by part of day, 14 days)
 feeds the insight pass ("Focus ratings") and How You Work.
 
@@ -239,7 +248,7 @@ and the best / hardest hour.
 
 - `QuickStartTemplate.all` (17; v1.5: one button per distinction worth comparing: Commute covers walking / the bus /
   driving as aliases, Studying covers homework, and `seedSubjects` adds "<subject> study" under Work › Studying for each
-  class subject) seed the grid (onboarding unticks; the 4 → 5 migration adds them). Tiles have `origin`
+  class subject) seed the grid (onboarding unticks). Tiles have `origin`
   (template / you / ai), `symbol`, `pin` (a slot), `edited` (you renamed / recategorised / pinned: the AI leaves it),
   `aliases` (titles merged in). `ranked` scores each past start by time of day (σ 45 min), same kind of day (school /
   free + labels; other kinds ×0.25), weekday, place, "after what just ended", halving every 21 days; ties in template
@@ -251,6 +260,12 @@ and the best / hardest hour.
   severity is Live Activity. The app mirrors it into `NowAttributes` (Shared) and the widget draws it; buttons are
   `NowActionIntent(action:)` run in the app (`AppModel.nowAction`). Synced after every replan and on going inactive;
   renewed after 7 h in the foreground (iOS ends it at 8).
+- v1.6: Pause (`PausedSession`, `AppState.paused`: the entry ends at the pause; Resume starts it again with the time
+  left; Stop clears it; nothing about it is sent while paused) on the running row, the Live Activity and the running /
+  session-end notifications. The session card shows "45 of 80 min", Pause · +15 · Done · Stop (icons when 4). Up Next
+  and the untracked card offer the next most urgent task too (`nextTask`). In the 30 min before leaving for school the
+  card counts down to it, and Leave notifications are only sent without the Live Activity. The daily cap keeps sleep
+  and the morning summary first; with the Live Activity showing, session starts go first.
 - v1.5 D1: a running task session's card counts down to the planned session's end (`NowCard.ends`), says what's next,
   and has Done (`done:<task>`) · +15 (`extend:<task>:15`) · Stop. `NowAttributes.ContentState.busy` shows "Sorting
   categories" etc. while Claude works in the background (also on Today's date line, `AppModel.aiWorking`).
@@ -263,7 +278,7 @@ Alarm into a notification without `Integrations.alarms` ("Alarms Allowed") and L
 the Now activity isn't showing. `NudgePlanner.plan` and the app's final list are filtered by it; `NudgePlanner.alarms`
 rings bedtime / leave / missed start only when set to Alarm; the wake alarm when `.wake` is Alarm; any other
 notification whose kind is Alarm also rings (`PromptSettings.alarms(from:)`, `PlannedAlarm.Kind.prompt`). `NudgeSettings`
-keeps only `level` and `arrivingHome` in use (the toggles are migrated). The box sets one with `prompt.<kind>`.
+keeps only `level` and `arrivingHome` in use. The box sets one with `prompt.<kind>`.
 `NudgePlanner.plan`: task starts (H4: first step · minutes, what it leads to), one lead-up, at most one follow-up
 (none while you track something else; v1.5 D1: neither while the Live Activity shows), the running session's end
 (`sessionEnd`, `SESSION_END`: +15 · +30 · Finish Tomorrow · Done, with the stand-up break after ~85 min of work folded
@@ -285,13 +300,16 @@ on school mornings) + bedtime / leave / missed start; the reconciler diffs with 
   ("shower"), "today is a day 2"; titles never keep time words and no button is made from one; certain or pass, no
   network), then Sonnet inside a background task. C4: the reply follows the receipt (`BoxReceipt.honest`): when nothing
   asked for worked it says so, and failures are added to a partial success. A reply from a notification always gets a quiet receipt; unsent ones retry on launch and refresh.
-- Sonnet: `BoxPrompt.system()` (fixed, < 6,500 characters, cached), `BoxContext.make` (Settings, About Me, the
+- Sonnet: `BoxPrompt.system()` (fixed, < 6,900 characters, cached), `BoxContext.make` (Settings, About Me, the
   running entry, the series, yesterday … +7 days with refs and flags, open tasks, track record, goals, places, rules,
   the category tree), forced tool `BoxSchema.result` (`ops`, `reply`, `gap`, `queries`, `facts`), lenient
   `BoxResult.read`. Later turns send a context delta (`ConversationPolicy`).
 - Ops: nouns entry, task, rule, setting, mood, screen_time, goal, place, category; verbs add, change, remove, start,
   stop, skip, confirm, done, drop. Refs `e…`, `e…@day`, `t…`, `u…`, `g…`, `p…`, category ids. Editing a planned block
-  makes it yours. `BoxApplier.risk` holds (never refuses) removing a whole series, ≥1 h of your own logged time, or
+  makes it yours; one in the future is still a planned session (`DayEntry.isPlannedSession`) until it's tracked. v1.6:
+  `entry.start` named like an open task starts the task (`TaskMatch`: stems, typos); `task.add` that repeats an open
+  task due the same day is added to it (`TaskMatch.twin`, "Added to Data Test"); task work is filed under Work ›
+  Studying › subject (`CategoryTree.studyNode`); "dinner" is a setting (routines.dinnerTime). `BoxApplier.risk` holds (never refuses) removing a whole series, ≥1 h of your own logged time, or
   a new alarm: one Approve / Decline (`AppState.approvals`). Receipts are day by day; Undo restores the snapshot.
 - Queries (F): `TimeQuery` run on the phone; `{q1.total}` etc. filled by code; `ChartCard`; Pin to Review re-runs live.
 - Evals (`scripts/inbox-eval/run.sh`): `--v12` 40 cases (14 real prompts + everyday, A1–A3, nouns, warnings, K1
@@ -367,14 +385,16 @@ reinstall can find it), `Productium-YYYY-MM-DD.json`,
 newest 3 kept (`BackupFiles`). Onboarding offers "Restore from Friday's backup" when the remembered folder has one,
 else a file picker. Restores go through the migrations.
 
-One JSON file, `format: productium-export`, `version: 4` (format 3 and older are refused): full `AppState` (with your
+One JSON file, `format: productium-export`, `version: 5` (v1.6; older formats and states are refused): full `AppState` (with your
 feedback), `aboutMe`,
 `callLog`, `sharedDefaults`, `appDefaults`, `files` (every file in the container/Documents not otherwise
 represented, base64, includes `drafts/` and `last-ai-error.txt`), pending/delivered notifications, permission
 statuses, device info, server snapshots. `ExportFiles.keep` decides which files go in and come back (relative paths
-only; never Library, Backups/ or an absolute path). Nothing is pruned before export. API key excluded. A test checks every
+only; never Library, Backups/, an absolute path or a `state-*.json` copy). `RestoreDefaults.skipped` are defaults
+about this install (`location.askedAlways`, the alarms ledger, a run in progress) that a restore never copies. Nothing is pruned before export. API key excluded. A test checks every
 `AppState` property is exported (`ExportTests.populated()` must set any new field) and that round-trip is
-identical except `exportedAt`. Restore previews, then replaces (saving `state-before-restore.json`).
+identical except `exportedAt`. Restore previews, then replaces (saving `state-before-restore.json`, which exports
+leave out).
 
 ## 9. AI routing, cost, server
 
@@ -529,7 +549,21 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
   timing earlier and added about 47 min of weeknight sleep, but it was a package with devices, so the nudge only
   suggests ten minutes outside on days with nothing fixed.
 
-## 13. Status and known loose ends (2026-11-23)
+## 13. Status and known loose ends (2026-11-25)
+
+- v1.6 (on `dev`, not yet built on CI or the phone): the clean baseline (schema 8, format 5, older refused, a 1.5
+  state.json set aside), the Schedule / task fixes above, Pause, Unfocused / Focused, setup problems on Today
+  (`SetupProblems`: Location not Always, notifications off, "App" from the automation; Fix · Not Now, once a day) and
+  permissions asked again at launch and after a restore (`checkPermissions`), swipeable queues (`PeekStack` onLeft /
+  onRight), None of These, fixes taken in front while Location is While Using become visits (`LocationTrace.stays`),
+  calendar events filed by the class or task they name and tests in class not hidden (`CalendarEntries.classifier`),
+  Back Up Now waits for one write and says its size, archived screenshots kept once and a week of telemetry in exports
+  (`forExport`), dates on tasks, Review's pull-to-refresh refreshes the data, unnamed pause sessions count as
+  scrolling and the pause sheet doesn't end them, days over 24 h aren't a Screen Time number, "X for the past N min",
+  and outbox replies older than 6 h wait for Send / Discard in the box. Task work under a class is refiled to Work ›
+  Studying › subject at refresh (`refileStudy`), buttons named for a finished task are hidden, the session card has the
+  first step and due day (`NowCard.detail`), no session under 30 min goes before school, and Scrolling's detail lists
+  each day's source. Device script: `scripts/test/v16.txt`.
 
 - v1.5 (on `dev`): see the sections above. Also: `AppModel.refresh` runs one at a time and at most every 15 s
   (`force` for pull-to-refresh, the test runner and Settings), unlocking only refreshes when the app is in front or the

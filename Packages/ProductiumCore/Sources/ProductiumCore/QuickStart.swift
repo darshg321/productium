@@ -107,9 +107,6 @@ public struct QuickStartTemplate: Hashable, Sendable {
     ]
 
     static let order: [String: Int] = Dictionary(all.enumerated().map { (CategoryRules.key($1.title), $0) }, uniquingKeysWith: min)
-
-    /// Templates 1.4 seeded that are now another button's alias (Walking → Commute) or not worth a button (Class).
-    static let retired: [String: String?] = ["walking": "Commute", "homework": "Studying", "class": nil]
 }
 
 public struct QuickStarts: Codable, Hashable, Sendable {
@@ -140,21 +137,6 @@ public struct QuickStarts: Codable, Hashable, Sendable {
             buttons.append(QuickStart(title: t.title, category: t.category, topics: t.topics, createdAt: at,
                                       removed: skip.contains(CategoryRules.key(t.title)), origin: .template, symbol: t.symbol,
                                       aliases: t.aliases))
-        }
-    }
-
-    /// v1.5 (schema 7): retired templates you never changed fold into the button that replaces them.
-    public mutating func retireTemplates() {
-        for (key, into) in QuickStartTemplate.retired {
-            guard let i = buttons.firstIndex(where: { $0.key == key && $0.origin == .template && !$0.edited }) else { continue }
-            buttons[i].removed = true
-            buttons[i].pin = nil
-            if let into, let j = buttons.firstIndex(where: { $0.key == CategoryRules.key(into) }), !buttons[j].keys.contains(key) {
-                buttons[j].aliases.append(buttons[i].title)
-            }
-        }
-        if let t = QuickStartTemplate.all.first(where: { $0.title == "Commute" }), let j = buttons.firstIndex(where: { $0.key == "commute" }) {
-            for a in t.aliases where !buttons[j].keys.contains(CategoryRules.key(a)) { buttons[j].aliases.append(a) }
         }
     }
 
@@ -194,12 +176,14 @@ public struct QuickStarts: Codable, Hashable, Sendable {
         return b
     }
 
-    /// v1.5: buttons 1.4 made from a misread title ("Productium development since") are hidden.
+    /// v1.6 A4: a button you made from a task's name ("Reading frankenstein") goes once that task is closed and no
+    /// open task has the name. Ones you edited stay. Returns how many were hidden.
     @discardableResult
-    public mutating func hideTimeWordButtons() -> Int {
+    public mutating func hideFinishedTaskButtons(items: [WorkItem]) -> Int {
+        let closed = items.filter { !$0.isOpen }.map { var t = $0; t.state = .open; return t }
         var n = 0
         for i in buttons.indices where buttons[i].origin == .you && !buttons[i].removed && !buttons[i].edited
-            && QuickParse.endsInTimeWord(buttons[i].title) {
+            && TaskMatch.task(for: buttons[i].title, in: closed) != nil && TaskMatch.task(for: buttons[i].title, in: items) == nil {
             buttons[i].removed = true
             buttons[i].pin = nil
             n += 1

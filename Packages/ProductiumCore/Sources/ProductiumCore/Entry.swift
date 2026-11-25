@@ -115,7 +115,7 @@ public struct Entry: Codable, Hashable, Identifiable, Sendable {
     public var alert: Alert?
     public var source: EntrySource
     public var createdAt: Date
-    /// v1.5 (schema 7): how focused you were in this stretch of work (1 not very, 2 normal, 3 very), asked after it.
+    /// How focused you were in this stretch of work (1 unfocused, 2 focused, 0 skipped), asked after it.
     public var focus: Int?
 
     public init(id: UUID = UUID(), title: String, start: Date, end: Date?, category: CategoryID,
@@ -308,9 +308,19 @@ public enum PlanEntries {
         }
     }
 
-    /// After a replan: future plan entries are replaced, past ones stay (they're what was planned, for "missed").
+    /// After a replan: future plan entries are replaced. v1.6 A1: a past or running session nobody worked on is
+    /// dropped when the new plan moved it (its task is planned again, or the session is gone from the plan), so a move
+    /// leaves no copy behind. One whose task isn't planned again stays, as planned but not done.
     public static func replace(in entries: inout [Entry], with new: [Entry], now: Date) {
-        entries.removeAll { $0.source == .plan && $0.start >= now }
+        let newIds = Set(new.map(\.id))
+        let replanned = Set(new.filter { $0.start >= now }.compactMap(\.taskId))
+        let snapshot = entries
+        entries.removeAll { e in
+            guard e.source == .plan else { return false }
+            if e.start >= now { return true }
+            guard let task = e.taskId, !newIds.contains(e.id), !Sessions.isWorked(e, entries: snapshot, now: now) else { return false }
+            return (e.end ?? now) > now || replanned.contains(task)
+        }
         let keep = Set(entries.map(\.id))
         entries += new.filter { $0.start >= now && !keep.contains($0.id) }
     }

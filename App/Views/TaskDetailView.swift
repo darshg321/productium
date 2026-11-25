@@ -32,7 +32,7 @@ struct TaskDetailView: View {
                 }
 
                 Section {
-                    LabeledContent("Due", value: "\(item.due.relativeDay.capitalized), \(item.due.hm)")
+                    LabeledContent("Due", value: "\(item.due.dayAndDate), \(item.due.hm)")
                     LabeledContent("Planned Time", value: durationLabel(total))
                     if item.completedMinutes > 0 {
                         LabeledContent("Done So Far", value: durationLabel(item.completedMinutes))
@@ -63,7 +63,7 @@ struct TaskDetailView: View {
                                         .strikethrough(s.isDone)
                                         .foregroundStyle(s.isDone ? .secondary : .primary)
                                     Spacer()
-                                    Text(s.due.relativeDay).font(.caption).foregroundStyle(.secondary)
+                                    Text(s.due.dayAndDate).font(.caption).foregroundStyle(.secondary)
                                 }
                             }
                             .disabled(s.isDone)
@@ -75,7 +75,7 @@ struct TaskDetailView: View {
                 if !planned.isEmpty {
                     Section("Planned Sessions") {
                         ForEach(planned.prefix(8)) { b in
-                            LabeledContent("\(b.start.relativeDay.capitalized), \(b.start.hm)", value: durationLabel(b.minutes))
+                            LabeledContent("\(b.start.dayAndDate), \(b.start.hm)", value: durationLabel(b.minutes))
                         }
                     }
                 }

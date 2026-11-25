@@ -246,7 +246,7 @@ enum RunningActivity {
     static func card(_ c: NowCard) -> NowAttributes.Card {
         NowAttributes.Card(kind: c.kind.rawValue, title: c.title, subtitle: c.subtitle, since: c.since,
                            buttons: c.buttons.map { NowAttributes.Button(action: $0.action, label: $0.label, symbol: $0.symbol) },
-                           other: c.other, ends: c.ends)
+                           other: c.other, ends: c.ends, detail: c.detail)
     }
 
     static func mirror(_ r: DayRings) -> NowAttributes.Rings {

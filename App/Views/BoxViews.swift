@@ -16,6 +16,18 @@ struct DumpBox: View {
         Card {
             CardHeader(title: "Inbox", symbol: "tray.and.arrow.down.fill", color: .blue,
                        detail: model.busy.contains("dump") ? "Reading…" : nil)
+            // v1.6 G10: an old reply that never went out is yours to send or drop.
+            ForEach(model.state.outbox.stale(now: Date()), id: \.id) { item in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Not sent \(item.at.relativeDay) at \(item.at.hm): “\(item.text)”").font(.subheadline).lineLimit(3)
+                    if let e = item.lastError { Text(e).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                    HStack(spacing: 16) {
+                        Button("Send") { model.resendOutbox(item.id) }
+                        Button("Discard") { model.discardOutbox(item.id) }
+                    }
+                    .font(.subheadline).buttonStyle(.borderless)
+                }
+            }
             TextField("What's due, what happened, what changed?", text: $text, axis: .vertical)
                 .font(.body)
                 .lineLimit(2...8)

@@ -20,7 +20,12 @@ public enum ScrollingApps {
         return (social + video + games).contains { n == $0 || n.contains($0) }
     }
 
+    /// The pause automation's name for an app it wasn't told (it only runs for scrolling apps).
+    public static let unnamed = "Scrolling app"
+
     public static func isScrolling(_ name: String, _ list: [String: Bool], category: String? = nil) -> Bool {
+        // v1.6 G7: the pause automation only runs on scrolling apps, so its unnamed sessions are scrolling.
+        if name.plainKey == unnamed.plainKey { return true }
         if let hit = list.first(where: { $0.key.plainKey == name.plainKey }) { return hit.value }
         return defaultIsScrolling(name, category: category)
     }
@@ -31,7 +36,7 @@ public enum ScrollingApps {
 
     /// Lists every app seen so far, with a default for the new ones.
     public static func register(_ apps: [(name: String, category: String?)], into list: inout [String: Bool]) {
-        for a in apps where !list.contains(where: { $0.key.plainKey == a.name.plainKey }) {
+        for a in apps where !list.contains(where: { $0.key.plainKey == a.name.plainKey }) && a.name.plainKey != unnamed.plainKey {
             list[a.name] = defaultIsScrolling(a.name, category: a.category)
         }
     }
@@ -92,16 +97,6 @@ extension ScreenDay {
         if let a = average, a > 0, Double(appsTotal) > Double(a) * 1.3 { return 1.0 / 7 }
         if average == nil, appsTotal > 24 * 60 { return 1.0 / 7 }
         return nil
-    }
-
-    /// Daily averages saved before 1.4.1 took a week's totals as a day's (18 h of scrolling "a day"): no day has more
-    /// than 24 hours, so those are divided by 7.
-    public func repairedAverage(_ list: [String: Bool]) -> ScreenDay {
-        guard appsTotal > 24 * 60 || (totalMinutes ?? 0) > 24 * 60 else { return self }
-        var out = self
-        if let t = totalMinutes, t > 24 * 60 { out.totalMinutes = t / 7 }
-        out.apps = apps?.map { var a = $0; a.minutes /= 7; return a }
-        return out.recomputed(list)
     }
 
     public var addsUp: Bool {
@@ -251,7 +246,8 @@ public enum ScreenSeries {
         let avgs = averages.sorted { $0.day > $1.day }
         return days.map { raw in
             let d = cal.startOfDay(for: raw)
-            if let s = byDay[d] {
+            // v1.6 G7: a day whose apps add up to more than a day (a week's totals read as one day) isn't a number.
+            if let s = byDay[d], s.appsTotal <= 24 * 60 {
                 return ScreenPoint(day: d, scrolling: s.distractingMinutes, total: s.totalMinutes, source: ScreenSource(s))
             }
             let a = avgs.first { a in

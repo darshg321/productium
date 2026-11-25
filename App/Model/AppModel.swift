@@ -30,6 +30,17 @@ final class AppModel {
         LocalStore.defaults.set(Self.setupVersion, forKey: "setup.version")
     }
 
+    /// v1.6 F1: iOS said no to notifications (checked at launch and in front).
+    var notificationsDenied = false
+    /// v1.6 G10: why the last box message didn't go out (kept on its outbox item).
+    var lastDumpError: String?
+    /// v1.6 G2: a backup is being written (Back Up Now waits), and the size of the last one.
+    var backingUp = false
+    var lastBackupBytes: Int?
+    /// v1.6 C1: a resumed session's countdown end (the time left when it was paused).
+    var resumedEnds: Date?
+    /// Today's "Fix It" for the Screen Time automation opens the Shortcuts guide.
+    var showShortcutsGuide = false
     /// The box has the keyboard: Today holds its clock so typing never waits on the cards below.
     var boxFocused = false
     /// Review → Your Week (the recap) is open (the test runner's `review recap` opens it).
@@ -58,20 +69,14 @@ final class AppModel {
     @ObservationIgnored var perfLogged: [String: Date] = [:]
 
     init() {
-        var loaded = Persistence.load()
-        loaded.screen = loaded.screen.recomputed(loaded.scrollingApps)
-        loaded.screenAverages = loaded.screenAverages.map { $0.repairedAverage(loaded.scrollingApps) }.recomputed(loaded.scrollingApps)
-        state = loaded
+        state = Persistence.load()
         callLog = CallLogStore.load()
         aboutMe = AboutMeStore.load()
         if let e = Persistence.loadError {
             state.telemetry.record(.storage, "decode_failed", level: .error, ["error": e])
             Persistence.loadError = nil
         }
-        if let from = Persistence.migratedFrom {
-            state.telemetry.record(.storage, "migrated", ["from": "\(from)", "to": "\(AppState.schema)"])
-            Persistence.migratedFrom = nil
-        }
+        if Persistence.setAside { state.telemetry.record(.storage, "set_aside", ["file": "state-pre-1.6.json"]) }
     }
 
     /// One line in the development log (Part T). Call at decisions and boundaries, not in loops.
@@ -178,7 +183,7 @@ final class AppModel {
             LocationService.shared.monitorVisits(true)
         }
         noteUncleanExit()
-        launchRepairs()
+        if state.onboarded { Task { await checkPermissions() } }
         log(.lifecycle, "launch", ["onboarded": "\(state.onboarded)", "entries": "\(state.entries.count)"])
         Task { await UpdateChecker.shared.checkIfDue() }
         if state.onboarded { Task { await refresh() } }
@@ -186,10 +191,14 @@ final class AppModel {
 
     func foreground() {
         LocalStore.defaults.set(true, forKey: LocalStore.Key.runActive)
-        Friction.ended(by: .productium)
+        let pausing = Date().timeIntervalSince(Friction.pausedAt) < 20
+            || (LocalStore.defaults.string(forKey: LocalStore.Key.pendingDeepLink)?.hasSuffix("gap") ?? false)
+        if !pausing { Friction.ended(by: .productium) }
         rebuildAppEntries()
         state.appOpens.append(Date())
         log(.lifecycle, "foreground")
+        foregroundFix()
+        Task { await checkNotificationsDenied() }
         if let link = LocalStore.defaults.string(forKey: LocalStore.Key.pendingDeepLink) {
             deepLink = link
             LocalStore.defaults.removeObject(forKey: LocalStore.Key.pendingDeepLink)
@@ -237,6 +246,15 @@ final class AppModel {
         estimateSleep()
         syncCalendar()
         var tree = state.categories, buttons = state.quickStarts
+        var es = state.entries, items = state.items
+        let refiled = tree.refileStudy(entries: &es, items: &items)
+        if refiled > 0 {
+            state.categories = tree
+            state.entries = es
+            state.items = items
+            log(.log, "study_refiled", ["count": "\(refiled)"])
+        }
+        if buttons.hideFinishedTaskButtons(items: state.items) > 0 { state.quickStarts = buttons; log(.log, "task_buttons_hidden") }
         if !buttons.seedSubjects(tree: &tree, at: Date()).isEmpty {
             state.categories = tree
             state.quickStarts = buttons
@@ -367,9 +385,17 @@ final class AppModel {
             }
             planned += questionNudges(now: now)
             planned = state.prefs.prompts.filter(planned, liveActivity: RunningActivity.showing)
+            // v1.6 C1: while a session is paused, nothing about it (or untracked time) is sent.
+            if let p = state.paused {
+                let blocks = Set(state.plan.blocks.filter { $0.itemId != nil && $0.itemId == p.taskId }.map(\.id))
+                planned.removeAll { $0.kind == .untracked || ($0.blockId.map(blocks.contains) ?? false) }
+            }
+            // v1.6 C3: leaving shows on the Live Activity's card; as notifications only without it.
+            if RunningActivity.showing { planned.removeAll { $0.kind == .leaveSoon || $0.kind == .leaveNow } }
             // D2: at most 8 a day; alarms ring on their own and aren't counted.
             let ringing = Set(state.prefs.prompts.alarms(from: planned, alarmsAllowed: state.integrations.alarms).compactMap { $0.key.split(separator: ".", maxSplits: 1).last.map(String.init) })
-            let (kept, dropped) = NudgePlanner.capped(planned.filter { !ringing.contains($0.id) }, cap: NudgePlanner.dailyCap, calendar: cal)
+            let (kept, dropped) = NudgePlanner.capped(planned.filter { !ringing.contains($0.id) }, cap: NudgePlanner.dailyCap,
+                                                     liveActivity: RunningActivity.showing, calendar: cal)
             planned = kept + planned.filter { ringing.contains($0.id) }
             log(.notification, "scheduled", ["count": "\(planned.count)", "prompts": "\(prompts.count)",
                                              "dropped": dropped.map { "\($0.kind.rawValue) \($0.title) at \($0.at.hm)" }.joined(separator: " | "),
@@ -434,7 +460,9 @@ final class AppModel {
 
     /// Stops the running entry (a notification's Done, Siri, a Shortcut, the Stop button).
     func stopRunning(source: String) {
+        if running == nil, state.paused != nil { return clearPause() }
         guard let r = running else { return }
+        resumedEnds = nil
         log(.intent, "stop", ["source": source])
         applyUI([BoxOp(.entry, .stop)], what: "stop (\(source))", quiet: true)
         Haptics.stop()
@@ -644,10 +672,10 @@ final class AppModel {
         replan()
     }
 
-    /// B5: a finished task's Schedule is what you did: every planned session of it (past ones too) goes, the
-    /// sessions you tracked stay.
+    /// B5 / v1.6 A6: a finished task's Schedule is what you did: every untracked session of it (past and future,
+    /// planned or put at a time) goes, the sessions you tracked stay.
     func clearPlannedSessions(of id: UUID) {
-        state.entries.removeAll { $0.source == .plan && $0.taskId == id }
+        Sessions.clearPlanned(of: id, in: &state.entries)
         state.plan.blocks.removeAll { $0.itemId == id }
     }
 
@@ -796,6 +824,12 @@ final class AppModel {
             + state.entries.filter { $0.source == .you && $0.repeats == nil && $0.createdAt > Date().addingTimeInterval(-21 * 86400) }.map(\.createdAt)
     }
 
+    /// v1.6 A5: when tracked time ended (you were up then), for the estimated night.
+    var trackedEnds: [Date] {
+        state.entries.filter { $0.source == .you && $0.repeats == nil && !Sessions.isUnworkedPlan($0)
+            && $0.start > Date().addingTimeInterval(-21 * 86400) && !$0.marks.values.contains(.skipped) }.map { $0.end ?? Date() }
+    }
+
     /// Changes the state the box and the insight pass work on, about-me included.
     @discardableResult
     func editDumpState<T>(_ change: (inout DumpState) -> T) -> T {
@@ -848,7 +882,7 @@ final class AppModel {
         }
         state.health = SleepEstimator.fill(state.health, days: days, markers: recentCheckIns(), motion: state.motion,
                                            phoneUse: phoneUse, sleepNeedMinutes: state.prefs.sleepNeedMinutes, calendar: cal,
-                                           firstPickups: pickups, charging: charging)
+                                           firstPickups: pickups, charging: charging, awake: trackedEnds)
         // A5 / B2: nights (measured or estimated) and naps are Sleep entries in the log.
         let written = EntryBuilder.sleep(state.health, entries: &state.entries, now: Date(), calendar: cal)
         if !written.isEmpty { log(.health, "sleep_entries", level: .debug, ["count": "\(written.count)"]) }
@@ -858,14 +892,24 @@ final class AppModel {
         guard state.integrations.calendarImport, CalendarService.shared.authorized else { return }
         let events = CalendarService.shared.events(days: 14)
         let start = cal.startOfDay(for: Date())
-        let rules = state.categoryRules, tree = state.categories, apps = state.scrollingApps
+        let classify = CalendarEntries.classifier(rules: state.categoryRules, tree: state.categories, entries: state.entries,
+                                                  items: state.items, scrollingApps: state.scrollingApps)
         CalendarEntries.merge(events, into: &state.entries,
                               window: DateInterval(start: start, end: start.addingTimeInterval(14 * 86400)),
-                              book: state.dayRules, now: Date(), calendar: cal) { rules.category(for: $0, tree: tree, scrollingApps: apps) }
+                              book: state.dayRules, now: Date(), calendar: cal, classify: classify)
         log(.sensor, "calendar_read", ["events": "\(events.count)"])
-        for cand in CalendarService.shared.deadlineCandidates(days: 30) {
+        // v1.6 B1: a test in Calendar is the due date of one study task (yours, if you already made it).
+        for var cand in CalendarService.shared.deadlineCandidates(days: 30) {
             if let i = state.items.firstIndex(where: { $0.externalId == cand.externalId }) {
                 state.items[i].due = cand.due
+                continue
+            }
+            let filed = classify(cand.title)
+            if filed != CategoryTree.other { cand.category = state.categories.studyNode(for: filed) }
+            if cand.kind.isMemoryBased && !cand.title.lowercased().hasPrefix("study") { cand.title = "Study for \(cand.title)" }
+            if let j = TaskMatch.twin(of: cand, in: state.items, calendar: cal) {
+                state.items[j].externalId = cand.externalId
+                if state.items[j].category == nil { state.items[j].category = cand.category }
             } else {
                 add(cand)
             }
@@ -1234,6 +1278,7 @@ final class AppModel {
                                                     detail: ai?.detail ?? (ai == nil ? error.localizedDescription : nil),
                                                     context: context))
             log(.box, "failed", level: .error, ["message": text, "error": ai?.detail ?? error.localizedDescription])
+            lastDumpError = ai?.errorDescription ?? error.localizedDescription
             save()
             if let d = ai?.detail {
                 try? Data(d.utf8).write(to: Persistence.url.deletingLastPathComponent().appendingPathComponent("last-ai-error.txt"))
@@ -1274,7 +1319,7 @@ final class AppModel {
         let item = outboxId.flatMap { id in state.outbox.items.first { $0.id == id } }
         let ok = await dump(item?.boxText(now: Date(), calendar: cal) ?? text, images: images)
         if let id = outboxId {
-            if ok { state.outbox.sent(id) } else { state.outbox.failed(id, error: "unreachable", at: Date()) }
+            if ok { state.outbox.sent(id) } else { state.outbox.failed(id, error: lastDumpError ?? "unreachable", at: Date()) }
             save()
         }
         if source != .app {
@@ -1328,6 +1373,7 @@ final class AppModel {
         state.prompts.answered.append(Date())
         NotificationService.clearDelivered(prefixes: ["track.", "running."])
         if let r = running {
+            state.paused = nil
             state.quickStarts.noteStart(r, at: Date())
             Donations.started(r.title)
             if r.category == CategoryTree.other, !r.filedByYou, OnDeviceModel.available { Task { await fileOnDevice(r.id) } }
@@ -1349,7 +1395,7 @@ final class AppModel {
             if await dump(item.boxText(now: Date(), calendar: cal)) {
                 state.outbox.sent(item.id)
             } else {
-                state.outbox.failed(item.id, error: "unreachable", at: Date())
+                state.outbox.failed(item.id, error: lastDumpError ?? "unreachable", at: Date())
                 break
             }
         }
@@ -1521,6 +1567,7 @@ final class AppModel {
     func applyRestore(_ p: RestorePreview) {
         ExportService.restore(p.bundle, into: self)
         clearUndo()
+        Task { await checkPermissions() }
         if state.integrations.location { LocationService.shared.monitor(state.places) }
         replan()
         toast = "Restored from the export."

@@ -237,14 +237,8 @@ final class QuickStartTests: XCTestCase {
         XCTAssertFalse(q.buttons.first!.edited)
     }
 
-    func testRetiredTemplatesFoldAndSubjectsGetStudyButtons() {
+    func testSubjectsGetStudyButtons() {
         var q = QuickStarts()
-        q.buttons = [QuickStart(title: "Walking", category: CategoryTree.travel, createdAt: Fx.mon(0), origin: .template),
-                     QuickStart(title: "Commute", category: CategoryTree.travel, createdAt: Fx.mon(0), origin: .template),
-                     QuickStart(title: "Class", category: CategoryTree.school, createdAt: Fx.mon(0), origin: .template)]
-        q.retireTemplates()
-        XCTAssertEqual(q.live.map(\.title), ["Commute"])
-        XCTAssertTrue(q.button(for: "Commute")!.keys.contains("walking"))
         var tree = CategoryTree()
         _ = tree.add("Math", under: CategoryTree.school)
         let added = q.seedSubjects(tree: &tree, at: Fx.mon(0))

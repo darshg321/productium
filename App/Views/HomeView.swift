@@ -32,7 +32,7 @@ struct TodayView: View {
                             }
                             .padding(.horizontal, 4)
                             .animation(.default, value: model.aiWorking)
-                            if let r = model.running { RunningCard(entry: r, now: now) }
+                            if let r = model.running { RunningCard(entry: r, now: now) } else if let p = model.state.paused { PausedCard(paused: p, now: now) }
                             DumpBox()
                             AlertCard(now: now)
                             ForEach(model.approvals.filter { $0.turnId == nil }) { a in Card { ApprovalRow(approval: a) } }
@@ -64,7 +64,35 @@ struct TodayView: View {
             .onChange(of: model.state.entries.count) { _, _ in now = Date() }
             .navigationTitle("Today")
             .usageMeter()
+            .sheet(isPresented: Bindable(model).showShortcutsGuide) { ShortcutsGuideView(inSheet: true) }
         }
+    }
+}
+
+// MARK: - v1.6 C1: a paused session (in the running row's place)
+
+struct PausedCard: View {
+    @Environment(AppModel.self) private var model
+    let paused: PausedSession
+    let now: Date
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "pause.fill")
+                .font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 40, height: 40).background(Color.orange, in: Circle())
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(paused.title).font(.headline).lineLimit(1)
+                Text("Paused \(minutesLabel(max(0, Int(now.timeIntervalSince(paused.pausedAt) / 60))))")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 6)
+            Button("Resume") { model.resumePaused(source: "home") }.buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+            Button("Stop") { model.clearPause() }.buttonStyle(.bordered).buttonBorderShape(.capsule).tint(.red)
+        }
+        .padding(14)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
     }
 }
 
@@ -110,6 +138,8 @@ struct RunningCard: View {
                 Button { model.complete(t) } label: { circle("checkmark", .green) }
                     .accessibilityLabel("Done")
             }
+            Button { model.pauseRunning(source: "home") } label: { circle("pause.fill", .orange) }
+                .accessibilityLabel("Pause \(entry.title)")
             Button { model.stopRunning(source: "home") } label: { circle("stop.fill", .red) }
                 .accessibilityLabel("Stop \(entry.title)")
         }
@@ -361,7 +391,7 @@ struct MoodButtons: View {
 struct FocusCard: View {
     @Environment(AppModel.self) private var model
     let now: Date
-    static let levels: [(Int, String)] = [(1, "Not Very"), (2, "Normal"), (3, "Very")]
+    static let levels: [(Int, String)] = [(1, "Unfocused"), (2, "Focused")]
 
     var body: some View {
         if let e = TimeLog.unratedWork(model.state.entries, tree: model.state.categories, now: now) {
@@ -493,7 +523,9 @@ struct AssumedCard: View {
         let cal = Calendar.current
         let today = Days.dayInterval(now, cal)
         let slices = model.todaySlices(now)
-        let assumed = TimeLog.assumed(slices).filter { $0.end <= now && !model.state.categories.isUnder($0.category, CategoryTree.sleep) }
+        let assumed = TimeLog.assumed(slices).filter {
+            $0.end <= now && !model.state.categories.isUnder($0.category, CategoryTree.sleep) && !TimeLog.isFixed($0, tree: model.state.categories)
+        }
         if let d = assumed.first {
             let tree = model.state.categories
             let next = assumed.dropFirst().first
@@ -501,7 +533,8 @@ struct AssumedCard: View {
                 SectionHeader("Did These Happen?", action: assumed.count > 1 ? "Yes to All" : nil) {
                     model.confirmAll(in: DateInterval(start: today.start, end: now))
                 }
-                PeekStack(remaining: assumed.count, next: next.map { "\($0.title) \($0.start.hm)" }) {
+                PeekStack(remaining: assumed.count, next: next.map { "\($0.title) \($0.start.hm)" },
+                          onLeft: { model.reject(d) }, onRight: { model.confirm(d) }) {
                     HStack(spacing: 12) {
                         IconTile(symbol: Theme.symbol(category: d.category, tree: tree), color: Theme.color(category: d.category, tree: tree))
                         VStack(alignment: .leading, spacing: 1) {
@@ -519,6 +552,10 @@ struct AssumedCard: View {
                     .font(.title2).buttonStyle(.borderless)
                     .id(d.id)
                     .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+                }
+                if assumed.count >= 3 {
+                    Button("None of These") { withAnimation { model.rejectAll(assumed) } }
+                        .font(.subheadline).buttonStyle(.borderless).foregroundStyle(.secondary).padding(.horizontal, 4)
                 }
             }
             .sheet(item: $editing) { EntrySheet(day: $0) }
@@ -719,14 +756,32 @@ struct AlertCard: View {
 
     var body: some View {
         let warnings = model.activeWarnings.sorted { ($0.level == .info ? 1 : 0) < ($1.level == .info ? 1 : 0) }
-        if let expiry = model.signatureExpiry, expiry.timeIntervalSince(now) < 2 * 86400 {
+        let setup = model.setupProblems
+        if let p = setup.first {
+            PeekStack(remaining: setup.count + warnings.count, next: (setup.dropFirst().first?.title ?? warnings.first.map { String($0.message.prefix(60)) }),
+                      onLeft: { model.dismissSetup(p) }, onRight: { model.fix(p) }) {
+                VStack(alignment: .leading, spacing: 10) {
+                    CardHeader(title: p.title, symbol: "exclamationmark.triangle.fill", color: .orange)
+                    Text(p.message).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 16) {
+                        Button(p.fixTitle) { model.fix(p) }
+                        Button("Not Now") { withAnimation { model.dismissSetup(p) } }
+                    }
+                    .font(.subheadline)
+                    .buttonStyle(.borderless)
+                }
+                .id(p.id)
+            }
+        } else if let expiry = model.signatureExpiry, expiry.timeIntervalSince(now) < 2 * 86400 {
             PeekStack(remaining: 1 + warnings.count, next: warnings.first.map { String($0.message.prefix(60)) }) {
                 CardHeader(title: "Refresh Needed", symbol: "exclamationmark.triangle.fill", color: Theme.alert)
                 Text("This build stops opening \(expiry.relativeDay) at \(expiry.hm). Refresh or reinstall it before then.")
                     .font(.subheadline)
             }
         } else if let w = warnings.first {
-            PeekStack(remaining: warnings.count, next: warnings.dropFirst().first.map { String($0.message.prefix(60)) }) {
+            let shorten: (() -> Void)? = w.shortfall == nil ? nil : { model.shorten(w) }
+            PeekStack(remaining: warnings.count, next: warnings.dropFirst().first.map { String($0.message.prefix(60)) },
+                      onLeft: { model.state.dismissed.insert(w.dismissKey); model.save() }, onRight: shorten) {
                 VStack(alignment: .leading, spacing: 10) {
                     CardHeader(title: "Heads Up", symbol: w.level == .critical ? "exclamationmark.triangle.fill" : "info.circle.fill",
                                color: w.level == .critical ? Theme.alert : .orange)
@@ -759,6 +814,7 @@ struct PauseSheet: View {
                 if let b = model.state.plan.blocks.first(where: { $0.isStudy && $0.end > Date() && $0.itemId != nil }) {
                     Section {
                         Button {
+                            Friction.ended(by: .productium)
                             model.startNowOrNext()
                             dismiss()
                         } label: { Label("Start \(b.title)", systemImage: "play.fill") }
@@ -778,7 +834,7 @@ struct PauseSheet: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Paused")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { Friction.ended(by: .productium); dismiss() } } }
         }
         .presentationDetents([.medium])
     }

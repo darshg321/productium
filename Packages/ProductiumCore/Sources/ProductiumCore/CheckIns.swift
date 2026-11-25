@@ -126,6 +126,27 @@ public enum Sessions {
         }
     }
 
+    /// A planned session (an entry) that has time tracked on its task around it.
+    public static func isWorked(_ p: Entry, entries: [Entry], now: Date) -> Bool {
+        isWorked(PlannedBlock(id: p.id, kind: .work, start: p.start, end: p.end ?? now, title: p.title, itemId: p.taskId),
+                 entries: entries, now: now)
+    }
+
+    /// v1.6 A6: time set aside for a task that nobody tracked: the planner's sessions and ones you (or the box) put at
+    /// a time. Not running, not confirmed.
+    public static func isUnworkedPlan(_ e: Entry) -> Bool {
+        e.taskId != nil && e.repeats == nil && e.end != nil && !e.marks.values.contains(.confirmed)
+            && (e.source == .plan || (e.source == .you && e.createdAt < e.start.addingTimeInterval(-60)))
+    }
+
+    /// Done or Clear: every untracked session of the task goes (past and future, whatever made it); tracked time stays.
+    @discardableResult
+    public static func clearPlanned(of task: UUID, in entries: inout [Entry]) -> Int {
+        let before = entries.count
+        entries.removeAll { $0.taskId == task && isUnworkedPlan($0) }
+        return before - entries.count
+    }
+
     /// Study blocks that ended in the last 36 hours and weren't worked on.
     public static func pending(plan: Plan, entries: [Entry], now: Date) -> [PlannedBlock] {
         plan.blocks.filter { $0.isStudy && $0.end <= now && $0.end > now.addingTimeInterval(-36 * 3600) && !isWorked($0, entries: entries, now: now) }

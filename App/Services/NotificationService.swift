@@ -41,10 +41,11 @@ enum NotificationService {
             a("q.sick", "Sick"), a("q.noSchool", "No School Today"), a("q.skipped", "Skipped"),
             text("q.reply", "Something Else", "What happened?"),
         ], intentIdentifiers: [], options: [])
-        let running = cat(.running, [a("run.stop", "Done", "stop.fill"), text("run.switch", "Switch", "What are you doing now?")])
-        let end = cat(.sessionEnd, [a("end.15", "+15 Min", "plus"), a("end.30", "+30 Min", "plus"),
+        let running = cat(.running, [a("run.stop", "Done", "stop.fill"), a("run.pause", "Pause", "pause.fill"),
+                                     text("run.switch", "Switch", "What are you doing now?")])
+        let end = cat(.sessionEnd, [a("end.15", "+15 Min", "plus"), a("run.pause", "Pause", "pause.fill"),
                                     a("end.tomorrow", "Finish Tomorrow", "arrow.uturn.forward"), a("item.done", "It's Done", "checkmark")])
-        let rate = cat(.focusRating, [a("rate.1", "Not Very"), a("rate.2", "Normal"), a("rate.3", "Very")])
+        let rate = cat(.focusRating, [a("rate.1", "Unfocused"), a("rate.2", "Focused")])
         UNUserNotificationCenter.current().setNotificationCategories([start, lead, checkIn, scroll, deadline, untracked, sleep,
                                                                       question, planQ, running, end, rate])
     }

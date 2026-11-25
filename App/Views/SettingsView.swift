@@ -307,6 +307,15 @@ struct SleepSettings: View {
                 Toggle("Work Back from First Class", isOn: $m.state.prefs.autoWake)
                 if !model.state.prefs.autoWake {
                     TimePicker(label: "School-Day Wake", time: $m.state.prefs.schoolDayWake)
+                } else if let w = model.state.plan.wakePlans.first(where: { $0.firstCommitment != nil && $0.wake > Date() }) {
+                    // v1.6 G1: the wake the plan actually uses, and one tap to keep it.
+                    let c = Calendar.current.dateComponents([.hour, .minute], from: w.wake)
+                    LabeledContent("Planned Wake", value: "\(w.wake.formatted(.dateTime.weekday(.abbreviated))) \(w.wake.hm)")
+                    Button("Use \(w.wake.hm) on School Days") {
+                        m.state.prefs.schoolDayWake = TimeOfDay(c.hour ?? 7, c.minute ?? 0)
+                        m.state.prefs.autoWake = false
+                        m.replan()
+                    }
                 }
                 TimePicker(label: "Free-Day Wake", time: $m.state.prefs.freeDayWake)
             } header: { Text("Wake Up") } footer: {
@@ -315,8 +324,8 @@ struct SleepSettings: View {
             Section {
                 let r = model.state.healthReads
                 if model.state.integrations.health, r.lastSuccess != nil, (r.lastSleepSamples ?? 0) == 0 {
-                    Label("Health has no sleep", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("Nights are estimated from your phone until Health has some. In Health, tap Browse → Sleep → Set Up Sleep Schedule (or turn on the Sleep Focus), and your iPhone records time in bed.")
+                    Label("Productium can't read sleep from Health", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text("Check that it's allowed: in Health, tap your picture → Apps → Productium and turn everything on (after a reinstall this starts off). If Health has no sleep at all, tap Browse → Sleep → Set Up Sleep Schedule. Until then nights are estimated from your phone.")
                         .font(.subheadline)
                     Button("Open Health") { if let u = URL(string: "x-apple-health://") { UIApplication.shared.open(u) } }
                 }
@@ -776,7 +785,8 @@ struct FeedbackSection: View {
             ForEach(model.state.feedback.suffix(3).reversed()) { f in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(f.text).font(.subheadline).lineLimit(3)
-                    Text(f.at.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                    Text([f.appVersion, f.at.formatted(date: .abbreviated, time: .shortened)].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
         } header: { Text("Feedback") } footer: {
@@ -805,12 +815,23 @@ struct DailyBackupSection: View {
                 if case .success(let url) = r { model.chooseBackupFolder(url) }
             }
             if let w = b.lastWrite {
-                LabeledContent("Last Daily Backup", value: w.formatted(date: .abbreviated, time: .shortened))
+                let size = model.lastBackupBytes.map { " · " + ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? ""
+                LabeledContent("Last Daily Backup", value: w.formatted(date: .abbreviated, time: .shortened) + size)
             }
             if b.failing, let e = b.lastError {
                 Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.alert).font(.subheadline)
             }
-            Button("Back Up Now") { Task { await model.backupIfDue(force: true) } }
+            Button {
+                Task {
+                    await model.backupIfDue(force: true)
+                    if let n = model.lastBackupBytes, model.state.backup.lastError == nil {
+                        model.toast = "Backed up \(ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file)) at \(Date().hm)"
+                    }
+                }
+            } label: {
+                if model.backingUp { Label("Backing Up…", systemImage: "arrow.triangle.2.circlepath") } else { Text("Back Up Now") }
+            }
+            .disabled(model.backingUp)
         } header: { Text("Every Day") } footer: {
             Text(BackupService.hasFolder ? "" : "Saved in Files → On My iPhone → \(AppInfo.name) → Backups. Pick a folder in iCloud Drive to keep them if the app is deleted.")
         }

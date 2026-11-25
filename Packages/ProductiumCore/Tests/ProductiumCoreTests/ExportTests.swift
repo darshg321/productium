@@ -72,6 +72,7 @@ final class ExportTests: XCTestCase {
         s.snoozed = [UUID(): now.addingTimeInterval(600)]
         s.backup = BackupState(folderName: "Productium Backups", lastWrite: now, lastFile: "Productium-2026-11-16.json")
         s.feedback = [Feedback(at: now, text: "The grid could be brighter.", appVersion: "1.3.0")]
+        s.paused = PausedSession(taskId: task.id, title: "Essay", category: CategoryTree.studying, pausedAt: now, left: 600)
         return s
     }
 
@@ -120,7 +121,7 @@ final class ExportTests: XCTestCase {
         XCTAssertThrowsError(try ExportBundle.read(Data(old.utf8)))
         let v3 = #"{"format":"productium-export","version":3,"exportedAt":"2026-11-17T13:28:00Z","state":{}}"#
         XCTAssertThrowsError(try ExportBundle.read(Data(v3.utf8))) { e in
-            XCTAssertTrue("\(e)".contains("format 3"), "\(e)")
+            XCTAssertTrue("\(e)".contains("before 1.6"), "\(e)")
         }
         XCTAssertThrowsError(try ExportBundle.read(Data("{}".utf8)))
     }
@@ -133,9 +134,19 @@ final class ExportTests: XCTestCase {
         XCTAssertEqual(s.entries.count, before)
     }
 
+    func testRestoreSkipsWhatThisInstallAsked() {
+        XCTAssertFalse(RestoreDefaults.keep("location.askedAlways"))
+        XCTAssertFalse(RestoreDefaults.keep("alarms.ledger"))
+        XCTAssertTrue(RestoreDefaults.keep("friction.scrollLog"))
+        XCTAssertTrue(RestoreDefaults.keep("server.url"))
+    }
+
     func testExportFilesNeverNestBackupsOrAbsolutePaths() {
         XCTAssertTrue(ExportFiles.keep("container/about-me.md"))
         XCTAssertTrue(ExportFiles.keep("documents/test/commands.txt"))
+        for copy in ["container/state-schema-6.json", "container/state-before-restore.json", "container/state-pre-1.6.json"] {
+            XCTAssertFalse(ExportFiles.keep(copy), copy)
+        }
         for bad in ["documents/Backups/Productium-2026-11-22.json", "documents/Backups", "container//private/var/mobile/x.json",
                     "container/Library/Caches/x", "container/../x", "elsewhere/x", "container"] {
             XCTAssertFalse(ExportFiles.keep(bad), bad)

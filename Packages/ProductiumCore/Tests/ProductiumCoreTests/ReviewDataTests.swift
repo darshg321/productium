@@ -192,14 +192,6 @@ final class ReviewDataTests: XCTestCase {
         XCTAssertEqual(p.period, "week")
         XCTAssertEqual(p.pickups, 108)
         XCTAssertTrue(p.apps.isEmpty, "First Used After Pickup counts aren't minutes")
-
-        // The bad average saved by 1.4.0 (a week's totals as a day) is repaired on load.
-        let bad = ScreenDay(day: now, distractingMinutes: 1127, totalMinutes: 2755,
-                            apps: [AppUsage(name: "Instagram", minutes: 802, distracting: true),
-                                   AppUsage(name: "Firefox", minutes: 346, distracting: true)], source: "screenshot-average")
-        let fixed = bad.repairedAverage([:])
-        XCTAssertEqual(fixed.totalMinutes, 393)
-        XCTAssertEqual(fixed.distractingMinutes, 114)
     }
 
     func testBackToBackSessionsOfOneAppAreOneEntryAndPauseSessionsAreScrolling() {

@@ -108,7 +108,7 @@ public enum BoxSchema {
         "title": str, "start": str, "end": str, "day": str, "category": str, "topics": arr(str), "note": str,
         "repeats": anyObject, "from": str, "until": str, "open": bool, "alert": str, "task": str,
         "due": str, "minutes": int, "kind": Schemas.strEnum(TaskKind.allCases.map(\.rawValue)), "difficulty": int,
-        "importance": int, "maxMinutesPerDay": int, "firstStep": str, "notBefore": str,
+        "importance": int, "maxMinutesPerDay": int, "sessionMinutes": int, "firstStep": str, "notBefore": str,
         "text": str, "said": str, "limits": anyObject, "mood": int, "energy": int, "target": int, "period": str, "atMost": bool, "colour": str,
         "screen": open([
             "minutes": int, "totalMinutes": int, "period": str, "dateLabelShown": str, "date": str, "partial": bool, "pickups": int,
@@ -235,9 +235,11 @@ public enum BoxContext {
             if t.completedMinutes > 0 { line += " (\(minutesLabel(t.completedMinutes)) done)" }
             line += " · \(t.kind.rawValue), difficulty \(t.difficulty), importance \(t.importance)"
             if let m = t.maxMinutesPerDay { line += ", max \(minutesLabel(m))/day" }
+            if let m = t.sessionMinutes { line += ", sessions \(minutesLabel(m))" }
             if let nb = t.notBefore { line += ", not before \(dt.string(from: nb))" }
             if let c = t.category { line += " · \(path(c))" }
             if let fs = t.firstStep { line += " · first step: \(fs)" }
+            if t.source == .calendar { line += " · from Calendar" }
             l.append(line)
         }
         let recent = s.items.filter { !$0.isOpen && ($0.doneAt ?? .distantPast) > now.addingTimeInterval(-3 * 86400) }
@@ -315,10 +317,11 @@ public enum BoxPrompt {
         (a series ref removes all of it; ref@date or a calendar event just that day). entry skip (ref or ref@date: \
         didn't / won't happen; or fields category + day to skip everything in it that day). entry confirm (ref@date: \
         yes, it happened). entry start (title, category) / entry stop (end?).
-        - task add: title, due, minutes, kind, difficulty 1-3, importance 1-5, category, maxMinutesPerDay, notBefore, \
-        firstStep, topics, note. task change (ref): any of those; text "reopen" undoes done. task start / done / drop / remove (ref).
+        - task add: title, due, minutes, kind, difficulty 1-3, importance 1-5, category, maxMinutesPerDay, \
+        sessionMinutes, notBefore, firstStep, topics, note. task change (ref): any of those; text "reopen" undoes done. task start / done / drop / remove (ref).
         - rule add: text, said, from, until, repeats (which days), limits. rule change / remove (ref).
-        - setting change: title = the setting (lasting wake "7:30"/"9:00 free days", sleep "9h", nudgeLevel…), text = value. \
+        - setting change: title = the setting (lasting wake "7:30"/"9:00 free days", sleep "9h", dinner "19:30", \
+        nudgeLevel…), text = value. \
         mood add: mood 1-5, energy, note. screen_time add: screen off a screenshot \
         (Week view: period week, minutes = average, totalMinutes = Total; Most Used apps only).
         - goal add: category (or "tasks"), target (min or count), period day|week, atMost; change/remove. place add: title \
@@ -344,6 +347,9 @@ public enum BoxPrompt {
         - "X is due in class / at my data period": use the start of that day's occurrence from the context.
         - Pushing a task to another day: notBefore that day (it keeps its due date). If its due is before then, \
         change due instead. "Only N minutes a day" is maxMinutesPerDay on the one task; never split a task into copies.
+        - Time for a task ("2 hours total, tonight and tomorrow", "each session 1.5 h"): change the task (minutes, \
+        notBefore, due, sessionMinutes) and the planner places it. Add an entry with task only for a time they name.
+        - A routine every day ("dinners at 7:30 now") is one setting change, never an entry change per day.
         - Start / stop: "starting X" for an open task is task start; otherwise entry start. "done X" for a task is task \
         done (it also stops it). "finished just now", "that was actually 3:30": change the entry's end or start.
         - "Didn't do X" / "no X tomorrow": skip that entry (or that day of it). Changing one day of a series: change \

@@ -78,6 +78,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             case "item.focus":
                 if let id = itemId, let item = model.state.items.first(where: { $0.id == id }) { model.focusNow(on: item) }
             case "run.stop": model.stopRunning(source: "notification")
+            case "run.pause": model.pauseRunning(source: "notification")
             case let a where a.hasPrefix("rate."):
                 if let id = (info["entryId"] as? String).flatMap(UUID.init(uuidString:)), let f = Int(a.dropFirst(5)) { model.rateFocus(id, f) }
             case "sleep.yes":
