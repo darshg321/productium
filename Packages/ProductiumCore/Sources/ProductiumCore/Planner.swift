@@ -436,7 +436,7 @@ public enum Planner {
                 } else {
                     hint = "Retrieval practice: answer questions from memory first, notes only to check."
                 }
-                for chunk in split(sessionsMinutes[k], focus: min(50, input.policy.maxBlockMinutes)) {
+                for chunk in fixed(item, sessionsMinutes[k]) ?? split(sessionsMinutes[k], focus: min(50, input.policy.maxBlockMinutes)) {
                     out.append(Demand(item: item, minutes: chunk, earliest: max(input.now, windowStart),
                                       latest: max(windowEnd, input.now.addingTimeInterval(60)), preferredDay: target,
                                       isReview: true, title: item.title, hint: hint))
@@ -447,8 +447,8 @@ public enum Planner {
 
         func pacedChunks(_ item: WorkItem, minutes: Int) -> [Demand] {
             let focus = Int(input.learned.focusMinutes.rounded())
-            let chunks = split(minutes, focus: max(Planner.minSession(item.kind), min(60, input.policy.maxBlockMinutes, focus)),
-                               least: Planner.minSession(item.kind))
+            let chunks = fixed(item, minutes) ?? split(minutes, focus: max(Planner.minSession(item.kind), min(60, input.policy.maxBlockMinutes, focus)),
+                                                      least: Planner.minSession(item.kind))
             let bufferDays = minutes > 240 ? 2 : (minutes > 90 ? 1 : 0)
             var target = cal.date(byAdding: .day, value: -bufferDays, to: item.due) ?? item.due
             if target.timeIntervalSince(input.now) < Double(minutes) * 60 * 3 { target = item.due }
@@ -471,6 +471,12 @@ public enum Planner {
                 return Demand(item: item, minutes: len, earliest: earliest, latest: target,
                               preferredDay: nil, isReview: false, title: title, hint: hint)
             }
+        }
+
+        /// B5: a task with a set session length is planned in sessions of exactly that length.
+        func fixed(_ item: WorkItem, _ minutes: Int) -> [Int]? {
+            guard let len = item.sessionMinutes, len >= Planner.minChunk, minutes > 0 else { return nil }
+            return Array(repeating: len, count: max(1, Int((Double(minutes) / Double(len)).rounded())))
         }
 
         func split(_ minutes: Int, focus: Int, least: Int = Planner.minChunk) -> [Int] {
@@ -528,6 +534,7 @@ public enum Planner {
                 while demand.minutes > 0 {
                     if demand.minutes < Planner.minChunk { demand.minutes = Planner.minChunk }
                     if place(&demand, length: demand.minutes, mode: mode) { return nil }
+                    if demand.item.sessionMinutes != nil { break }
                     let half = max(Planner.minSession(demand.item.kind), demand.minutes / 2)
                     if half < demand.minutes, place(&demand, length: half, mode: mode) { continue }
                     break
@@ -716,7 +723,8 @@ public enum Planner {
                 }
             }
             let dayCaps = days.map { ($0.start, $0.maxBlock) }
-            all = Planner.mergeAdjacent(all.filter { $0.end > input.now }.sorted { $0.start < $1.start }) { start in
+            let fixedLength = Set(input.items.filter { $0.sessionMinutes != nil }.map(\.id))
+            all = Planner.mergeAdjacent(all.filter { $0.end > input.now }.sorted { $0.start < $1.start }, fixed: fixedLength) { start in
                 min(75, dayCaps.last { $0.0 <= start }?.1 ?? Int.max)
             }
 
@@ -757,13 +765,13 @@ public enum Planner {
     }
 
     /// v1.5 C2: two sessions of the same task with only a break between them are one session (the break goes).
-    static func mergeAdjacent(_ sorted: [PlannedBlock], maxMinutes: (Date) -> Int = { _ in 75 }) -> [PlannedBlock] {
+    static func mergeAdjacent(_ sorted: [PlannedBlock], fixed: Set<UUID> = [], maxMinutes: (Date) -> Int = { _ in 75 }) -> [PlannedBlock] {
         var out: [PlannedBlock] = []
         var i = 0
         while i < sorted.count {
             var b = sorted[i]
             var j = i + 1
-            while b.isStudy, let id = b.itemId {
+            while b.isStudy, let id = b.itemId, !fixed.contains(id) {
                 var k = j
                 while k < sorted.count && sorted[k].kind == .breakTime && sorted[k].start.timeIntervalSince(b.end) < 60 { k += 1 }
                 guard k < sorted.count, sorted[k].itemId == id, sorted[k].kind == b.kind,

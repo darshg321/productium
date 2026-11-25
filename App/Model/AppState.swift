@@ -13,16 +13,20 @@ enum Persistence {
 
     /// Set when the stored state couldn't be read; `AppModel` writes it to the telemetry on launch (T2).
     nonisolated(unsafe) static var loadError: String?
-    /// The schema a migrated state was stored with (M); its file is kept as `state-schema-<n>.json`.
-    nonisolated(unsafe) static var migratedFrom: Int?
+    /// v1.6 H: a state.json from before 1.6 was moved to `state-pre-1.6.json`; onboarding offers a 1.6 backup.
+    nonisolated(unsafe) static var setAside = false
 
     static func load() -> AppState {
         guard let data = try? Data(contentsOf: url) else { return AppState() }
-        let stored = Migrations.storedSchema(data)
-        if stored >= Migrations.oldest && stored < AppState.schema {
-            migratedFrom = stored
-            let copy = LocalStore.containerURL.appendingPathComponent("state-schema-\(stored).json")
-            if !FileManager.default.fileExists(atPath: copy.path) { try? data.write(to: copy, options: .atomic) }
+        if Migrations.storedSchema(data) < Migrations.oldest {
+            var copy = LocalStore.containerURL.appendingPathComponent("state-pre-1.6.json")
+            if FileManager.default.fileExists(atPath: copy.path) {
+                copy = LocalStore.containerURL.appendingPathComponent("state-pre-1.6-\(Int(Date().timeIntervalSince1970)).json")
+            }
+            guard (try? data.write(to: copy, options: .atomic)) != nil else { loadError = "couldn't set aside"; return AppState() }
+            try? FileManager.default.removeItem(at: url)
+            setAside = true
+            return AppState()
         }
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601

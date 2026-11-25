@@ -96,10 +96,14 @@ enum BackupService {
 extension AppModel {
     /// H1: once a day (background refresh, and on launch if the last is over 24 h old), when a folder is picked.
     func backupIfDue(force: Bool = false) async {
-        guard state.onboarded, force || BackupFiles.isDue(last: state.backup.lastWrite, now: Date()) else { return }
+        // v1.6 G2: one write at a time; taps while it writes are the same backup.
+        guard !backingUp, state.onboarded, force || BackupFiles.isDue(last: state.backup.lastWrite, now: Date()) else { return }
+        backingUp = true
+        defer { backingUp = false }
         do {
             let data = try await backupData()
             let name = try BackupService.write(data, now: Date(), calendar: cal)
+            lastBackupBytes = data.count
             state.backup.lastWrite = Date()
             state.backup.lastFile = name
             state.backup.lastError = nil

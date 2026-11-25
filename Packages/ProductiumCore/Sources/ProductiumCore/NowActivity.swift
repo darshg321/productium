@@ -67,10 +67,15 @@ public struct NowInput {
     public var tiles: [QuickStart]
     public var prompts: PromptSettings
     public var goalLine: String?
+    /// v1.6 C1: a paused session, and a resumed session's countdown end.
+    public var paused: PausedSession?
+    public var resumedEnds: Date?
 
     public init(now: Date, calendar: Calendar, entries: [Entry], plan: Plan, items: [WorkItem], book: DayRuleBook = DayRuleBook(),
                 tree: CategoryTree, question: Inference? = nil, tiles: [QuickStart] = [], prompts: PromptSettings = PromptSettings(),
-                goalLine: String? = nil) {
+                goalLine: String? = nil, paused: PausedSession? = nil, resumedEnds: Date? = nil) {
+        self.paused = paused
+        self.resumedEnds = resumedEnds
         self.now = now
         self.calendar = calendar
         self.entries = entries
@@ -94,7 +99,11 @@ public enum NowActivity {
         let hm = DateFormatter.local("H:mm", x.calendar)
         let on = { (k: PromptKind) in x.prompts[k] == .liveActivity }
         if let r = TimeLog.running(x.entries) {
-            if let task = r.taskId, x.items.contains(where: { $0.id == task && $0.isOpen }) { return session(r, task: task, x, hm) }
+            if let task = r.taskId, x.items.contains(where: { $0.id == task && $0.isOpen }) {
+                var s = session(r, task: task, x, hm)
+                if let e = x.resumedEnds, e > x.now { s.card.ends = e }
+                return s
+            }
             var buttons = [NowButton("stop", "Stop", "stop.fill")]
             if let t = x.tiles.first(where: { $0.key != CategoryRules.key(r.title) }) {
                 buttons.append(NowButton("start:\(t.title)", t.title, t.symbol))
@@ -102,31 +111,64 @@ public enum NowActivity {
             return NowState(card: NowCard(kind: .running, title: r.title, subtitle: x.goalLine ?? x.tree.pathText(r.category),
                                           since: r.start, buttons: buttons, other: true))
         }
+        if let p = x.paused {
+            return NowState(card: NowCard(kind: .running, title: "Paused: \(p.title)", subtitle: "Paused at \(hm.string(from: p.pausedAt))",
+                                          since: p.pausedAt, buttons: [NowButton("resume", "Resume", "play.fill"),
+                                                                       NowButton("stop", "Stop", "stop.fill")]))
+        }
         if on(.questions), let q = x.question, let text = q.question {
             let buttons = q.answers.prefix(3).map { NowButton("answer:\(q.id):\($0)", $0) }
             return NowState(card: NowCard(kind: .question, title: text, subtitle: q.evidence.first, buttons: Array(buttons), other: true))
         }
+        let urgent = nextTask(x, besides: upNext(x)?.itemId)
         let untracked = { (since: Date) in
             NowCard(kind: .untracked, title: "What are you doing?", subtitle: "Untracked since \(hm.string(from: since))", since: since,
-                    buttons: x.tiles.prefix(QuickStarts.topSize).map { NowButton("start:\($0.title)", $0.title, $0.symbol) }, other: true)
+                    buttons: (urgent.map { [taskButton($0)] } ?? [])
+                        + x.tiles.prefix(QuickStarts.topSize - (urgent == nil ? 0 : 1)).map { NowButton("start:\($0.title)", $0.title, $0.symbol) },
+                    other: true)
         }
         let assumed = currentAssumed(x)
         if on(.untracked), let since = untrackedSince(x), assumed == nil {
             return NowState(card: untracked(since))
         }
         if on(.assumed), let a = assumed {
-            let card = NowCard(kind: .assumed, title: "Still at \(a.title) until \(hm.string(from: a.end))?", subtitle: x.tree.pathText(a.category),
-                               buttons: [NowButton("yes:\(a.ref)", "Yes", "checkmark"), NowButton("no:\(a.ref)", "No", "xmark")])
+            // v1.6 E4: fixed time (classes, calendar events) counts as happened; it's shown, not asked about.
+            let fixed = TimeLog.isFixed(a, tree: x.tree)
+            let card = fixed
+                ? NowCard(kind: .assumed, title: "\(a.title) until \(hm.string(from: a.end))", subtitle: x.tree.pathText(a.category),
+                          buttons: urgent.map { [taskButton($0)] } ?? [])
+                : NowCard(kind: .assumed, title: "Still at \(a.title) until \(hm.string(from: a.end))?", subtitle: x.tree.pathText(a.category),
+                          buttons: [NowButton("yes:\(a.ref)", "Yes", "checkmark"), NowButton("no:\(a.ref)", "No", "xmark")])
             return NowState(card: card, then: on(.untracked) && !quiet(a.end, x) ? untracked(a.end) : nil, until: a.end)
+        }
+        // v1.6 C3: in the 30 minutes before leaving for school, the card counts down to it (instead of notifications).
+        if let leave = x.plan.wakePlans.compactMap(\.leaveBy).filter({ $0 > x.now && $0.timeIntervalSince(x.now) <= 30 * 60 }).min() {
+            let card = NowCard(kind: .upNext, title: "Leave at \(hm.string(from: leave))", subtitle: "Time to go to school",
+                               buttons: x.tiles.first { $0.category == CategoryTree.travel || x.tree.isUnder($0.category, CategoryTree.travel) }
+                                   .map { [NowButton("start:\($0.title)", $0.title, $0.symbol)] } ?? [], ends: leave)
+            return NowState(card: card, until: leave)
         }
         if let b = upNext(x) {
             let title = b.itemId.flatMap { id in x.items.first { $0.id == id }?.title } ?? b.title
+            // v1.6 C5: the planned session, or the next most urgent task instead.
+            let instead = nextTask(x, besides: b.itemId).map { [taskButton($0)] } ?? []
             let card = NowCard(kind: .upNext, title: "\(title) · \(minutesLabel(b.minutes)) at \(hm.string(from: b.start))",
                                subtitle: "Up next",
-                               buttons: b.itemId.map { [NowButton("task:\($0.uuidString)", "Start", "play.fill")] } ?? [])
+                               buttons: (b.itemId.map { [NowButton("task:\($0.uuidString)", "Start", "play.fill")] } ?? []) + instead)
             return NowState(card: card, until: b.end)
         }
         return nil
+    }
+
+    /// The open task that needs work soonest (it has planned time ahead), other than `besides`.
+    static func nextTask(_ x: NowInput, besides: UUID?) -> WorkItem? {
+        let planned = Set(x.plan.blocks.filter { $0.isStudy && $0.end > x.now }.compactMap(\.itemId))
+        return x.items.filter { $0.isOpen && $0.id != besides && planned.contains($0.id) }.min { $0.due < $1.due }
+    }
+
+    static func taskButton(_ t: WorkItem) -> NowButton {
+        let short = t.title.count > 18 ? String(t.title.prefix(17)).trimmingCharacters(in: .whitespaces) + "…" : t.title
+        return NowButton("task:\(t.id.uuidString)", short, "play")
     }
 
     /// v1.5 D1: a task session carries its countdown, what's next, and Done / +15 / Stop.
@@ -135,9 +177,17 @@ public enum NowActivity {
             .min { $0.start < $1.start }
         let next = x.plan.blocks.filter { $0.isStudy && $0.itemId != task && $0.start >= (block?.end ?? x.now) }.min { $0.start < $1.start }
         let nextTitle = next.map { n in (n.itemId.flatMap { id in x.items.first { $0.id == id }?.title } ?? n.title) + " at " + hm.string(from: n.start) }
-        let subtitle = [block.map { "Until \(hm.string(from: $0.end))" }, nextTitle.map { "then \($0)" }].compactMap { $0 }.joined(separator: ", ")
-        let buttons = [NowButton("done:\(task.uuidString)", "Done", "checkmark"), NowButton("extend:\(task.uuidString):15", "+15", "plus"),
-                       NowButton("stop", "Stop", "stop.fill")]
+        // v1.6 C2: how much of today's ask is done ("45 of 80 min").
+        let today = Days.dayInterval(x.now, x.calendar)
+        let done = x.entries.filter { $0.taskId == task && $0.source == .you && $0.start >= today.start && $0.start <= x.now && !Sessions.isUnworkedPlan($0) }
+            .reduce(0) { $0 + Int((($1.end ?? x.now).timeIntervalSince($1.start)) / 60) }
+        let ahead = x.plan.blocks.filter { $0.itemId == task && $0.isStudy && $0.end > x.now && $0.start < today.end }
+            .reduce(0) { $0 + Int($1.end.timeIntervalSince(max($1.start, x.now)) / 60) }
+        let progress = ahead > 0 ? "\(done) of \(done + ahead) min" : nil
+        let subtitle = [progress, block.map { "until \(hm.string(from: $0.end))" }, nextTitle.map { "then \($0)" }].compactMap { $0 }
+            .joined(separator: " · ")
+        let buttons = [NowButton("pause", "Pause", "pause.fill"), NowButton("extend:\(task.uuidString):15", "+15", "plus"),
+                       NowButton("done:\(task.uuidString)", "Done", "checkmark"), NowButton("stop", "Stop", "stop.fill")]
         return NowState(card: NowCard(kind: .running, title: r.title, subtitle: subtitle.isEmpty ? x.goalLine : subtitle,
                                       since: r.start, buttons: buttons, ends: block?.end))
     }

@@ -164,8 +164,19 @@ public struct ConversationArchive: Codable, Hashable, Sendable {
         var c = c
         c.title = c.title ?? c.suggestedTitle
         c.archivedAt = now
+        // v1.6 G3: an archived turn is never sent again, so its screenshots are kept once (in `images`), not twice.
+        for i in c.turns.indices { c.turns[i].userContent = Self.withoutImages(c.turns[i].userContent) }
         conversations.removeAll { $0.id == c.id }
         conversations.append(c)
+    }
+
+    static func withoutImages(_ v: JSONValue) -> JSONValue {
+        switch v {
+        case .array(let xs): return .array(xs.map(withoutImages))
+        case .object(let o) where o["type"] == .string("image"): return .object(["type": .string("text"), "text": .string("[image]")])
+        case .object(let o): return .object(o.mapValues(withoutImages))
+        default: return v
+        }
     }
 
     public mutating func remove(_ id: UUID) -> Conversation? {

@@ -413,6 +413,36 @@ enum V12 {
                     if let make, let practice { e.that(practice.due >= make.due, "practice comes after making it") }
                     return e.fails
                 }),
+
+        V12Case(id: "task-time-not-entries",
+                why: "v1.5 placed the sessions itself as entries; the task's minutes and session length are the fix (v1.6 B5)",
+                now: W.at(18, 13, 30), setup: { $0 = W.base() },
+                turns: ["each frankenstein reading session must be 1.5 hours exactly, 3 hours total"],
+                reference: [[BoxOp(.task, .change, ref: W.ref(W.frankenstein), BoxFields(minutes: 180, sessionMinutes: 90))]],
+                check: { s in
+                    var e = Expect()
+                    let t = s.items.first { $0.id == W.frankenstein }
+                    e.that(t?.sessionMinutes == 90, "sessions of 90 min: \(String(describing: t?.sessionMinutes))")
+                    e.that(t?.estimateMinutes == 180, "3 hours: \(String(describing: t?.estimateMinutes))")
+                    e.that(!s.entries.contains { $0.taskId == W.frankenstein }, "no entries placed by hand")
+                    return e.fails
+                }),
+
+        V12Case(id: "dinner-every-day",
+                why: "v1.5 changed each day's planned dinner into an entry; a routine moves with its setting (v1.6 A3)",
+                now: W.at(18, 18, 45), setup: { $0 = W.base() },
+                turns: ["all dinners at 7:30 from now on"],
+                reference: [[BoxOp(.setting, .change, BoxFields(title: "dinner", text: "19:30"))]],
+                check: { s in
+                    var e = Expect()
+                    let meals = { (b: BoxState) in b.entries.filter { b.categories.isUnder($0.category, CategoryTree.meals) }.map { "\($0.title) \($0.start)" } }
+                    e.that(meals(s) == meals(W.base()), "dinner entries untouched")
+                    return e.fails
+                },
+                replyCheck: { _, ops in
+                    ops.contains { $0.noun == .setting && ($0.fields.title ?? "").lowercased().contains("dinner") && ($0.fields.text ?? "").contains("19:30") }
+                        ? [] : ["one dinner setting op at 19:30: \(ops.map { "\($0.noun) \($0.verb) \($0.fields.title ?? "")" })"]
+                }),
     ]
 
     /// Reference answers that need refs only known once the world exists.
@@ -463,7 +493,7 @@ enum V12 {
             var problems: [String] = [], transcript: [String] = []
             var allOps: [BoxOp] = [], lastReply = reference ? c.referenceReply : ""
             for (i, text) in c.turns.enumerated() {
-                let at = c.now.addingTimeInterval(Double(i) * 20)
+                let at = c.now.addingTimeInterval(Double(i) * 90)
                 let ops: [BoxOp]
                 var result: BoxResult?, response: AIResponse?, context = "", content: JSONValue = .null
                 if nothing {

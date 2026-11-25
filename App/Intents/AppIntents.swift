@@ -129,6 +129,7 @@ struct PauseBeforeScrollingIntent: AppIntent {
         AppModel.shared.log(.intent, "PauseBeforeScrollingIntent")
         defer { AppModel.shared.rebuildAppEntries() }
         guard Friction.opened(app) else { return .result(value: false) }
+        Friction.pausedAt = Date()
         if #available(iOS 26.0, *), systemContext.currentMode.canContinueInForeground {
             if (try? await continueInForeground(alwaysConfirm: false)) != nil {
                 AppModel.shared.deepLink = "productium://gap"
@@ -275,6 +276,9 @@ enum Friction {
         NotificationService.cancelScrollCheckIns()
         return mins
     }
+
+    /// v1.6 G7: when the pause automation last opened Productium; that opening doesn't end the session it paused.
+    nonisolated(unsafe) static var pausedAt = Date.distantPast
 
     static func ended(by source: ScrollSession.EndSource) {
         guard update({ $0.ended(by: source, at: Date()) }) != nil else { return }

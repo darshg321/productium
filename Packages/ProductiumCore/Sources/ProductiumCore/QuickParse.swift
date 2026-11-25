@@ -122,12 +122,15 @@ public enum QuickParse {
         if exact.count == 1 { return exact[0] }
         let padded = { (s: String) in " \(CategoryRules.key(s)) " }
         let partial = open.filter { padded($0.title).contains(" \(k) ") }
-        return partial.count == 1 && k.count >= 4 ? partial[0] : nil
+        if partial.count == 1 && k.count >= 4 { return partial[0] }
+        return partial.isEmpty ? TaskMatch.task(for: title, in: open) : nil
     }
 
+    /// Open tasks the title is close to: any at all (and no clear one) makes it a question for Sonnet.
     static func tasksNamed(_ title: String, _ c: QuickContext) -> Int {
         let k = CategoryRules.key(title)
-        return c.items.filter { $0.isOpen && " \(CategoryRules.key($0.title)) ".contains(" \(k) ") }.count
+        let named = c.items.filter { $0.isOpen && " \(CategoryRules.key($0.title)) ".contains(" \(k) ") }.count
+        return max(named, TaskMatch.near(title, in: c.items))
     }
 
     // MARK: Start
@@ -174,6 +177,12 @@ public enum QuickParse {
         if let m = match(t, lead + #"(.+?),? (?:since|from|starting at|started at|beginning at) (?:like |about |around )?"# + time) {
             title = m[1]; at = clock(m[2], c)
         } else if let m = match(t, lead + #"(.+?),? (?:since |from |starting |started )?"# + agoOnly) {
+            title = m[1]; at = ago(m[2], m[3], now: c.now)
+        } else if let m = match(t, #"(?:i'?ve been |i have been |have been |been |i was |was )?(?:doing |working on |on )?(.+?),? for (?:the )?(?:past|last) "#
+                                    + #"(?:like |about )?(\d{1,3}|a|an|half an) ?(min|mins|minute|minutes|m|hour|hours|hr|hrs|h)"#)
+                    ?? match(t, #"(?:i'?ve been |i have been |have been |been )(?:doing |working on |on )?(.+?),? for "#
+                             + #"(?:like |about )?(\d{1,3}|a|an|half an) ?(min|mins|minute|minutes|m|hour|hours|hr|hrs|h)(?: now)?"#) {
+            // v1.6 G5: "frankenstein reading for past 8 mins", "been doing homework for 20 min" (not "starting X for 30 min")
             title = m[1]; at = ago(m[2], m[3], now: c.now)
         } else { return nil }
         guard let at, let name = plainTitle(title), !["it", "now"].contains(name.lowercased()) else { return nil }

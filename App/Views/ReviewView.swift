@@ -49,7 +49,11 @@ struct ReviewView: View {
                 .onChange(of: model.scrollTarget) { _, t in if let t { proxy.scrollTo(t, anchor: .top) } }
             }
             .background(Theme.background)
-            .refreshable { Task { await model.insightPass(force: true) } }
+            .refreshable {
+                // v1.6 G8: the data first (Health, calendar, the log, screen time), then the Weekly Note.
+                await model.refresh(full: false, force: true)
+                Task { await model.insightPass(force: true) }
+            }
             .navigationTitle("Review")
             .usageMeter()
             .fullScreenCover(isPresented: $m.showRecap) { RecapView() }
@@ -178,8 +182,9 @@ struct GlanceGrid: View {
                 let focus = TimeLog.focusMinutes(model.state.entries, in: Days.dayInterval(day, cal))
                 let total = focus.values.reduce(0, +)
                 if total > 0 {
-                    StatTile(title: "Focused Work", symbol: "scope", color: .purple, value: minutesLabel((focus[3] ?? 0) + (focus[2] ?? 0)),
-                             unit: "/ \(minutesLabel(total))", progress: Double((focus[3] ?? 0) + (focus[2] ?? 0)) / Double(total))
+                    StatTile(title: "Focused Work", symbol: "scope", color: .purple, value: minutesLabel(total),
+                             unit: (focus[1] ?? 0) > 0 ? "(\(minutesLabel(focus[1] ?? 0)) unfocused)" : nil,
+                             progress: Double(focus[2] ?? 0) / Double(total))
                 }
                 if let m = mood {
                     StatTile(title: "Mood", symbol: "face.smiling", color: .yellow,

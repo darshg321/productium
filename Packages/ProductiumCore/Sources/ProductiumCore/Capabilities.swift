@@ -238,6 +238,12 @@ public enum Knobs {
 
     public static func set(_ rawKey: String, _ value: String, by writer: Writer, in s: inout DumpState) -> KnobResult {
         if let r = sleepAlias(rawKey, value, by: writer, in: &s) { return r }
+        // v1.6 A3: a routine moves with its setting ("dinners at 7:30" is one change, not one per day).
+        switch rawKey.lowercased().filter(\.isLetter) {
+        case "dinner", "dinnertime": return set("routines.dinnerTime", value, by: writer, in: &s)
+        case "dinnerminutes", "dinnerlength": return set("routines.dinnerMinutes", value, by: writer, in: &s)
+        default: break
+        }
         guard let spec = Registry.knob(rawKey) else { return .refused("There's no setting called “\(rawKey)”") }
         guard writer.mayApply(spec.tier) else {
             return .refused("“\(spec.key)” changes how the app behaves, so Productium only adjusts it from how your weeks go (you can see and undo it in What Productium Thinks)")

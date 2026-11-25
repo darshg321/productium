@@ -135,6 +135,8 @@ public struct WorkItem: Codable, Identifiable, Hashable, Sendable {
     public var maxMinutesPerDay: Int?
     /// v1.2 H: the first concrete step, named in reminders (instead of a separate "starter" task).
     public var firstStep: String?
+    /// v1.6 B5: every session is this long ("each Hamlet session 1.5 hours exactly"); nil lets the planner choose.
+    public var sessionMinutes: Int?
 
     public var isDone: Bool {
         get { state == .done }

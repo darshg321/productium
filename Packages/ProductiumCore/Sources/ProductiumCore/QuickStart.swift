@@ -107,9 +107,6 @@ public struct QuickStartTemplate: Hashable, Sendable {
     ]
 
     static let order: [String: Int] = Dictionary(all.enumerated().map { (CategoryRules.key($1.title), $0) }, uniquingKeysWith: min)
-
-    /// Templates 1.4 seeded that are now another button's alias (Walking → Commute) or not worth a button (Class).
-    static let retired: [String: String?] = ["walking": "Commute", "homework": "Studying", "class": nil]
 }
 
 public struct QuickStarts: Codable, Hashable, Sendable {
@@ -140,21 +137,6 @@ public struct QuickStarts: Codable, Hashable, Sendable {
             buttons.append(QuickStart(title: t.title, category: t.category, topics: t.topics, createdAt: at,
                                       removed: skip.contains(CategoryRules.key(t.title)), origin: .template, symbol: t.symbol,
                                       aliases: t.aliases))
-        }
-    }
-
-    /// v1.5 (schema 7): retired templates you never changed fold into the button that replaces them.
-    public mutating func retireTemplates() {
-        for (key, into) in QuickStartTemplate.retired {
-            guard let i = buttons.firstIndex(where: { $0.key == key && $0.origin == .template && !$0.edited }) else { continue }
-            buttons[i].removed = true
-            buttons[i].pin = nil
-            if let into, let j = buttons.firstIndex(where: { $0.key == CategoryRules.key(into) }), !buttons[j].keys.contains(key) {
-                buttons[j].aliases.append(buttons[i].title)
-            }
-        }
-        if let t = QuickStartTemplate.all.first(where: { $0.title == "Commute" }), let j = buttons.firstIndex(where: { $0.key == "commute" }) {
-            for a in t.aliases where !buttons[j].keys.contains(CategoryRules.key(a)) { buttons[j].aliases.append(a) }
         }
     }
 
@@ -192,19 +174,6 @@ public struct QuickStarts: Codable, Hashable, Sendable {
         let b = QuickStart(title: e.title, category: e.category, topics: e.topics, createdAt: at)
         buttons.append(b)
         return b
-    }
-
-    /// v1.5: buttons 1.4 made from a misread title ("Productium development since") are hidden.
-    @discardableResult
-    public mutating func hideTimeWordButtons() -> Int {
-        var n = 0
-        for i in buttons.indices where buttons[i].origin == .you && !buttons[i].removed && !buttons[i].edited
-            && QuickParse.endsInTimeWord(buttons[i].title) {
-            buttons[i].removed = true
-            buttons[i].pin = nil
-            n += 1
-        }
-        return n
     }
 
     public mutating func remove(_ id: UUID) {

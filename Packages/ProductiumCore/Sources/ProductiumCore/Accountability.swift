@@ -42,8 +42,9 @@ public enum Accountability {
     static func account(_ day: Date, asked: [UUID: Int], slices: [LogSlice], items: [WorkItem], now: Date,
                         calendar cal: Calendar) -> DayAccount {
         let range = Days.dayInterval(day, cal)
-        var did: [UUID: Int] = [:]
-        for s in slices { if let t = s.entry?.taskId { did[t, default: 0] += s.minutes } }
+        var weighed: [UUID: Double] = [:]
+        for s in slices { if let t = s.entry?.taskId { weighed[t, default: 0] += Double(s.minutes) * TimeLog.focusWeight(s.entry?.entry.focus) } }
+        let did = weighed.mapValues { Int($0.rounded()) }
         let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var tasks: [TaskAccount] = []
         for id in Set(asked.keys).union(did.keys).sorted(by: { $0.uuidString < $1.uuidString }) {

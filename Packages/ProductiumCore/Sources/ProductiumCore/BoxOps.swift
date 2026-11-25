@@ -39,6 +39,8 @@ public struct BoxFields: Codable, Hashable, Sendable {
     public var difficulty: Int?
     public var importance: Int?
     public var maxMinutesPerDay: Int?
+    /// v1.6 B5: every session of the task is this long.
+    public var sessionMinutes: Int?
     public var firstStep: String?
     /// Not scheduled before this (`yyyy-MM-dd` or a time).
     public var notBefore: String?
@@ -61,7 +63,7 @@ public struct BoxFields: Codable, Hashable, Sendable {
                 topics: [String]? = nil, note: String? = nil, repeats: DayRule? = nil, from: String? = nil,
                 until: String? = nil, open: Bool? = nil, alert: String? = nil, task: String? = nil, due: String? = nil,
                 minutes: Int? = nil, kind: String? = nil, difficulty: Int? = nil, importance: Int? = nil,
-                maxMinutesPerDay: Int? = nil, firstStep: String? = nil, notBefore: String? = nil, text: String? = nil,
+                maxMinutesPerDay: Int? = nil, sessionMinutes: Int? = nil, firstStep: String? = nil, notBefore: String? = nil, text: String? = nil,
                 said: String? = nil, limits: PlannerLimits? = nil, mood: Int? = nil, energy: Int? = nil, screen: BoxScreen? = nil,
                 target: Int? = nil, period: String? = nil, atMost: Bool? = nil, colour: String? = nil) {
         self.colour = colour
@@ -90,6 +92,7 @@ public struct BoxFields: Codable, Hashable, Sendable {
         self.difficulty = difficulty
         self.importance = importance
         self.maxMinutesPerDay = maxMinutesPerDay
+        self.sessionMinutes = sessionMinutes
         self.firstStep = firstStep
         self.notBefore = notBefore
         self.text = text
@@ -348,9 +351,11 @@ public enum BoxApplier {
             let ti = task(f.task, s)
             let fallback = ti.flatMap { s.items[$0].category } ?? CategoryTree.other
             let running = end == nil && f.repeats == nil && start <= now
+            var cat = category(f.category, fallback: fallback, &s)
+            if ti != nil { cat = s.categories.studyNode(for: cat) }
             var e = Entry(title: String(title.prefix(120)), start: start,
                           end: running ? nil : (end ?? start.addingTimeInterval(1800)),
-                          category: category(f.category, fallback: fallback, &s), topics: f.topics ?? [], note: f.note,
+                          category: cat, topics: f.topics ?? [], note: f.note,
                           taskId: ti.map { s.items[$0].id }, open: f.open ?? false, source: .you, createdAt: now)
             if let rep = f.repeats { e.repeats = Repeat(rep, from: dayOnly(f.from), until: dayOnly(f.until)) }
             if case .some(let a) = alert(f.alert) { e.alert = a }
@@ -499,12 +504,20 @@ public enum BoxApplier {
         mutating func start(_ op: BoxOp, _ s: inout BoxState) {
             var f = op.fields
             if op.noun == .task, f.task == nil { f.task = op.ref }
-            let ti = task(f.task, s)
+            var ti = task(f.task, s)
             if let t = f.task, ti == nil { return problem("Couldn't find task \(t)") }
+            // v1.6 A4: starting something named like an open task ("reading frankenstein") starts that task.
+            if ti == nil, let t = f.title, let hit = TaskMatch.task(for: t, in: s.items) {
+                ti = s.items.firstIndex { $0.id == hit.id }
+                f.title = hit.title
+                if hit.category != nil { f.category = nil }
+            }
             guard let title = f.title ?? ti.map({ s.items[$0].title }), !title.isEmpty else { return problem("Start what?") }
             let at = min(time(f.start, f) ?? now, now)
-            let fallback = ti.flatMap { s.items[$0].category } ?? CategoryTree.other
-            let e = Entry(title: title, start: at, end: nil, category: category(f.category, fallback: fallback, &s),
+            let fallback = ti.map { s.items[$0].category ?? CategoryTree.studying } ?? CategoryTree.other
+            var cat = category(f.category, fallback: fallback, &s)
+            if ti != nil { cat = s.categories.studyNode(for: cat) }
+            let e = Entry(title: title, start: at, end: nil, category: cat,
                           topics: f.topics ?? [], note: f.note, taskId: ti.map { s.items[$0].id }, source: .you, createdAt: now)
             let old = s.entries
             r.lines += TimeLog.start(e, at: at, now: now, entries: &s.entries, calendar: cal).lines
@@ -526,10 +539,24 @@ public enum BoxApplier {
             var item = WorkItem(title: String(title.prefix(120)), kind: f.kind.flatMap(TaskKind.init(rawValue:)) ?? .other,
                                 due: due, estimateMinutes: f.minutes, importance: f.importance ?? 3,
                                 difficulty: f.difficulty ?? 2, topics: f.topics ?? [], notes: f.note, source: .ai, createdAt: now)
-            item.category = f.category.map { category($0, fallback: CategoryTree.studying, &s) }
+            item.category = f.category.map { s.categories.studyNode(for: category($0, fallback: CategoryTree.studying, &s)) }
             item.maxMinutesPerDay = f.maxMinutesPerDay
+            item.sessionMinutes = f.sessionMinutes.flatMap { $0 > 0 ? max(Planner.minChunk, $0) : nil }
             item.firstStep = f.firstStep
             item.notBefore = time(f.notBefore, f)
+            // v1.6 B2: the same work due the same day (the calendar's test and "study for the test") is one task.
+            if let j = TaskMatch.twin(of: item, in: s.items, calendar: cal) {
+                snapTask(s.items[j].id, s)
+                var t = s.items[j]
+                if let m = f.minutes { t.estimateMinutes = t.source == .calendar ? max(5, m) : max(t.estimateMinutes, m) }
+                if t.category == nil { t.category = item.category }
+                t.maxMinutesPerDay = item.maxMinutesPerDay ?? t.maxMinutesPerDay
+                t.sessionMinutes = item.sessionMinutes ?? t.sessionMinutes
+                t.firstStep = item.firstStep ?? t.firstStep
+                t.notBefore = item.notBefore ?? t.notBefore
+                s.items[j] = t
+                return r.lines.append("Added to \(t.title), \(minutesLabel(t.estimateMinutes))")
+            }
             r.tasksBefore[item.id] = .some(nil)
             s.items.append(item)
             r.lines.append("Task: \(item.title), \(minutesLabel(item.estimateMinutes)), due \(DateFormatter.local("EEE d MMM H:mm", cal).string(from: due))")
@@ -544,10 +571,12 @@ public enum BoxApplier {
                 s.items[i].state = .done
                 s.items[i].doneAt = now
                 if TimeLog.running(s.entries)?.taskId == s.items[i].id { stop(BoxFields(), &s) }
+                clearSessions(s.items[i].id, &s)
                 return r.lines.append("Done: \(s.items[i].title)")
             case .drop:
                 s.items[i].state = .dropped
                 s.items[i].doneAt = now
+                clearSessions(s.items[i].id, &s)
                 return r.lines.append("Dropped: \(s.items[i].title)")
             default: break
             }
@@ -566,13 +595,22 @@ public enum BoxApplier {
             if let v = f.difficulty { t.difficulty = max(1, min(3, v)) }
             if let v = f.importance { t.importance = max(1, min(5, v)) }
             if let v = f.maxMinutesPerDay { t.maxMinutesPerDay = v > 0 ? v : nil }
+            if let v = f.sessionMinutes { t.sessionMinutes = v > 0 ? max(Planner.minChunk, v) : nil }
             if let v = f.firstStep { t.firstStep = v.isEmpty ? nil : v }
             if let v = f.notBefore { t.notBefore = v.isEmpty ? nil : time(v, f) }
             if let v = f.note { t.notes = v }
             if let v = f.topics { t.topics = v }
-            if let c = f.category { t.category = category(c, fallback: CategoryTree.studying, &s) }
+            if let c = f.category { t.category = s.categories.studyNode(for: category(c, fallback: CategoryTree.studying, &s)) }
             s.items[i] = t
             r.lines.append("Changed task \(t.title)")
+        }
+
+        /// v1.6 A6: a closed task keeps only the time you tracked on it.
+        mutating func clearSessions(_ task: UUID, _ s: inout BoxState) {
+            let old = s.entries
+            Sessions.clearPlanned(of: task, in: &s.entries)
+            Sessions.clearPlanned(of: task, in: &s.planned)
+            snapAll(old, s.entries)
         }
 
         mutating func removeTask(_ op: BoxOp, _ s: inout BoxState) {

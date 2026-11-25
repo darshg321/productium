@@ -71,9 +71,8 @@ public struct Feedback: Codable, Hashable, Identifiable, Sendable {
 }
 
 public struct AppState: Codable, Sendable {
-    /// 4 = v1.2.2 (the first real data), 5 = v1.3, 6 = v1.3 (category colours, feedback), 7 = v1.5 (focus ratings). Older states migrate
-    /// (`Migrations`); below 4 decodes as fresh.
-    public static let schema = 7
+    /// 8 = v1.6, the first of the new line (`Migrations`); older stored data is refused with `BeforeBaseline`.
+    public static let schema = 8
     public var schema = AppState.schema
     public var onboarded = false
     /// v1.2 Part 0: everything timed (classes, events, sessions, sleep, the log, the plan's blocks).
@@ -159,6 +158,8 @@ public struct AppState: Codable, Sendable {
     public var backup = BackupState()
     /// Notes you wrote for whoever builds Productium (Settings → Backup & Restore); they travel in the export.
     public var feedback: [Feedback] = []
+    /// v1.6 C1: a session on pause (nil: nothing paused).
+    public var paused: PausedSession?
 
     public var dumpState: DumpState {
         get {
@@ -207,7 +208,7 @@ public struct AppState: Codable, Sendable {
         let d = AppState()
         func v<T: Decodable>(_ k: CodingKeys, _ def: T) -> T { (try? c.decodeIfPresent(T.self, forKey: k)) ?? def }
         let stored = v(.schema, 0)
-        guard stored >= Migrations.oldest else { self = d; return }
+        guard stored >= Migrations.oldest else { throw BeforeBaseline(schema: stored) }
         onboarded = v(.onboarded, d.onboarded)
         entries = v(.entries, d.entries)
         rules = v(.rules, d.rules)
@@ -265,7 +266,15 @@ public struct AppState: Codable, Sendable {
         snoozed = v(.snoozed, d.snoozed)
         backup = v(.backup, d.backup)
         feedback = v(.feedback, d.feedback)
+        paused = v(.paused, d.paused)
         if stored < AppState.schema { Migrations.upgrade(&self, from: stored) }
+    }
+
+    /// v1.6 G3: what an export or backup carries: everything, with the development log cut to its last 7 days.
+    public func forExport(now: Date) -> AppState {
+        var s = self
+        s.telemetry.events.removeAll { $0.at < now.addingTimeInterval(-7 * 86400) }
+        return s
     }
 
     public mutating func prune(now: Date) {

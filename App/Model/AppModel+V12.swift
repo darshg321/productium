@@ -520,33 +520,6 @@ extension AppModel {
         return t > 0 ? Date(timeIntervalSince1970: t) : nil
     }
 
-    /// v1.5 repairs at launch: start buttons made from misread titles; sessions, entries and the list entry 1.4 made
-    /// from the word "App" (E1).
-    func launchRepairs() {
-        let removed = Friction.update { log -> Int in
-            let before = log.sessions.count
-            log.sessions.removeAll { AppKinds.isPlaceholder($0.app) && $0.scrolling != nil }
-            return before - log.sessions.count
-        }
-        if state.quickStarts.hideTimeWordButtons() > 0 { save() }
-        // C1: sessions planned before 1.5 were titled "Reading · 2 of 5".
-        for i in state.entries.indices where state.entries[i].source == .plan {
-            if let r = state.entries[i].title.range(of: #"\s*·\s*\d+\s*(of|/)\s*\d+$"#, options: .regularExpression) {
-                state.entries[i].title = String(state.entries[i].title[..<r.lowerBound])
-            }
-        }
-        let stale = state.scrollingApps.keys.filter { AppKinds.isPlaceholder($0) && $0.lowercased() != "scrolling app" }
-        guard removed > 0 || !stale.isEmpty else { return }
-        for k in stale { state.scrollingApps[k] = nil }
-        state.entries.removeAll { $0.source == .sensor && AppKinds.isPlaceholder($0.title) && $0.title.lowercased() != "scrolling app" }
-        if let id = state.categories.children(CategoryTree.scrolling).first(where: { $0.name == "App" })?.id,
-           !state.entries.contains(where: { $0.category == id }) {
-            state.categories.nodes.removeAll { $0.id == id }
-        }
-        log(.sensor, "app_literal_dropped", ["sessions": "\(removed)", "apps": stale.joined(separator: ",")])
-        save()
-    }
-
     /// App sessions as sensor entries: Scrolling › the app, Messaging, or nothing (it still counts as screen time).
     /// Assumed until you say yes; what you track yourself wins over them.
     @discardableResult

@@ -23,7 +23,7 @@ public enum Days {
                 if overlaps(d, range) { out.append(d) }
             }
         }
-        return superseding(out).sorted { ($0.start, $0.end, $0.id) < ($1.start, $1.end, $1.id) }
+        return superseding(out, now: now).sorted { ($0.start, $0.end, $0.id) < ($1.start, $1.end, $1.id) }
     }
 
     /// How far apart a tracked trip or routine and the planned one can start and still be the same thing.
@@ -31,16 +31,27 @@ public enum Days {
 
     /// v1.5: a planned trip or routine you tracked yourself is gone from the log, not left to delete: the planned
     /// "Walk home" 15:00–15:20 and the Walking you tracked 15:36–16:17 are one walk. Same category (any Travel counts
-    /// as the same), overlapping or starting within `supersedeMinutes`.
-    static func superseding(_ occ: [DayEntry]) -> [DayEntry] {
-        let told = occ.filter { $0.source == .you && !$0.assumed && ($0.running || $0.end.timeIntervalSince($0.start) >= 180) }
-        guard !told.isEmpty else { return occ }
+    /// as the same), overlapping or starting within `supersedeMinutes`. v1.6: the same for one you said ahead ("dinner
+    /// at 7:30"); a past planned task session with tracked time over it (A1); and a finished planned Sleep under a
+    /// measured night (A5).
+    static func superseding(_ occ: [DayEntry], now: Date) -> [DayEntry] {
+        let told = occ.filter { $0.source == .you && !$0.assumed && !$0.isPlannedSession && ($0.running || $0.end.timeIntervalSince($0.start) >= 180) }
+        let nights = occ.filter { ($0.source == .health || $0.source == .sensor) && $0.category == CategoryTree.sleep }
+        guard !told.isEmpty || !nights.isEmpty else { return occ }
         func root(_ c: CategoryID) -> Substring { c.split(separator: ".").first ?? Substring(c) }
         func same(_ a: CategoryID, _ b: CategoryID) -> Bool {
             a == b || (root(a) == root(CategoryTree.travel) && root(b) == root(CategoryTree.travel))
         }
+        func overlap(_ a: DayEntry, _ b: DayEntry) -> TimeInterval { max(0, min(a.end, b.end).timeIntervalSince(max(a.start, b.start))) }
         return occ.filter { a in
-            guard a.assumed, a.source == .plan || (a.source == .you && a.entry.repeats != nil),
+            if a.isPlannedSession && a.end <= now {
+                let len = a.end.timeIntervalSince(a.start)
+                return !told.contains { overlap($0, a) >= min(600, len / 2) }
+            }
+            if a.source == .plan && a.category == CategoryTree.sleep && a.end <= now {
+                return !nights.contains { overlap($0, a) >= 1800 }
+            }
+            guard a.assumed, a.source == .plan || a.source == .you,
                   a.taskId == nil, ["travel", "essentials"].contains(root(a.category)),
                   a.category != CategoryTree.transition else { return true }
             let near = Double(supersedeMinutes) * 60

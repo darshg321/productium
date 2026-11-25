@@ -71,7 +71,7 @@ enum ExportService {
         if let s = model.subscription.flatMap(JSONValue.encoding) { snapshots["subscription"] = s }
         // The alarms Productium has on the device (v1.1 C3), to compare with what the plan says should exist.
         if let al = JSONValue.encoding(await AlarmScheduler.shared.current()) { snapshots["alarms"] = al }
-        return ExportBundle(exportedAt: Date(), device: device, state: model.state, aboutMe: model.aboutMe.markdown,
+        return ExportBundle(exportedAt: Date(), device: device, state: model.state.forExport(now: Date()), aboutMe: model.aboutMe.markdown,
                             callLog: model.callLog,
                             sharedDefaults: [:],
                             appDefaults: PlistJSON.domain(UserDefaults.standard.persistentDomain(forName: appDomainName)),
@@ -146,8 +146,8 @@ enum ExportService {
         CallLogStore.save(b.callLog)
         // v1.0 exports kept friction counters etc. in an App Group suite; they now live in the standard defaults.
         for (k, v) in b.sharedDefaults { UserDefaults.standard.set(PlistJSON.value(v), forKey: k) }
-        for (k, v) in b.appDefaults { UserDefaults.standard.set(PlistJSON.value(v), forKey: k) }
-        for (key, base64) in b.files where key != "container/state-before-restore.json" {
+        for (k, v) in b.appDefaults where RestoreDefaults.keep(k) { UserDefaults.standard.set(PlistJSON.value(v), forKey: k) }
+        for (key, base64) in b.files {
             guard let data = Data(base64Encoded: base64) else { continue }
             let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
             // Exports before 1.4.2 could hold absolute paths and old backups (the /private/var mismatch).

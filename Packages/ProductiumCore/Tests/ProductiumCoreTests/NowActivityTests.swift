@@ -56,11 +56,16 @@ final class NowActivityTests: XCTestCase {
     func testAssumedSchoolAsksAndThenTurnsUntracked() {
         let s = NowActivity.make(input(Fx.mon(10), entries: Fx.timetable))!
         XCTAssertEqual(s.card.kind, .assumed)
-        XCTAssertEqual(s.card.title, "Still at School until 15:00?")
+        XCTAssertEqual(s.card.title, "School until 15:00", "v1.6 E4: school is shown, not asked about")
+        XCTAssertTrue(s.card.buttons.isEmpty)
         XCTAssertEqual(s.until, Fx.mon(15))
         XCTAssertEqual(s.then?.kind, .untracked)
         XCTAssertEqual(s.then?.since, Fx.mon(15))
-        XCTAssertTrue(s.card.buttons[0].action.hasPrefix("yes:e"))
+        let walk = Entry(title: "Walk the dog", start: Fx.mon(9), end: Fx.mon(11), category: CategoryTree.free,
+                         repeats: .weekly([2]), source: .you)
+        let asked = NowActivity.make(input(Fx.mon(10), entries: [walk]))!
+        XCTAssertEqual(asked.card.title, "Still at Walk the dog until 11:00?")
+        XCTAssertTrue(asked.card.buttons[0].action.hasPrefix("yes:e"))
     }
 
     func testUpNextWhenNothingElse() {
@@ -72,6 +77,14 @@ final class NowActivityTests: XCTestCase {
         XCTAssertEqual(s.card.kind, .upNext)
         XCTAssertEqual(s.card.title, "Math unit test · 40m at 19:00")
         XCTAssertEqual(s.card.buttons.first?.action, "task:\(item.id.uuidString)")
+        XCTAssertEqual(s.card.buttons.count, 1)
+        let other = WorkItem(title: "Write UofTHacks application", kind: .application, due: Fx.mon(23, plusDays: 4))
+        var two = plan
+        two.blocks.append(PlannedBlock(kind: .work, start: Fx.mon(20), end: Fx.mon(20, 40), title: other.title, itemId: other.id))
+        let s2 = NowActivity.make(input(Fx.mon(18, 35), entries: es, items: [item, other], plan: two))!
+        XCTAssertEqual(s2.card.buttons.map(\.action), ["task:\(item.id.uuidString)", "task:\(other.id.uuidString)"],
+                       "v1.6 C5: start something else from the Live Activity")
+        XCTAssertEqual(s2.card.buttons.last?.label, "Write UofTHacks a…")
     }
 
     func testQuietAtNight() {

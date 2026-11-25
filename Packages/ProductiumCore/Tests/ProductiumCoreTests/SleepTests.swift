@@ -98,8 +98,7 @@ final class SleepNightTests: XCTestCase {
         XCTAssertEqual(es.first { $0.id == ids[0] }?.marks["2026-11-16"], .confirmed, "marks survive a re-read")
         let slices = TimeLog.past(es, in: DateInterval(start: Fx.mon(22), end: Fx.mon(8, plusDays: 1)), now: Fx.mon(18, plusDays: 1), calendar: cal)
         XCTAssertEqual(slices.first { $0.entry?.source == .health }?.start, Fx.mon(23, 30))
-        XCTAssertEqual(slices.first { $0.entry?.source == .plan }?.end, Fx.mon(23, 30), "the plan only fills before you fell asleep")
-        XCTAssertFalse(slices.contains { $0.entry?.source == .plan && $0.start >= Fx.mon(23, 30) }, "measured sleep wins")
+        XCTAssertFalse(slices.contains { $0.entry?.source == .plan }, "v1.6 A5: the measured night replaces the planned Sleep")
     }
 
     func testEstimatedNightIsASensorEntryAndCheckInNightsArentDuplicated() {

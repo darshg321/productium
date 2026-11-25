@@ -139,7 +139,8 @@ private struct NowButtons: View {
             HStack(spacing: 6) {
                 ForEach(card.buttons, id: \.action) { b in
                     Button(intent: NowActionIntent(action: b.action)) {
-                        if let s = b.symbol { Label(b.label, systemImage: s).lineLimit(1) } else { Text(b.label).lineLimit(1) }
+                        if let s = b.symbol, card.buttons.count >= 4 { Image(systemName: s).accessibilityLabel(b.label) }
+                        else if let s = b.symbol { Label(b.label, systemImage: s).lineLimit(1) } else { Text(b.label).lineLimit(1) }
                     }
                     .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.capsule)

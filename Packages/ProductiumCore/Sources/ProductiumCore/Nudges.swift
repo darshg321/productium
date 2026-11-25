@@ -443,13 +443,17 @@ public enum NudgePlanner {
 
     public static let dailyCap = 8
 
-    /// D2: at most `cap` notifications a day (alarms aren't counted). The least important go first.
-    public static func capped(_ xs: [PlannedNudge], cap: Int, calendar cal: Calendar) -> (kept: [PlannedNudge], dropped: [PlannedNudge]) {
+    /// D2: at most `cap` notifications a day (alarms aren't counted). The least important go first. v1.6 C4: sleep
+    /// (wind-down, bedtime, the sleep question) and the morning summary outrank leaving and session starts; with the Live
+    /// Activity showing, session starts (which it already shows) go first.
+    public static func capped(_ xs: [PlannedNudge], cap: Int, liveActivity: Bool = false,
+                              calendar cal: Calendar) -> (kept: [PlannedNudge], dropped: [PlannedNudge]) {
         guard cap > 0 else { return (xs, []) }
         var kept: [PlannedNudge] = [], dropped: [PlannedNudge] = []
+        let priority = { (k: NudgeKind) in liveActivity && k == .start ? 99 : capRank(k) }
         for (_, day) in Dictionary(grouping: xs, by: { cal.startOfDay(for: $0.at) }) {
             let counted = day.filter { $0.kind != .running }
-            let order = counted.sorted { (rank($0.kind), $0.at) < (rank($1.kind), $1.at) }
+            let order = counted.sorted { (priority($0.kind), $0.at) < (priority($1.kind), $1.at) }
             let keep = Set(order.prefix(cap).map(\.id))
             for n in day { if n.kind == .running || keep.contains(n.id) { kept.append(n) } else { dropped.append(n) } }
         }
@@ -464,6 +468,21 @@ public enum NudgePlanner {
             if let best = group.sorted(by: { rank($0.kind) < rank($1.kind) }).first { out.append(best) }
         }
         return out
+    }
+
+    /// What the daily cap keeps first.
+    static func capRank(_ k: NudgeKind) -> Int {
+        switch k {
+        case .bedtime: return 0
+        case .windDown: return 1
+        case .sleepConfirm: return 2
+        case .morning: return 3
+        case .leaveNow: return 4
+        case .start: return 5
+        case .sessionEnd: return 6
+        case .leaveSoon: return 7
+        default: return 8 + rank(k)
+        }
     }
 
     static func rank(_ k: NudgeKind) -> Int {

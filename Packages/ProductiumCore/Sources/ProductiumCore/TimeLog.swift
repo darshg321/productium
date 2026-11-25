@@ -35,6 +35,11 @@ public struct LogSlice: Hashable, Sendable {
 }
 
 public enum TimeLog {
+    /// v1.6 E4: fixed time (a class from the timetable, a calendar event) counts as happened without asking.
+    public static func isFixed(_ d: DayEntry, tree: CategoryTree) -> Bool {
+        d.source == .calendar || (d.entry.repeats != nil && tree.isUnder(d.category, CategoryTree.school))
+    }
+
     public static func running(_ entries: [Entry]) -> Entry? {
         entries.filter(\.isRunning).max { $0.start < $1.start }
     }
@@ -93,6 +98,9 @@ public enum TimeLog {
                 var parts: [Entry] = []
                 if xs < ns { var a = x; a.end = ns; parts.append(a) }
                 if xe > ne && new.end != nil { var b = x; b.start = ne; if !parts.isEmpty { b.id = UUID() }; parts.append(b) }
+                // v1.6 A7: a sliver under a minute isn't kept.
+                parts.removeAll { ($0.end ?? .distantFuture).timeIntervalSince($0.start) < 60 }
+                if !parts.isEmpty && !parts.contains(where: { $0.id == x.id }) { parts[0].id = x.id }
                 if parts.isEmpty {
                     r.removed.append(x)
                     r.lines.append("Replaced \(x.title) \(span(x, cal))")
@@ -195,24 +203,28 @@ public enum TimeLog {
         return a.id < b.id
     }
 
+    /// v1.6 D2: unfocused work counts half in the Work ring and the score; Tracked time stays as it was.
+    public static func focusWeight(_ focus: Int?) -> Double { focus == 1 ? 0.5 : 1 }
+
     /// v1.5: the last stretch of work you finished (≥10 min, in the last 3 hours) that has no focus rating yet.
+    /// v1.6 D3: only time that happened: not skipped, not a session placed ahead that nobody tracked.
     public static func unratedWork(_ entries: [Entry], tree: CategoryTree, now: Date) -> Entry? {
         entries.filter { e in
             guard e.source == .you, e.repeats == nil, e.focus == nil, let end = e.end, end <= now, end > now.addingTimeInterval(-3 * 3600),
-                  end.timeIntervalSince(e.start) >= 600 else { return false }
+                  end.timeIntervalSince(e.start) >= 600, !e.marks.values.contains(.skipped), !Sessions.isUnworkedPlan(e) else { return false }
             return e.taskId != nil || tree.isUnder(e.category, CategoryTree.work)
         }.max { ($0.end ?? $0.start) < ($1.end ?? $1.start) }
     }
 
-    /// Minutes of rated work per focus level (1 not very, 2 normal, 3 very) in `range`.
+    /// Minutes of rated work per focus level (v1.6: 1 unfocused, 2 focused) in `range`.
     public static func focusMinutes(_ entries: [Entry], in range: DateInterval) -> [Int: Int] {
         entries.reduce(into: [:]) { out, e in
-            guard let f = e.focus, (1...3).contains(f), let end = e.end, end > range.start, e.start < range.end else { return }
+            guard let f = e.focus, (1...2).contains(f), let end = e.end, end > range.start, e.start < range.end else { return }
             out[f, default: 0] += Int(min(end, range.end).timeIntervalSince(max(e.start, range.start)) / 60)
         }
     }
 
-    /// v1.5: rated work in `range` as (focused = normal or very, total) minutes, overall and by part of day.
+    /// Rated work in `range` as (focused, total) minutes, overall and by part of day.
     public struct FocusStats: Sendable {
         public var focused = 0, total = 0
         public var parts: [(name: String, focused: Int, total: Int)] = []
@@ -225,11 +237,11 @@ public enum TimeLog {
             return enough.max { Double($0.focused) / Double($0.total) < Double($1.focused) / Double($1.total) }?.name
         }
 
-        /// For the insight pass: "Focus ratings (14 days): 5h rated, 70% normal or very; morning 80% of 2h, …".
+        /// For the insight pass: "Focus ratings (14 days): 5h rated, 70% focused; morning 80% of 2h, …".
         public func line(days: Int) -> String? {
             guard total > 0 else { return nil }
             let p = parts.filter { $0.total > 0 }.map { "\($0.name) \(Int((Double($0.focused) / Double($0.total) * 100).rounded()))% of \(minutesLabel($0.total))" }
-            return "Focus ratings (\(days) days): \(minutesLabel(total)) rated, \(Int((share * 100).rounded()))% normal or very"
+            return "Focus ratings (\(days) days): \(minutesLabel(total)) rated, \(Int((share * 100).rounded()))% focused"
                 + (p.isEmpty ? "" : "; " + p.joined(separator: ", "))
         }
     }
@@ -238,7 +250,7 @@ public enum TimeLog {
         let names = ["morning", "afternoon", "evening"]
         var f = [0, 0, 0], t = [0, 0, 0]
         for e in entries {
-            guard let r = e.focus, (1...3).contains(r), let end = e.end, end > range.start, e.start < range.end else { continue }
+            guard let r = e.focus, (1...2).contains(r), let end = e.end, end > range.start, e.start < range.end else { continue }
             let start = max(e.start, range.start)
             let m = Int(min(end, range.end).timeIntervalSince(start) / 60)
             let h = cal.component(.hour, from: start)

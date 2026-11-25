@@ -16,14 +16,25 @@ public enum EntryBuilder {
     @discardableResult
     public static func phoneAfterBedtime(_ uses: [PhoneUse], entries: inout [Entry], now: Date) -> [UUID] {
         var written: [UUID] = []
-        let sleepIdx = entries.indices.filter { entries[$0].source == .plan && entries[$0].alert?.edge == .end && entries[$0].category == CategoryTree.sleep }
-        for i in sleepIdx {
-            guard let end = entries[i].end else { continue }
-            let night = entries[i]
+        let nights = entries.filter { $0.source == .plan && $0.alert?.edge == .end && $0.category == CategoryTree.sleep }
+        for night in nights {
+            guard let end = night.end else { continue }
             let mid = night.start.addingTimeInterval(end.timeIntervalSince(night.start) / 2)
             let mine = uses.filter { $0.end <= now && $0.end > $0.start && $0.end > night.start && $0.start < end }
                 .sorted { $0.start < $1.start }
+            // v1.6 E2: pickups under 15 min apart are one stretch, and one under 2 min isn't worth asking about.
+            var spans: [PhoneUse] = []
             for u in mine {
+                if let last = spans.last, u.start.timeIntervalSince(last.end) < 15 * 60 { spans[spans.count - 1].end = max(last.end, u.end) }
+                else { spans.append(u) }
+            }
+            spans = spans.filter { $0.end.timeIntervalSince($0.start) >= 120 }
+            let keep = Set(spans.map { Entry.sensorId($0.key) })
+            let window = DateInterval(start: night.start, end: max(night.start, end))
+            entries.removeAll { e in
+                e.source == .sensor && e.title == "Phone" && e.marks.isEmpty && !keep.contains(e.id) && window.contains(e.start)
+            }
+            for u in spans {
                 let id = Entry.sensorId(u.key)
                 let e = Entry(id: id, title: "Phone", start: max(u.start, night.start), end: min(u.end, end),
                               category: CategoryTree.scrolling, source: .sensor, createdAt: now)

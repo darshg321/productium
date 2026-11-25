@@ -10,7 +10,8 @@ extension AppModel {
     func nowState(now: Date = Date()) -> NowState? {
         NowActivity.make(NowInput(now: now, calendar: cal, entries: state.entries, plan: state.plan, items: state.items,
                                   book: state.dayRules, tree: state.categories, question: state.inference.pending.first,
-                                  tiles: startButtons(now: now).top, prompts: state.prefs.prompts, goalLine: goalLine(for: running)))
+                                  tiles: startButtons(now: now).top, prompts: state.prefs.prompts, goalLine: goalLine(for: running),
+                                  paused: state.paused, resumedEnds: resumedEnds))
     }
 
     /// After every replan, intent and button press (each keeps it alive), and when the app goes to the background (B2).
@@ -28,6 +29,10 @@ extension AppModel {
         switch parts.first ?? "" {
         case "stop":
             stopRunning(source: "live activity")
+        case "pause":
+            pauseRunning(source: "live activity")
+        case "resume":
+            resumePaused(source: "live activity")
         case "start":
             start(title: arg, source: "live activity")
         case "answer":
@@ -55,7 +60,7 @@ extension AppModel {
 
     // MARK: v1.5: how focused a session was
 
-    /// 1 not very, 2 normal, 3 very; 0 = you skipped the question.
+    /// 1 unfocused, 2 focused; 0 = you skipped the question.
     func rateFocus(_ id: UUID, _ focus: Int) {
         guard let i = state.entries.firstIndex(where: { $0.id == id }) else { return }
         state.entries[i].focus = focus

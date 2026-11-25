@@ -80,17 +80,6 @@ public struct CategoryTree: Codable, Hashable, Sendable {
         CategoryNode(id: other, name: "Other", symbol: "circle", colour: "cyan", group: .rest),
     ]
 
-    /// v1.3 (schema 6): seed nodes that were gray get their colour, and the new seed nodes are added. Yours are left alone.
-    public mutating func refreshSeeds() {
-        for seed in Self.seedNodes {
-            if let i = nodes.firstIndex(where: { $0.id == seed.id }) {
-                if !nodes[i].yours && nodes[i].colour == "gray" { nodes[i].colour = seed.colour }
-            } else if seed.parentId.map({ node($0) != nil }) ?? true {
-                nodes.append(seed)
-            }
-        }
-    }
-
     public func node(_ id: CategoryID) -> CategoryNode? { nodes.first { $0.id == id } }
 
     /// Root first: [School, Math].
@@ -116,6 +105,13 @@ public struct CategoryTree: Codable, Hashable, Sendable {
     public func isUnder(_ id: CategoryID, _ ancestor: CategoryID) -> Bool { path(id).contains { $0.id == ancestor } }
 
     public func children(_ id: CategoryID?) -> [CategoryNode] { nodes.filter { $0.parentId == id } }
+
+    /// v1.6 B3: study time has one tree. A class's subject (School › Math) as the home of task work is
+    /// Work › Studying › Math, made if it's missing; anything else is returned as it is.
+    public mutating func studyNode(for id: CategoryID) -> CategoryID {
+        guard id != Self.school, isUnder(id, Self.school), let subject = path(id).dropFirst().first else { return id }
+        return (find(subject.name, under: Self.studying) ?? add(subject.name, under: Self.studying))?.id ?? Self.studying
+    }
 
     /// The group of the node, inherited from the root when unset differently below.
     public func group(_ id: CategoryID) -> CategoryGroup? { node(id)?.group ?? path(id).first?.group }

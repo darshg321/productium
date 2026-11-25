@@ -65,9 +65,15 @@ public struct Outbox: Codable, Hashable, Sendable {
         items[i].lastTriedAt = at
     }
 
+    /// v1.6 G10: older than this, a reply isn't sent by itself (it may be about a day that's gone): the box asks.
+    public static let staleAfter: TimeInterval = 6 * 3600
+
+    public func stale(now: Date) -> [OutboxItem] { items.filter { now.timeIntervalSince($0.at) > Self.staleAfter }.sorted { $0.at < $1.at } }
+
     /// What to try now, oldest first: a back-off of 1, 2, 4 … minutes (at most an hour) after each failure.
     public func due(now: Date) -> [OutboxItem] {
         items.filter { i in
+            guard now.timeIntervalSince(i.at) <= Self.staleAfter else { return false }
             guard let last = i.lastTriedAt else { return true }
             let wait = min(3600, 60 * pow(2, Double(max(0, i.attempts - 1))))
             return now.timeIntervalSince(last) >= wait

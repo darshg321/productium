@@ -130,8 +130,7 @@ final class EntryTests: XCTestCase {
         XCTAssertEqual(back.entries, [e])
         XCTAssertEqual(back.rules, s.rules)
         XCTAssertEqual(back.telemetry, s.telemetry)
-        let old = try dec.decode(AppState.self, from: Data(#"{"onboarded":true,"items":[]}"#.utf8))
-        XCTAssertFalse(old.onboarded, "v1.1 state isn't read")
+        XCTAssertThrowsError(try dec.decode(AppState.self, from: Data(#"{"onboarded":true,"items":[]}"#.utf8)), "v1.1 state isn't read")
     }
 
     func testCategoryTree() {

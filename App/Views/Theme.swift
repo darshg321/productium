@@ -172,7 +172,20 @@ struct Card<Content: View>: View {
 struct PeekStack<Content: View>: View {
     let remaining: Int
     var next: String?
+    /// v1.6 E1: swipe the front card left (dismiss) or right (its first action); the next one slides up.
+    var onLeft: (() -> Void)?
+    var onRight: (() -> Void)?
     @ViewBuilder var content: Content
+    @State private var drag: CGFloat = 0
+
+    init(remaining: Int, next: String? = nil, onLeft: (() -> Void)? = nil, onRight: (() -> Void)? = nil,
+         @ViewBuilder content: () -> Content) {
+        self.remaining = remaining
+        self.next = next
+        self.onLeft = onLeft
+        self.onRight = onRight
+        self.content = content()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -180,6 +193,19 @@ struct PeekStack<Content: View>: View {
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+                .offset(x: drag)
+                .opacity(1 - min(0.5, abs(drag) / 400))
+                .simultaneousGesture(DragGesture(minimumDistance: 24)
+                    .onChanged { v in
+                        guard abs(v.translation.width) > abs(v.translation.height) else { return }
+                        if (v.translation.width < 0 && onLeft != nil) || (v.translation.width > 0 && onRight != nil) { drag = v.translation.width }
+                    }
+                    .onEnded { v in
+                        let w = v.translation.width
+                        if w < -90, let onLeft { withAnimation(.snappy) { drag = 0; onLeft() } }
+                        else if w > 90, let onRight { withAnimation(.snappy) { drag = 0; onRight() } }
+                        else { withAnimation(.snappy) { drag = 0 } }
+                    })
                 .zIndex(2)
             if remaining > 1 {
                 HStack {
@@ -406,6 +432,15 @@ extension Date {
             return formatted(.dateTime.weekday(.wide))
         }
         return formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    /// v1.6 G9: the day and its date, "Today, Nov 25" / "Thu Nov 26".
+    var dayAndDate: String {
+        let date = formatted(.dateTime.month(.abbreviated).day())
+        let cal = Calendar.current
+        if cal.isDateInToday(self) { return "Today, \(date)" }
+        if cal.isDateInTomorrow(self) { return "Tomorrow, \(date)" }
+        return "\(formatted(.dateTime.weekday(.abbreviated))) \(date)"
     }
 }
 

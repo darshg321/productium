@@ -1,36 +1,19 @@
 import Foundation
 
-// v1.3 Part M: stored data migrates from v1.2.2 (schema 4) on. `AppState.init(from:)` decodes leniently and then runs
-// every step from the stored schema up, so state.json, restores and backups all go through here. Adding a stored
-// change: bump `AppState.schema`, add a step below, and extend `MigrationTests` (the 1.2.2 fixture must lose nothing).
+// v1.6 H: schema 8 is the first of the new line; older data (1.5 and before) is refused, not converted. Adding a
+// stored change: bump `AppState.schema`, add a step below, and extend `MigrationTests` (the `state-1.6.json` fixture
+// must lose nothing). state.json, restores and backups all go through `upgrade`.
 
 public enum Migrations {
-    /// The oldest schema with real data. Anything older decodes as a fresh state (the v1.2 clean break).
-    public static let oldest = 4
+    /// The oldest schema that can be read. Anything older is from before 1.6.
+    public static let oldest = 8
 
     struct Step {
         var from: Int
         var run: (inout AppState, Date) -> Void
     }
 
-    static let steps: [Step] = [
-        // 4 → 5 (v1.3): the activity grid's templates (A1), prompt severities from the v1.2 toggles (E). The backup
-        // status (H1) and the tiles' origin / pin / aliases start at their defaults.
-        Step(from: 4) { s, now in
-            s.quickStarts.seedTemplates(at: now)
-            s.prefs.prompts = PromptSettings.migrated(from: s.prefs.nudges, wakeAlarms: s.prefs.wakeAlarms)
-        },
-        // 5 → 6: gray seed categories get colours; Transition and Messaging are added. Feedback starts empty.
-        Step(from: 5) { s, _ in
-            s.categories.refreshSeeds()
-        },
-        // 6 → 7 (v1.5): entries can carry a focus rating (starts empty). Walking, Homework and Class buttons fold into
-        // Commute and Studying; each class subject gets a study button.
-        Step(from: 6) { s, now in
-            s.quickStarts.retireTemplates()
-            s.quickStarts.seedSubjects(tree: &s.categories, at: now)
-        },
-    ]
+    static let steps: [Step] = []
 
     /// The schema stored data was written with (0: unreadable), read without decoding the rest.
     public static func storedSchema(_ data: Data) -> Int {
@@ -51,4 +34,10 @@ public enum Migrations {
         s.schema = AppState.schema
         return done
     }
+}
+
+/// Stored data from before 1.6 (schema < `Migrations.oldest`).
+public struct BeforeBaseline: Error, CustomStringConvertible {
+    public var schema: Int
+    public var description: String { "This backup is from before 1.6. Restore it with 1.5, or start fresh." }
 }
