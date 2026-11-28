@@ -63,7 +63,10 @@ struct ServerUsage: Codable, Equatable {
         var cache_write_tokens: Int?
         var tokens: Int { output_tokens }
     }
-    struct Key: Codable, Equatable { var name: String?; var rpm: Int?; var daily: Int? }
+    struct Key: Codable, Equatable {
+        var name: String?; var rpm: Int?; var daily: Int?
+        var tokens_daily: Int?; var tokens_weekly: Int?; var tokens_today: Int?; var tokens_week: Int?
+    }
     var key: Key?
     var today: [Row]
     var last_7_days: [Row]
@@ -111,15 +114,14 @@ struct SubscriptionStatus: Codable, Equatable {
 
 final class ClaudeClient {
     static let shared = ClaudeClient()
-    static let defaultURL = URL(string: "https://raspberrypi.tail29964a.ts.net")!
+    /// v1.6.1: every app uses the Productium server on the Pi (Caddy in front of claude-server and productium-server,
+    /// `server/`); there's no other address to pick.
+    static let defaultURL = URL(string: ProductiumServer.url)!
 
     var onUsage: (@MainActor (AIFeature, String, TokenCount, UUID) -> Void)?
     var onCall: (@MainActor (AICall) -> Void)?
 
-    var baseURL: URL? {
-        get { UserDefaults.standard.string(forKey: "server.url").flatMap(URL.init(string:)) ?? Self.defaultURL }
-        set { UserDefaults.standard.set(newValue?.absoluteString, forKey: "server.url") }
-    }
+    var baseURL: URL? { Self.defaultURL }
 
     var apiKey: String? {
         get { Keychain.get("server.key") }

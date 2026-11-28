@@ -7,7 +7,6 @@ struct OnboardingView: View {
     /// An update with new setup steps: only what's new, then back to the app.
     var updating = false
     @State private var page: Page = .welcome
-    @State private var serverURL = ClaudeClient.shared.baseURL?.absoluteString ?? ClaudeClient.defaultURL.absoluteString
     @State private var serverKey = ClaudeClient.shared.apiKey ?? ""
     @State private var serverState: ServerState = .untested
     @State private var permissionsDone = false
@@ -70,6 +69,7 @@ struct OnboardingView: View {
         .sheet(isPresented: $showGuide) { ShortcutsGuideView(inSheet: true) }
         .onAppear {
             if offer == nil && !updating { offer = model.backupToOffer() }
+            if offer == nil && !updating { Task { if offer == nil, let o = await model.serverBackupToOffer() { offer = o } } }
             scrollApps = Set(model.state.scrollingApps.filter { $0.value && ScrollingApps.common.contains($0.key) }.map(\.key))
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { r in
@@ -191,7 +191,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             IconTile(symbol: "externaldrive.fill", color: .blue, size: 56)
             Text("Daily Backups").font(.largeTitle.weight(.bold))
-            Text("Productium saves a backup every day by itself. To keep them even if the app is deleted, pick a folder in iCloud Drive.").lineSpacing(3)
+            Text("Productium saves a backup twice a day by itself, and a sealed copy on the Productium server that only this API key can open. Pick a folder in iCloud Drive to keep the files too.").lineSpacing(3)
             List { DailyBackupSection() }
                 .listStyle(.insetGrouped)
                 .scrollDisabled(true)
@@ -203,9 +203,8 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 18) {
             IconTile(symbol: "sparkles", color: .teal, size: 56)
             Text("Connect Claude").font(.largeTitle.weight(.bold))
-            Text("Productium runs on your claude-server over Tailscale. The address is filled in; add the API key you made for Productium (it starts with cs_). Tailscale needs to be on for this phone.")
+            Text("Productium talks to Claude through the Productium server (\(ProductiumServer.host)). Add the API key you were given (it starts with cs_).")
                 .lineSpacing(3)
-            field("https://your-pi.your-tailnet.ts.net", text: $serverURL, secure: false)
             field("API key (starts with cs_)", text: $serverKey, secure: true)
             HStack(spacing: 16) {
                 Button(serverState == .testing ? "Checking…" : "Check Connection") { test() }
@@ -214,7 +213,7 @@ struct OnboardingView: View {
                 switch serverState {
                 case .ok: Label("Connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 case .badKey: Text("The server is there, but it didn't accept that key.").foregroundStyle(Theme.alert).font(.subheadline)
-                case .failed: Text("No answer. Is Tailscale on, and is the address right?").foregroundStyle(Theme.alert).font(.subheadline)
+                case .failed: Text("No answer. Are you online, and is the address right?").foregroundStyle(Theme.alert).font(.subheadline)
                 default: EmptyView()
                 }
             }
@@ -390,7 +389,6 @@ struct OnboardingView: View {
     }
 
     private func test() {
-        ClaudeClient.shared.baseURL = URL(string: serverURL.trimmingCharacters(in: .whitespaces))
         ClaudeClient.shared.apiKey = serverKey.trimmingCharacters(in: .whitespaces)
         serverState = .testing
         Task {

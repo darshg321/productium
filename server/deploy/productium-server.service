@@ -1,0 +1,29 @@
+[Unit]
+Description=productium-server: leaderboard and backups for Productium (behind Caddy at productium.duckdns.org)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=productium-server
+Group=productium-server
+EnvironmentFile=-/etc/productium-server.env
+WorkingDirectory=/opt/productium-server
+ExecStart=/opt/productium-server/.venv/bin/python -m productium_server
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/productium-server
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target

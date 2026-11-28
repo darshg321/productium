@@ -1272,7 +1272,7 @@ final class AppModel {
             return true
         } catch {
             let ai = error as? AIError
-            let msg = ai?.errorDescription ?? "Couldn't reach your Claude server. Check that Tailscale is on, then send again."
+            let msg = ai?.errorDescription ?? "Couldn't reach the Productium server. Check the internet connection, then send again."
             state.conversation.add(ConversationTurn(at: now, text: text, images: images, userContent: content, reply: msg,
                                                     callId: callLog.calls.last { $0.feature == .box }?.id, failed: true,
                                                     detail: ai?.detail ?? (ai == nil ? error.localizedDescription : nil),

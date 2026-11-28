@@ -27,6 +27,7 @@ final class BackupRotationTests: XCTestCase {
     func testOnceADay() {
         XCTAssertTrue(BackupFiles.isDue(last: nil, now: Fx.mon(9)))
         XCTAssertFalse(BackupFiles.isDue(last: Fx.mon(9), now: Fx.mon(20)))
+        XCTAssertTrue(BackupFiles.isDue(last: Fx.mon(9), now: Fx.mon(21)), "twice a day")
         XCTAssertTrue(BackupFiles.isDue(last: Fx.mon(9), now: Fx.mon(9, plusDays: 1)))
         XCTAssertTrue(BackupFiles.isDue(last: Fx.mon(9, plusDays: 3), now: Fx.mon(9)), "a clock that went back")
     }
@@ -47,5 +48,7 @@ final class BackupRotationTests: XCTestCase {
         let b = ExportBundle(exportedAt: Fx.mon(9, plusDays: 4), device: .init(timeZone: "America/Vancouver"), state: s)
         XCTAssertEqual(BackupFiles.offer(b, now: Fx.mon(12, plusDays: 6), calendar: cal), "Restore from Friday's backup (3 entries)")
         XCTAssertEqual(BackupFiles.offer(b, now: Fx.mon(12, plusDays: 4), calendar: cal), "Restore from today's backup (3 entries)")
+        XCTAssertEqual(BackupFiles.offer(b, now: Fx.mon(12, plusDays: 4), calendar: cal, kind: "server backup"),
+                       "Restore from today's server backup (3 entries)")
     }
 }

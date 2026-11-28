@@ -19,12 +19,14 @@ changes; **all scheduling is deterministic code on the phone**.
 - Core tests: `export PATH=$HOME/.local/swift/swift-6.2.1-RELEASE-ubuntu24.04/usr/bin:$PATH; cd Packages/ProductiumCore
   && swift build --build-tests && swift test --skip-build [--filter X]`. The App only compiles on CI (no Mac).
 - Box evals without network: `cd scripts/inbox-eval && swift run -q H --v12-reference`.
-- Leaderboard Worker: `scripts/leaderboard` (`node test.mjs`, `./deploy.sh`).
+- Productium server: `server/` (see §9a). Tests: `cd server && uv venv && uv pip install -r requirements.txt pytest &&
+  .venv/bin/python -m pytest tests`. A push to `main` deploys it on the Pi (`pi-deploy`, `/etc/pi-deploy/productium.conf`); by hand:
+  `rsync -a server/ pi:/tmp/productium-server-src/ && ssh pi sudo /tmp/productium-server-src/deploy/install.sh`.
 - Dev app on the phone: Productium Dev (`com.darshg321.productium.dev.573BBB2JRN` once signed). Install / update over
   USB: download the `dev-build` IPA, sign with `flatpak run --filesystem=<dir> --command=plumesign
   dev.khcrysalis.PlumeImpactor sign --package <ipa> --apple-id --output <signed.ipa>` (the saved account and key are
   reused; don't use `--register-and-install`, it fails to find the phone), then `uvx pymobiledevice3 apps install
-  <signed.ipa>`. Connect it to claude-server with `scripts/test/connect-server.sh` (app open, Tailscale on).
+  <signed.ipa>`. Connect it to the server with `scripts/test/connect-server.sh` (app open).
 
 ### 0.1 Seeing the app: the test runner
 
@@ -52,7 +54,7 @@ Dev builds (`dev` branch → `dev-build` pre-release, "Productium Dev", bundle i
 | `start <title>` · `start-next` (what the pause sheet / Control Center do) · `stop` · `mood <1-5>` · `confirm-today` | the log |
 | `approve` · `decline` · `answer <yes\|no\|skipped\|sick\|no-school>` · `dismiss` | cards and sheets |
 | `refresh` · `replan` · `learn` · `leaderboard` | background work, on demand |
-| `server [url]` | Claude server key from `Documents/test/server-key.txt` (`connect-server.sh`) into the Keychain |
+| `server` | the API key from `Documents/test/server-key.txt` (`connect-server.sh`) into the Keychain |
 | `wait <s>` · `shot <name>` · `dump <name>` | timing, a screenshot (`shots/`), the state as text + JSON (`dumps/`) |
 
 Results go to `results.txt` (`ok` / `ERR` per line, then `DONE`). Taps and typing aren't simulated: every action has
@@ -84,7 +86,9 @@ Shared/                    LocalStore (standard defaults, Application Support, f
 project.yml                XcodeGen spec: one app target, free Apple ID, HealthKit the only capability
 .github/workflows/ios.yml  CI (see §10)
 scripts/                   install.sh (latest release or `--dev`, with Impactor), make-source.py
-                           (SideStore source), inbox-eval (runs the real box prompt against a claude-server)
+                           (SideStore source), inbox-eval (runs the real box prompt against the server)
+server/                    productium-server (Python, FastAPI): leaderboard and sealed backups; Caddy site and
+                           install script for the Pi in server/deploy (§9a)
 source.json                static SideStore source; CI attaches a fresh one to each release
 ```
 
@@ -147,7 +151,7 @@ field survives. Main parts:
 | Learning | `TaskHistory.swift`, `Patterns.swift`, `InsightPass.swift`, `ChangeLog.swift`, `Avoidance.swift`, `CapacityLearner.swift`, `Personalization.swift`, `Beliefs.swift` | track record, patterns, the quiet weekly pass. |
 | Sensing | `Inference.swift`, `Places.swift`, `Motion.swift`, `Sleep.swift`, `Scrolling.swift`, `ScreenTime.swift`, `ScreenOCR.swift` (+ `ReminderMirror`, `ActivityToggle`), `HealthStatus.swift` | signals → inferences, places, Screen Time from OCR. |
 | Review | `Recap.swift` (`PlannedShare`: how much of a day is planned; `WeekRecap`: Your Week; `OCRLines`: Vision boxes to rows), `DayRings.swift`, `Ring.swift` | |
-| Support | `Models.swift`, `AppState.swift`, `Migrations.swift`, `Backup.swift`, `Export.swift`, `Telemetry.swift`, `Timeline.swift` (segments for the CSV), `TaskBoard.swift`, `Agenda.swift`, `Util.swift` | |
+| Support | `Models.swift`, `AppState.swift`, `Migrations.swift`, `Backup.swift`, `Export.swift`, `Telemetry.swift`, `Timeline.swift` (segments for the CSV), `TaskBoard.swift`, `Agenda.swift`, `Util.swift`, `ProductiumServer.swift` (the server address, moved addresses) | |
 
 ### 3.1 Planner (`Planner.swift`)
 
@@ -378,12 +382,18 @@ on school mornings) + bedtime / leave / missed start; the reconciler diffs with 
 
 ## 8. Export / backup (`Export.swift`, `ExportService.swift`)
 
-v1.3 H: once a day (refresh, launch) `AppModel.backupIfDue` writes the export to a folder: with none picked, the app's
+v1.3 H / v1.6.1: twice a day (refresh, launch; `BackupFiles.interval` 12 h, the day's file is replaced)
+`AppModel.backupIfDue` writes the export to a folder: with none picked, the app's
 own Documents/Backups (Files → On My iPhone, `UIFileSharingEnabled`; kept out of the export's `files`; lost if the app
 is deleted); or a folder you pick (iCloud Drive; `BackupService`, security-scoped bookmark in the Keychain so a
 reinstall can find it), `Productium-YYYY-MM-DD.json`,
 newest 3 kept (`BackupFiles`). Onboarding offers "Restore from Friday's backup" when the remembered folder has one,
 else a file picker. Restores go through the migrations.
+v1.6.1: each backup is also sent to the server (`ServerBackup`, App): zlib-compressed, sealed with AES-GCM under
+SHA-256("productium-backup:" + the API key), `PUT /v1/backup` (the server keeps 6 per key and can't read them). The
+API key lives in the Keychain, which survives an uninstall, so a fresh install's onboarding offers "Restore from
+Friday's server backup" when there's no folder backup (`serverBackupToOffer`). A new key can't open older copies.
+When it last worked or failed is in standard defaults (`backup.serverAt`, `backup.serverError`; Settings → Backup).
 
 One JSON file, `format: productium-export`, `version: 5` (v1.6; older formats and states are refused): full `AppState` (with your
 feedback), `aboutMe`,
@@ -398,8 +408,10 @@ leave out).
 
 ## 9. AI routing, cost, server
 
-- Server: claude-server on a Raspberry Pi over Tailscale (separate repo `../claude-server`), Anthropic-compatible
-  `/v1/messages` with images, `output_config.effort`, `cache_control ttl 1h`, `/v1/subscription`, usage endpoint.
+- Server: claude-server on the Raspberry Pi (separate, general-purpose repo `../claude-server`), reached through the
+  Productium server at `https://productium.duckdns.org` (§9a; `ClaudeClient.defaultURL`, `ProductiumServer`). It's the
+  only address (v1.6.1): Settings → Claude and onboarding ask only for the API key. Anthropic-compatible `/v1/messages` with images, `output_config.effort`,
+  `cache_control ttl 1h`, `/v1/subscription`, `/v1/usage` (with the key's token limits, shown in Settings → AI Usage).
   `ClaudeClient` (App) sends, retries once, logs every call (`AICall`) to `AICallLog` (kept in full).
 - The category tidy-up (`TaxonomyPass`, v1.5): at most every 4 hours (foreground or background refresh) when 3+
   things you logged went into Other or new / thin leaves, else weekly; ops merge / rename / move / create and `file`
@@ -410,6 +422,28 @@ leave out).
   AI waits (the box always works). Screenshots ≤1280 px.
 - Everything user-facing the model returns is validated by code; never trust model numbers over data (e.g.
   scrolling minutes).
+
+## 9a. The Productium server (v1.6.1, `server/`)
+
+One public address, `https://productium.duckdns.org`, on the Pi: the router forwards 443 to the Pi's 8920 (UPnP,
+`pi-web-upnp.timer`), DuckDNS keeps the name on the home IP (`duckdns-productium.timer`, token in
+`/etc/duckdns/productium.env`), and Caddy (`server/deploy/productium.caddy`, imported from `/etc/caddy/Caddyfile`)
+gets the certificate and routes:
+
+- `/v1/g/*`, `/v1/backup*` → productium-server (`127.0.0.1:8790`, `productium_server/`: `board.py` leaderboard rows in
+  SQLite, `backups.py` sealed blobs per key, `app.py`). Backups are filed under the SHA-256 of the device's
+  claude-server key, checked with claude-server's `/v1/usage` (cached 10 min); 40 MB at most, newest 6 kept.
+- every other `/v1/*`, `/health`, `/llms.txt` → claude-server (`127.0.0.1:8787`, streaming flushed), so any
+  claude-server client can use the address. claude-server itself is general: it binds to localhost, is on the tailnet
+  only (`tailscale serve`, Funnel off) and knows nothing about Productium. Keys still authenticate everything and their
+  limits apply: requests per minute / day and tokens per day / 7 days (`keys add|set … --tokens N --tokens-week N`;
+  input incl. cache writes + output, cache reads free; 0 = none).
+- anything else → the install page (`/var/www/productium`, re-signed by `/opt/productium-ota`).
+
+`server/deploy/install.sh` (root, idempotent) installs the code to `/opt/productium-server` with its own venv and the
+`productium-server` systemd unit (data in `/var/lib/productium-server`, settings in `/etc/productium-server.env`), puts
+the Caddy site in place, validates and reloads Caddy (keeping the old site if the new one is invalid) and checks
+`/health` on the Pi.
 
 ## 10. Build, CI, release, install
 
@@ -479,13 +513,13 @@ Tabs: Today · Schedule · Tasks · Review · Settings; token meter top right.
   The hour learns from how much happened in the session's window (30 min early to 2 h late, `onTimeScore`); work at
   hours nothing was planned for adds success to those hours (`recordWork`). `goodHours()` feeds the planner's
   energy curve, the weekly note's context ("Most reliable hours", adherence) and Review → How You Work.
-- Leaderboard: `Leaderboard.swift` (payload, ranking, invite links) and the Worker in `scripts/leaderboard`
-  (`worker.js`, one KV namespace; `node test.mjs`; `./deploy.sh` after `npx wrangler login`, which also sets the repo
-  variable `LEADERBOARD_URL` that CI writes into Info.plist). A group is a random id carried by the invite link
+- Leaderboard: `Leaderboard.swift` (payload, ranking, invite links) and productium-server's `board.py` (§9a, the same
+  API the Cloudflare Worker had before 1.6.1; groups and invites that name the Worker are read as the server,
+  `ProductiumServer.current`). A group is a random id carried by the invite link
   (`productium://join?s=&g=&n=`); each member writes only their own row (random key, SHA-256 stored); rows expire
   after 60 days. Shared: a display name and, per day for 7 days, score, tracked %, work minutes, deadlines met /
   missed, scrolling minutes, plus your usual (median score of the 4 weeks before). Measures: Score, vs Usual, Work,
-  Tracked, Least Scrolling. Posts only when changed, at most every 15 min (KV free tier: 1,000 writes a day).
+  Tracked, Least Scrolling. Posts only when changed, at most every 15 min.
 
 ## 11c. Dev builds and the test runner
 
@@ -503,7 +537,7 @@ Spaced retrieval beats cramming (Cepeda 2006). Unpacking tasks reduces underesti
 estimates are corrected per kind. Teens need 8-10 h (AASM); study time bought with sleep hurts next-day
 performance, so sleep is borrowed only for deadline-critical production work. Implementation intentions ~double
 follow-through (Gollwitzer & Sheeran 2006). Plans that are repeatedly missed erode self-efficacy, so the app
-plans less after misses and never uses streaks. Breaks help (Biwer 2023). Scheduled leisure feels like work, so
+plans less after misses and uses streaks only with freezes (see §F). Breaks help (Biwer 2023). Scheduled leisure feels like work, so
 free time is a floor, not a block. Friction cuts app opens (Grüning 2023), taper gradually. Procrastination is
 mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. Ariely & Wertenbroch 2002
 (imposed deadlines) is deliberately not relied on (replication failed).
@@ -528,8 +562,12 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
 - Expected tangible rewards undermine intrinsic motivation, informational praise doesn't (Deci, Koestner & Ryan,
   Psychological Bulletin 1999, 128 studies): **keep (contested)**. Cameron & Pierce dispute it. No points or coins;
   celebrations say what you did.
-- Broken streaks reduce later engagement (Silverman & Barasch, JCR 2023, seven studies): **keep**. No consecutive
-  streaks; counts that can't break ("focused on 14 days this month") and cumulative milestones.
+- Broken streaks reduce later engagement (Silverman & Barasch, JCR 2023, seven studies): **keep, softened (v1.7
+  decision, asked for by the student)**. One streak is allowed: days with ≥80% of waking time tracked. Every 6 h of
+  active work (tracked task or Work time, not classes or other fixed time) earns a freeze (at most 2 banked) that
+  keeps the streak over a missed day, and a broken streak shows the longest and this month's count, never just 0.
+  Everything else stays counts that can't break ("focused on 14 days this month") and cumulative milestones.
+  Not built yet (v1.7_plan §7).
 - The Zeigarnik memory effect does not hold (Ghibellini & Meier 2025 meta-analysis, 37 studies, recall ratio 0.99);
   the Ovsiankina resumption tendency does (about 67% resume): **drop Zeigarnik, keep Ovsiankina**. The next step is
   named and "resume" is offered; nothing relies on unfinished tasks nagging.
@@ -549,7 +587,12 @@ mood repair (Sirois & Pychyl 2013), so respond with easier entry, not pressure. 
   timing earlier and added about 47 min of weeknight sleep, but it was a package with devices, so the nudge only
   suggests ten minutes outside on days with nothing fixed.
 
-## 13. Status and known loose ends (2026-11-25)
+## 13. Status and known loose ends (2026-11-28)
+
+- v1.6.1: the Productium server (§9a) is live on the Pi and the only server for Claude, the leaderboard and server
+  backups; backups twice a day; token limits on claude-server keys (keys `dev`, `darsh`, `fei`, 50k tokens a day).
+  1.6.0 builds point at the Tailscale address (tailnet only now) and the old Worker: update them. The rest of the v1.7
+  work is in `v1.7_plan.md`.
 
 - v1.6 (on `dev`, not yet built on CI or the phone): the clean baseline (schema 8, format 5, older refused, a 1.5
   state.json set aside), the Schedule / task fixes above, Pause, Unfocused / Focused, setup problems on Today

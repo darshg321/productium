@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Connects Productium Dev on a USB iPhone to your claude-server: pushes the key from .claude-server.key (git-ignored)
+# Connects Productium Dev on a USB iPhone to the Productium server: pushes the key from .claude-server.key (git-ignored)
 # as a file the app moves into its Keychain and deletes, then checks the connection.
-#   scripts/test/connect-server.sh [--wifi] [https://server]    # default: the Pi over Tailscale (the app's default)
-# Productium Dev must be open; the phone needs Tailscale on to reach the Pi.
+#   scripts/test/connect-server.sh [--wifi]
+# Productium Dev must be open.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 [ "${1:-}" = "--wifi" ] && { export WIFI=1; shift; }
@@ -13,5 +13,5 @@ bundle=$($P apps list $NET 2>/dev/null | python3 -c 'import json,sys; ids=[k for
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 tr -d '[:space:]' < .claude-server.key > "$tmp/server-key.txt"
 $P apps push $NET "$bundle" "$tmp/server-key.txt" Documents/test/server-key.txt >/dev/null
-printf 'server %s\nwait 1\ntab settings\nshot server\n' "${1:-}" > "$tmp/cmds.txt"
+printf 'server\nwait 1\ntab settings\nshot server\n' > "$tmp/cmds.txt"
 scripts/test/device.sh "$tmp/cmds.txt"
