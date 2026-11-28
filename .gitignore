@@ -21,3 +21,8 @@ test-runs/
 
 # Plans stay local
 *plan.md
+
+# Python (server/)
+__pycache__/
+.pytest_cache/
+server/.venv/

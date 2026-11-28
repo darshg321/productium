@@ -50,10 +50,12 @@ public enum BackupFiles {
         return k
     }
 
-    /// Once a day: on the first refresh or launch more than 24 h after the last good write.
+    /// v1.6.1: twice a day: on the first refresh or launch 12 h after the last good write (the day's file is replaced).
+    public static let interval: TimeInterval = 12 * 3600
+
     public static func isDue(last: Date?, now: Date) -> Bool {
         guard let last else { return true }
-        return now.timeIntervalSince(last) >= 24 * 3600 || now < last
+        return now.timeIntervalSince(last) >= interval || now < last
     }
 
     /// Ours, newest first. Other files in the folder are never touched.
@@ -64,12 +66,12 @@ public enum BackupFiles {
     /// What to delete after writing: everything of ours older than the newest `keep`.
     public static func toDelete(_ names: [String], keep: Int = keep) -> [String] { Array(ours(names).dropFirst(keep)) }
 
-    /// "Restore from Friday's backup (2,140 entries)".
-    public static func offer(_ b: ExportBundle, now: Date, calendar cal: Calendar) -> String {
+    /// "Restore from Friday's backup (2,140 entries)" (`kind` "server backup" for the server's copy).
+    public static func offer(_ b: ExportBundle, now: Date, calendar cal: Calendar, kind: String = "backup") -> String {
         let days = cal.dateComponents([.day], from: cal.startOfDay(for: b.exportedAt), to: cal.startOfDay(for: now)).day ?? 0
         let f = DateFormatter.local(days < 7 ? "EEEE" : "MMM d", cal)
         let when = days == 0 ? "today's" : days == 1 ? "yesterday's" : "\(f.string(from: b.exportedAt))'s"
         let n = NumberFormatter.localizedString(from: NSNumber(value: b.state.entries.count), number: .decimal)
-        return "Restore from \(when) backup (\(n) entries)"
+        return "Restore from \(when) \(kind) (\(n) entries)"
     }
 }

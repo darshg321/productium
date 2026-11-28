@@ -52,6 +52,10 @@ final class LeaderboardTests: XCTestCase {
         XCTAssertNil(Leaderboard.readInvite("productium://join?s=http://evil&g=\(g.id)"), "https only")
         XCTAssertNil(Leaderboard.readInvite("productium://join?s=https://x.dev&g=a/b"))
         XCTAssertNil(Leaderboard.readInvite("https://example.com"))
+        let old = "productium://join?s=https://productium-leaderboard.darshg321.workers.dev&g=\(g.id)&n=Crew"
+        XCTAssertEqual(Leaderboard.readInvite(old)?.server, ProductiumServer.url, "old Worker invites join on the Pi")
+        XCTAssertEqual(ProductiumServer.current("https://productium-leaderboard.darshg321.workers.dev/"), ProductiumServer.url)
+        XCTAssertEqual(ProductiumServer.current("https://other.example"), "https://other.example")
     }
 
     func testPostSendsRecentDaysAndAUsualOnlyWithHistory() {

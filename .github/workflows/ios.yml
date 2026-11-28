@@ -27,8 +27,6 @@ env:
   APP_NAME: ${{ github.ref == 'refs/heads/dev' && 'Productium Dev' || 'Productium' }}
   APP_SCHEME: ${{ github.ref == 'refs/heads/dev' && 'productium-dev' || 'productium' }}
   APP_ICON: ${{ github.ref == 'refs/heads/dev' && 'AppIconDev' || 'AppIcon' }}
-  # The leaderboard Worker new groups use (scripts/leaderboard/deploy.sh sets it); empty = groups can only be joined.
-  LEADERBOARD_URL: ${{ vars.LEADERBOARD_URL || '' }}
 
 jobs:
   core-tests:

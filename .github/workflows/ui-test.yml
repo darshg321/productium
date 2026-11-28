@@ -22,7 +22,6 @@ env:
   APP_NAME: Productium Dev
   APP_SCHEME: productium-dev
   APP_ICON: AppIconDev
-  LEADERBOARD_URL: ${{ vars.LEADERBOARD_URL || '' }}
 
 jobs:
   simulator:

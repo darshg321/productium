@@ -67,7 +67,7 @@ struct SettingsView: View {
         guard ClaudeClient.shared.isConfigured else { return "Not connected" }
         switch model.serverOnline {
         case true?: return "Connected · \(ClaudeClient.shared.baseURL?.host ?? "")"
-        case false?: return "Offline. Is Tailscale on?"
+        case false?: return "Offline. Check the internet connection."
         case nil: return ClaudeClient.shared.baseURL?.host ?? "Server"
         }
     }
@@ -82,7 +82,6 @@ struct SettingsView: View {
 
 struct ClaudeSettings: View {
     @Environment(AppModel.self) private var model
-    @State private var serverURL = ClaudeClient.shared.baseURL?.absoluteString ?? ClaudeClient.defaultURL.absoluteString
     @State private var serverKey = ClaudeClient.shared.apiKey ?? ""
     @State private var check: ClaudeClient.Check?
     @State private var testing = false
@@ -90,17 +89,15 @@ struct ClaudeSettings: View {
     var body: some View {
         List {
             Section {
-                TextField("Server URL", text: $serverURL)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                LabeledContent("Server", value: ProductiumServer.host)
                 SecureField("API key (cs_…)", text: $serverKey)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
             } header: { Text("Server") } footer: {
-                Text("Your claude-server on Tailscale. Tailscale needs to be on for this phone.")
+                Text("The Productium server passes Claude requests on and keeps the leaderboard and a sealed copy of your backups. Your API key is the one you were given.")
             }
 
             Section {
                 Button {
-                    ClaudeClient.shared.baseURL = URL(string: serverURL.trimmingCharacters(in: .whitespaces))
                     ClaudeClient.shared.apiKey = serverKey.trimmingCharacters(in: .whitespaces)
                     testing = true
                     Task {
@@ -232,6 +229,12 @@ struct UsageView: View {
                     LabeledContent("Last 7 days", value: tokensLabel(u.weekTokens))
                     if let d = u.key?.daily, let r = u.key?.rpm {
                         LabeledContent("Key limits", value: "\(r)/min · \(d)/day")
+                    }
+                    if let t = u.key?.tokens_daily, t > 0 {
+                        LabeledContent("Token limit", value: "\(tokensLabel(u.key?.tokens_today ?? 0)) of \(tokensLabel(t)) today")
+                    }
+                    if let t = u.key?.tokens_weekly, t > 0 {
+                        LabeledContent("Weekly token limit", value: "\(tokensLabel(u.key?.tokens_week ?? 0)) of \(tokensLabel(t))")
                     }
                 } else {
                     Text(ClaudeClient.shared.isConfigured ? "Loading…" : "Connect Claude to see the server's count.")
@@ -821,6 +824,12 @@ struct DailyBackupSection: View {
             if b.failing, let e = b.lastError {
                 Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.alert).font(.subheadline)
             }
+            if let at = ServerBackup.lastAt {
+                LabeledContent("On the Server", value: at.formatted(date: .abbreviated, time: .shortened))
+            }
+            if let e = ServerBackup.lastError {
+                Label("Server copy: \(e)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.alert).font(.subheadline)
+            }
             Button {
                 Task {
                     await model.backupIfDue(force: true)
@@ -832,8 +841,9 @@ struct DailyBackupSection: View {
                 if model.backingUp { Label("Backing Up…", systemImage: "arrow.triangle.2.circlepath") } else { Text("Back Up Now") }
             }
             .disabled(model.backingUp)
-        } header: { Text("Every Day") } footer: {
-            Text(BackupService.hasFolder ? "" : "Saved in Files → On My iPhone → \(AppInfo.name) → Backups. Pick a folder in iCloud Drive to keep them if the app is deleted.")
+        } header: { Text("Twice a Day") } footer: {
+            Text((BackupService.hasFolder ? "" : "Saved in Files → On My iPhone → \(AppInfo.name) → Backups. ")
+                 + "A sealed copy goes to the Productium server too, so a reinstall with the same API key can restore it.")
         }
     }
 }

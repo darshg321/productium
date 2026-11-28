@@ -79,7 +79,6 @@ targets:
             CFBundleURLSchemes:
               - ${APP_SCHEME}
         ITSAppUsesNonExemptEncryption: false
-        ProductiumLeaderboardURL: ${LEADERBOARD_URL}
 
   ProductiumWidgets:
     type: app-extension

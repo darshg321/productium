@@ -1,0 +1,38 @@
+# productium.duckdns.org (router 443 -> Pi:8920 -> Caddy). Installed to /etc/caddy/productium.caddy by install.sh
+# and imported from the Caddyfile. claude-server (127.0.0.1:8787) and productium-server (127.0.0.1:8790) stay on
+# localhost; this is their only public door. Everything else is the install page.
+productium.duckdns.org {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	log {
+		output file /var/log/caddy/productium.log
+	}
+	request_body /v1/backup {
+		max_size 40MB
+	}
+
+	@productium path /v1/g/* /v1/backup /v1/backup/*
+	handle @productium {
+		reverse_proxy 127.0.0.1:8790
+	}
+
+	@claude path /v1/* /health /llms.txt
+	handle @claude {
+		reverse_proxy 127.0.0.1:8787 {
+			flush_interval -1
+			transport http {
+				read_timeout 15m
+			}
+		}
+	}
+
+	handle {
+		root * /var/www/productium
+		header /manifest.plist Content-Type application/xml
+		header /productium.ipa Content-Type application/octet-stream
+		file_server
+	}
+}

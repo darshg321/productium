@@ -1,6 +1,6 @@
 import Foundation
 
-// Leaderboard: friends compare day scores through a Cloudflare Worker (`scripts/leaderboard`). Only each day's score
+// Leaderboard: friends compare day scores through the Productium server (`server/`, v1.6.1; a Cloudflare Worker before). Only each day's score
 // parts and a display name leave the phone, never entries, tasks or places. A group is a random id; whoever has the
 // invite link is in it. Each member writes only their own row (a random key, set on the first write).
 
@@ -58,7 +58,7 @@ public struct Board: Codable, Hashable, Sendable {
 public struct BoardGroup: Codable, Hashable, Identifiable, Sendable {
     public var id: String
     public var name: String
-    /// The Worker's base URL ("https://productium-leaderboard.you.workers.dev").
+    /// The server's base URL (`ProductiumServer.url`; older groups stored the Worker's, see `ProductiumServer.current`).
     public var server: String
     public var memberId: String
     public var memberKey: String
@@ -74,7 +74,7 @@ public struct LeaderboardState: Codable, Hashable, Sendable {
     public var groups: [BoardGroup] = []
     /// The last board fetched per group (shown offline).
     public var boards: [String: Board] = [:]
-    /// What was last sent per group, so an unchanged day isn't sent again (the free Worker allows 1,000 writes a day).
+    /// What was last sent per group, so an unchanged day isn't sent again.
     public var lastPost: [String: BoardPost] = [:]
     public var lastPostAt: [String: Date] = [:]
     public init() {}
@@ -179,7 +179,7 @@ public enum Leaderboard {
               let server = c.queryItems?.first(where: { $0.name == "s" })?.value, server.hasPrefix("https://"),
               let group = c.queryItems?.first(where: { $0.name == "g" })?.value, isValidId(group) else { return nil }
         let name = c.queryItems?.first(where: { $0.name == "n" })?.value ?? "Friends"
-        return (server, group, String(name.prefix(40)))
+        return (ProductiumServer.current(server), group, String(name.prefix(40)))
     }
 
     // MARK: What to send
